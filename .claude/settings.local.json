@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run dev)",
+      "Bash(git checkout:*)",
+      "Bash(npx supabase:*)",
+      "Bash(cat:*)",
+      "WebSearch",
+      "Bash(find:*)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:api.apify.com)",
+      "Bash(tasklist:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}

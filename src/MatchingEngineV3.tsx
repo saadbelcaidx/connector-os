@@ -1,0 +1,3508 @@
+import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Briefcase, TrendingUp, AlertTriangle, Users, Zap, Target, Loader2, Radio, Settings as SettingsIcon, Bell, RefreshCw, Sparkles, Eye, EyeOff, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import Dock from './Dock';
+import { PredictionService, SignalTrend } from './PredictionService';
+import { JobTrendChart } from './JobTrendChart';
+import { createClient } from '@supabase/supabase-js';
+import { useAuth } from './AuthContext';
+import AppHeader from './AppHeader';
+import { useOnboarding } from './OnboardingContext';
+import { TourTooltip } from './Onboarding';
+import {
+  loadSignalsConfig,
+  fetchJobSignals,
+  fetchFundingSignals,
+  fetchLayoffSignals,
+  fetchHiringVelocitySignals,
+  fetchToolAdoptionSignals,
+  JobSignalInsight,
+  normalizeToItems,
+  extractJobLikeFields,
+  safeLower,
+  safeText,
+} from './services/SignalsClient';
+import { addNotification, getNotifications, Notification } from './services/NotificationsService';
+import { generateJobInsights, JobInsights } from './services/JobInsightsEngine';
+import { rewriteIntro, isAIConfigured, rewriteInsight, cleanApiResponse, generateWhyNow, generateWhyYou, generateDemandIntro, generateSupplyIntro } from './services/AIService';
+import { createRichFundingSignal, createRichJobsSignal, createRichLayoffsSignal, RichSignal } from './services/SignalFormatters';
+import {
+  buildCleanJobsSummary,
+  buildCleanFundingSummary,
+  buildCleanLayoffsSummary,
+  buildCleanHiringSummary,
+  buildCleanTechSummary
+} from './services/CleanViewHelpers';
+import { detectWhoHasPressure, detectTargetTitles } from './services/WhoClassificationService';
+import { enrichPerson, PersonData, EnrichmentConfig, calculateEnrichmentStatus, isEnrichmentStale, isEnrichmentConfigured, calculateOutboundReadiness, roleCategoryFromJobTitle } from './services/PersonEnrichmentService';
+import { findWorkOwnerByDomain, WorkOwnerSettings, WorkOwnerHireCategory } from './services/ApolloWorkOwnerService';
+import { getContextualPressureProfile } from './services/PersonPressureService';
+import { PersonContactCard } from './PersonContactCard';
+import { createInstantlyLead, sendToInstantly, DualSendParams } from './services/InstantlyService';
+import { fetchSupplySignals, findMatchingSupply, SupplyCompany, getSupplyEnrichmentTitles } from './services/SupplySignalsClient';
+import { HireCategory, extractHireCategory } from './services/CompanyRoleClassifier';
+import { findSupplyContact, SupplyContact } from './services/ApolloSupplyEnrichmentService';
+import type { ConnectorProfile } from './types';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+const WINDOW_STATUS_LABELS = {
+  EARLY: 'Early',
+  BUILDING: 'Building',
+  WATCH: 'Watch',
+  OPEN: 'Open'
+};
+
+const WINDOW_STATUS_DESCRIPTIONS = {
+  EARLY: 'Early signal across multiple companies — exploratory outreach viable',
+  BUILDING: 'Hiring pressure forming across several firms — test outreach',
+  WATCH: 'Clear hiring activity — good timing',
+  OPEN: 'Strong multi-company hiring window — act fast'
+};
+
+interface ProviderInputs {
+  servicesDelivered: string[];
+  idealClient: string;
+  averageDealSize: number;
+  geographyServed: string;
+  capacity: number;
+  nicheExpertise: string[];
+  apiKey: string;
+}
+
+interface SignalData {
+  value: string;
+  isLive: boolean;
+  lastUpdated?: string;
+  metadata?: JobSignalInsight;
+  rawPayload?: any;
+}
+
+interface SignalsState {
+  jobs: SignalData;
+  funding: SignalData;
+  layoffs: SignalData;
+  hiringVelocity: SignalData;
+  toolAdoption: SignalData;
+  loading: boolean;
+  error: string | null;
+  lastSyncTime?: string;
+}
+
+interface NormalizedSignal {
+  company: string;
+  person: string;
+  pressure: string;
+  oneSentence: string;
+  oneAction: string;
+}
+
+function normalizeSignal(signalData: SignalData, signalType: string): NormalizedSignal {
+  return {
+    company: '',
+    person: '',
+    pressure: signalType,
+    oneSentence: signalData.value || '',
+    oneAction: ''
+  };
+}
+
+interface SignalHistory {
+  signalStrength: number;
+  timestamp: string;
+}
+
+interface MatchingResult {
+  id: string;
+  companyName: string;
+  domain: string;
+  signalSummary: string;
+  windowStatus: string;
+  dealValueEstimate: number;
+  probabilityOfClose: number;
+  exactAngle: string;
+  whoHasPressure: string;
+  whoHasPressureRoles: string[];  // WHO we contact (person titles)
+  targetTitles: string[];
+  jobTitlesBeingHired: string[];  // WHAT is being hired (job titles from signal)
+  pressureProfile: string;
+  whoCanSolve: string;
+  suggestedTimeline: string;
+  jobCount?: number;
+  signalStrength: number;
+  matchScore: number;
+  matchReasons: string[];
+  companySize: number;
+  signalType: string;
+}
+
+const serviceOptions = [
+  'SaaS Implementation',
+  'Sales Ops',
+  'RevOps',
+  'Cybersecurity',
+  'Cloud Migration',
+  'AI/ML Integration',
+  'DevOps',
+  'Data Engineering',
+];
+
+const nicheOptions = [
+  'FinTech',
+  'HealthTech',
+  'Climate Tech',
+  'B2B SaaS',
+  'Enterprise',
+  'SMB',
+  'E-commerce',
+  'MarTech',
+];
+
+function parseCompanySizeRange(range: string): [number, number] | null {
+  switch (range) {
+    case '1-50':
+      return [1, 50];
+    case '50-200':
+      return [50, 200];
+    case '200-1000':
+      return [200, 1000];
+    case '1000+':
+      return [1000, Number.MAX_SAFE_INTEGER];
+    default:
+      return null;
+  }
+}
+
+function isCompanySizeInRange(actualSize: number | null | undefined, idealRange: string): boolean {
+  if (!actualSize) return false;
+  const parsed = parseCompanySizeRange(idealRange);
+  if (!parsed) return false;
+  const [min, max] = parsed;
+  return actualSize >= min && actualSize <= max;
+}
+
+// safeLower and safeText are imported from SignalsClient
+
+function normalize(str: unknown): string {
+  return safeLower(str).trim();
+}
+
+function mapSignalTypeToPainPoints(signalType?: string | null): string[] {
+  const mapping: Record<string, string[]> = {
+    jobs: [
+      'hiring bottlenecks',
+      'team velocity',
+      'ops scaling',
+      'delivery pressure'
+    ],
+    funding: [
+      'ops scaling',
+      'team velocity',
+      'board pressure'
+    ],
+    layoffs: [
+      'cost pressure',
+      'ops scaling',
+      'efficiency'
+    ],
+    tech: [
+      'tech migration',
+      'system integration',
+      'ops scaling'
+    ]
+  };
+
+  return mapping[signalType || ''] || [];
+}
+
+function estimateDealValue(companySize: number, matchScore: number, signalStrength: number) {
+  let base = 5000;
+
+  if (companySize < 50) base = 5000;
+  else if (companySize < 200) base = 15000;
+  else if (companySize < 1000) base = 50000;
+  else base = 100000;
+
+  const multiplier = Math.max(0.3, (matchScore + signalStrength) / 200);
+
+  return Math.round(base * multiplier);
+}
+
+function calculateProbability(matchScore: number, signalStrength: number, windowStatus: string) {
+  let base = (matchScore + signalStrength) / 2;
+
+  const windowBoost = {
+    EARLY: 0.6,
+    BUILDING: 0.75,
+    WATCH: 0.85,
+    OPEN: 1
+  }[windowStatus] || 0.5;
+
+  return Math.round(base * windowBoost);
+}
+
+function getConnectorAngle(buyerTitle: string) {
+  return `${buyerTitle}s usually deal with this before anyone else.`;
+}
+
+function getMatchBadge(matchScore: number): { text: string; color: string } {
+  if (matchScore >= 70) {
+    return { text: 'Strong fit', color: 'emerald' };
+  }
+  if (matchScore >= 40) {
+    return { text: 'Good fit', color: 'blue' };
+  }
+  return { text: 'Okay fit', color: 'gray' };
+}
+
+type MatchScoreBreakdown = {
+  rolePoints: number;
+  industryPoints: number;
+  sizePoints: number;
+  painPoints: number;
+  geographyBonus: number;
+};
+
+function calculateMatchScoreForCompany(
+  signal: {
+    whoRoles: string[];
+    industry?: string | null;
+    companySize?: number | null;
+    pressureType?: string | null;
+    geography?: string | null;
+  },
+  profile: ConnectorProfile | null | undefined
+): { score: number; reasons: string[]; breakdown: MatchScoreBreakdown } {
+  const breakdown: MatchScoreBreakdown = {
+    rolePoints: 0,
+    industryPoints: 0,
+    sizePoints: 0,
+    painPoints: 0,
+    geographyBonus: 0,
+  };
+
+  if (!profile) return { score: 0, reasons: [], breakdown };
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  const rolesLower = signal.whoRoles.map(normalize);
+  const solvesRolesLower = (profile.solves_for_roles || []).map(normalize);
+  const hasRoleMatch = rolesLower.some((r) => solvesRolesLower.includes(r));
+  if (hasRoleMatch) {
+    breakdown.rolePoints = 40;
+    score += 40;
+    reasons.push('You already help people in these roles.');
+  }
+
+  const industriesLower = (profile.industries_served || []).map(normalize);
+  if (signal.industry && industriesLower.includes(normalize(signal.industry))) {
+    breakdown.industryPoints = 20;
+    score += 20;
+    reasons.push('You work in this industry already.');
+  }
+
+  if (isCompanySizeInRange(signal.companySize ?? null, profile.ideal_company_size)) {
+    breakdown.sizePoints = 20;
+    score += 20;
+    reasons.push('Company size fits your ideal range.');
+  }
+
+  const signalPainPoints = mapSignalTypeToPainPoints(signal.pressureType);
+
+  const painMatch =
+    Array.isArray(signalPainPoints) &&
+    Array.isArray(profile.pain_points_solved) &&
+    signalPainPoints.some(signalPain =>
+      profile.pain_points_solved.some(profilePain =>
+        safeLower(profilePain).includes(safeLower(signalPain))
+      )
+    );
+
+  if (painMatch) {
+    breakdown.painPoints = 20;
+    score += 20;
+    reasons.push('This pressure looks like problems you already solve.');
+  }
+
+  if (process.env.NODE_ENV === 'development') {
+    console.debug('[MatchScore:pain]', {
+      company: signal,
+      signalType: signal.pressureType,
+      signalPainPoints,
+      profilePainPoints: profile.pain_points_solved,
+      painMatch
+    });
+  }
+
+  const geoLower = (profile.geography || []).map(normalize);
+  if (signal.geography && geoLower.includes(normalize(signal.geography))) {
+    breakdown.geographyBonus = 5;
+    score += 5;
+    reasons.push('Geography matches where you operate.');
+  }
+
+  return { score: Math.min(score, 100), reasons, breakdown };
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function SignalBlock({
+  icon: Icon,
+  label,
+  value,
+  isLive,
+  loading,
+  subtitle
+}: {
+  icon: typeof TrendingUp;
+  label: string;
+  value: string;
+  isLive: boolean;
+  loading?: boolean;
+  subtitle?: string;
+}) {
+  return (
+    <div
+      className="flex items-start gap-3 p-3 rounded-lg mb-2 relative"
+      style={{
+        background: 'rgba(14, 165, 233, 0.04)',
+        border: '1px solid rgba(14, 165, 233, 0.15)',
+      }}
+    >
+      <div
+        className="p-1.5 rounded"
+        style={{
+          background: 'rgba(14, 165, 233, 0.12)',
+        }}
+      >
+        {loading ? (
+          <Loader2 size={14} style={{ color: '#3A9CFF', strokeWidth: 2 }} className="animate-spin" />
+        ) : (
+          <Icon size={14} style={{ color: '#3A9CFF', strokeWidth: 2 }} />
+        )}
+      </div>
+      <div className="flex-1">
+        <div className="flex items-center justify-between mb-0.5">
+          <div className="text-[11px] text-white text-opacity-50 uppercase tracking-wide">{label}</div>
+          {isLive ? (
+            <div className="flex items-center gap-1">
+              <Radio size={8} style={{ color: '#26F7C7' }} />
+              <span className="text-[9px] text-[#26F7C7] uppercase tracking-wider font-semibold">Live</span>
+            </div>
+          ) : (
+            <span className="text-[9px] text-white text-opacity-30 uppercase tracking-wider">Mock</span>
+          )}
+        </div>
+        <div className="text-[13px] text-white text-opacity-85">{value}</div>
+        {subtitle && (
+          <div className="text-[11px] text-white text-opacity-50 mt-1">{subtitle}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RichSignalBlock({
+  icon: Icon,
+  label,
+  richSignal,
+  isLive,
+  loading
+}: {
+  icon: typeof TrendingUp;
+  label: string;
+  richSignal: RichSignal | null;
+  isLive: boolean;
+  loading?: boolean;
+}) {
+  if (!richSignal || richSignal.examples.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="p-4 rounded-lg mb-3"
+      style={{
+        background: 'rgba(14, 165, 233, 0.04)',
+        border: '1px solid rgba(14, 165, 233, 0.15)',
+      }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div
+            className="p-1.5 rounded"
+            style={{
+              background: 'rgba(14, 165, 233, 0.12)',
+            }}
+          >
+            {loading ? (
+              <Loader2 size={14} style={{ color: '#3A9CFF', strokeWidth: 2 }} className="animate-spin" />
+            ) : (
+              <Icon size={14} style={{ color: '#3A9CFF', strokeWidth: 2 }} />
+            )}
+          </div>
+          <div className="text-[11px] text-white text-opacity-50 uppercase tracking-wide">{label}</div>
+        </div>
+        {isLive && (
+          <div className="flex items-center gap-1">
+            <Radio size={8} style={{ color: '#26F7C7' }} />
+            <span className="text-[9px] text-[#26F7C7] uppercase tracking-wider font-semibold">Live</span>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2 mb-3">
+        {richSignal.examples.map((example, idx) => (
+          <div key={idx} className="text-[11px] text-white text-opacity-85">
+            <span className="text-white text-opacity-50">•</span> <span className="font-medium">{example.companyName}</span> — {example.summaryLine}
+          </div>
+        ))}
+      </div>
+
+      <div className="pt-3 border-t border-white border-opacity-10 space-y-2">
+        <div>
+          <div className="text-[9px] text-white text-opacity-40 uppercase tracking-wider mb-0.5">Why it matters</div>
+          <div className="text-[11px] text-white text-opacity-70">{richSignal.whyThisMatters}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OutputRow({ label, value, highlight = false }: { label: string; value: string | number; highlight?: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-[#1C1C1C] last:border-0">
+      <span className="text-[13px] text-white text-opacity-60">{label}</span>
+      <span className={`text-[14px] font-medium ${highlight ? 'text-[#26F7C7]' : 'text-white text-opacity-90'}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function sendPressureAlert(email: string, forecast: string) {
+  console.log(`[Pressure Alert] Sending alert to ${email}: Pressure ${forecast}`);
+}
+
+function MatchingEngineV3() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { currentStep, nextStep, skipOnboarding } = useOnboarding();
+
+  const [provider, setProvider] = useState<ProviderInputs>({
+    servicesDelivered: ['SaaS Implementation', 'Sales Ops'],
+    idealClient: 'Series A/B SaaS companies scaling GTM',
+    averageDealSize: 75000,
+    geographyServed: 'North America',
+    capacity: 3,
+    nicheExpertise: ['B2B SaaS', 'FinTech'],
+    apiKey: '',
+  });
+
+  const [signals, setSignals] = useState<SignalsState>({
+    jobs: {
+      value: '241 developer roles open in North America in the last 7 days',
+      isLive: false,
+    },
+    funding: {
+      value: '17 Series A/B raises in past 10 days',
+      isLive: false,
+    },
+    layoffs: {
+      value: '3,200 layoffs across tech/security',
+      isLive: false,
+    },
+    hiringVelocity: {
+      value: '↑ 22% in climate tech this month',
+      isLive: false,
+    },
+    toolAdoption: {
+      value: 'HubSpot → Salesforce migrations up 11%',
+      isLive: false,
+    },
+    loading: false,
+    error: null,
+  });
+
+  const [richJobsSignal, setRichJobsSignal] = useState<RichSignal | null>(null);
+  const [richFundingSignal, setRichFundingSignal] = useState<RichSignal | null>(null);
+  const [richLayoffsSignal, setRichLayoffsSignal] = useState<RichSignal | null>(null);
+
+  const [signalHistory, setSignalHistory] = useState<SignalHistory[]>([]);
+  const [signalStrength, setSignalStrength] = useState(0);
+  const [predictionResult, setPredictionResult] = useState({
+    pressureForecast: 'stable' as 'rising' | 'stable' | 'falling',
+    momentumScore: 0,
+    explanation: 'Collecting data for trend analysis...',
+    confidence: 50,
+  });
+  const [emailAlertsEnabled, setEmailAlertsEnabled] = useState(false);
+  const [alertEmail, setAlertEmail] = useState('');
+  const [lastAlertForecast, setLastAlertForecast] = useState<string | null>(null);
+
+  const [showCleanJobs, setShowCleanJobs] = useState(false);
+  const [showCleanFunding, setShowCleanFunding] = useState(false);
+  const [showCleanLayoffs, setShowCleanLayoffs] = useState(false);
+  const [showCleanHiring, setShowCleanHiring] = useState(false);
+  const [showCleanTech, setShowCleanTech] = useState(false);
+
+  const [cleanJobsSummary, setCleanJobsSummary] = useState<string | null>(null);
+  const [cleanFundingSummary, setCleanFundingSummary] = useState<string | null>(null);
+  const [cleanLayoffsSummary, setCleanLayoffsSummary] = useState<string | null>(null);
+  const [cleanHiringSummary, setCleanHiringSummary] = useState<string | null>(null);
+  const [cleanTechSummary, setCleanTechSummary] = useState<string | null>(null);
+
+  const [isCleaningJobs, setIsCleaningJobs] = useState(false);
+  const [isCleaningFunding, setIsCleaningFunding] = useState(false);
+  const [isCleaningLayoffs, setIsCleaningLayoffs] = useState(false);
+  const [isCleaningHiring, setIsCleaningHiring] = useState(false);
+  const [isCleaningTech, setIsCleaningTech] = useState(false);
+
+  const [insightMode, setInsightMode] = useState<'template' | 'template_plus_ai' | 'ai_only'>('template');
+  const [aiInsight, setAiInsight] = useState<string | null>(null);
+  const [isRewritingInsight, setIsRewritingInsight] = useState(false);
+  const [recentNotifications, setRecentNotifications] = useState<Notification[]>([]);
+  const [trendDirection, setTrendDirection] = useState<'up' | 'down' | 'flat'>('flat');
+  const [jobInsights, setJobInsights] = useState<JobInsights | null>(null);
+  const [roleFilter, setRoleFilter] = useState<string>('');
+  const [industryFilter, setIndustryFilter] = useState<string>('');
+  const [sourcesCount, setSourcesCount] = useState<number>(1);
+  const [isRewritingIntro, setIsRewritingIntro] = useState(false);
+  const [aiConfig, setAiConfig] = useState<any>(null);
+  const [campaignMode, setCampaignMode] = useState<'pure_connector' | 'solution_provider' | 'network_orchestrator'>('pure_connector');
+  const [operatorName, setOperatorName] = useState<string>('');
+  const [operatorCompany, setOperatorCompany] = useState<string>('');
+
+  const [personDataByDomain, setPersonDataByDomain] = useState<Record<string, PersonData | null>>({});
+  const [isEnrichingDomain, setIsEnrichingDomain] = useState<string | null>(null);
+  const [noContactsFoundByDomain, setNoContactsFoundByDomain] = useState<Record<string, boolean>>({});
+  const [toastNotification, setToastNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
+  const [personPressureProfileByDomain, setPersonPressureProfileByDomain] = useState<Record<string, string>>({});
+  const [enrichmentConfig, setEnrichmentConfig] = useState<EnrichmentConfig>({ provider: 'none' });
+  const [conversationStartedByDomain, setConversationStartedByDomain] = useState<Record<string, boolean>>({});
+  const [lastContactDateByDomain, setLastContactDateByDomain] = useState<Record<string, string | null>>({});
+  const [introUnlockedByDomain, setIntroUnlockedByDomain] = useState<Record<string, boolean>>({});
+  const [rewriteCache, setRewriteCache] = useState<Map<string, string>>(new Map());
+  const [aiRewrittenIntroByDomain, setAiRewrittenIntroByDomain] = useState<Record<string, string>>({});
+  const [finalIntroByDomain, setFinalIntroByDomain] = useState<Record<string, string>>({});
+  const [demandIntroByDomain, setDemandIntroByDomain] = useState<Record<string, string>>({});
+  const [supplyIntroByDomain, setSupplyIntroByDomain] = useState<Record<string, string>>({});
+  const [isGeneratingDemandIntro, setIsGeneratingDemandIntro] = useState(false);
+  const [isGeneratingSupplyIntro, setIsGeneratingSupplyIntro] = useState(false);
+  const [aiWhyNowByDomain, setAiWhyNowByDomain] = useState<Record<string, string>>({});
+  const [aiWhyYouByDomain, setAiWhyYouByDomain] = useState<Record<string, string>>({});
+  const [activeResultIndex, setActiveResultIndex] = useState(0);
+  const [matchingResults, setMatchingResults] = useState<MatchingResult[]>([]);
+  const [instantlyConfig, setInstantlyConfig] = useState<{apiKey: string; campaignId: string; campaignDemand: string; campaignSupply: string} | null>(null);
+  const [isSendingInstantlyByDomain, setIsSendingInstantlyByDomain] = useState<Record<string, boolean>>({});
+  const [connectorProfile, setConnectorProfile] = useState<ConnectorProfile | null>(null);
+  const [demandStatusByDomain, setDemandStatusByDomain] = useState<Record<string, string>>({});
+  const [supplyStatusByDomain, setSupplyStatusByDomain] = useState<Record<string, string>>({});
+
+  // Two-contact architecture: separate demand (hiring company) and supply (provider) contacts
+  const [supplyContactByDomain, setSupplyContactByDomain] = useState<Record<string, SupplyContact | null>>({});
+  const [selectedSupplyByDomain, setSelectedSupplyByDomain] = useState<Record<string, SupplyCompany | null>>({});
+  const [alternativeSupplyByDomain, setAlternativeSupplyByDomain] = useState<Record<string, SupplyCompany[]>>({});
+  const [isEnrichingSupplyByDomain, setIsEnrichingSupplyByDomain] = useState<Record<string, boolean>>({});
+
+  // Dynamic supply discovery - companies fetched from Apify supply dataset
+  const [discoveredSupplyCompanies, setDiscoveredSupplyCompanies] = useState<SupplyCompany[]>([]);
+  const [supplyDiscoveryStatus, setSupplyDiscoveryStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+
+  // Global refresh state - true while fetching signals + processing results
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Initial load state - true until settings loaded from database
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  // Signal API configuration state
+  const [signalSettings, setSignalSettings] = useState<{
+    jobsApiKey: string;
+    jobsQueryUrl: string;
+    supplyQueryUrl: string;  // Supply discovery URL
+    fundingApiKey: string;
+    fundingQueryUrl: string;
+    layoffsApiKey: string;
+    layoffsQueryUrl: string;
+    hiringApiKey: string;
+    hiringQueryUrl: string;
+    techApiKey: string;
+    techQueryUrl: string;
+  }>({
+    jobsApiKey: '',
+    jobsQueryUrl: '',
+    supplyQueryUrl: '',
+    fundingApiKey: '',
+    fundingQueryUrl: '',
+    layoffsApiKey: '',
+    layoffsQueryUrl: '',
+    hiringApiKey: '',
+    hiringQueryUrl: '',
+    techApiKey: '',
+    techQueryUrl: '',
+  });
+
+  // Work Owner Search settings
+  const [workOwnerSettings, setWorkOwnerSettings] = useState<{
+    departments: string[];
+    keywords: string[];
+  }>({
+    departments: [],
+    keywords: [],
+  });
+
+  // Derived signal status checks - check both configuration AND if live data was returned
+  const hasJobs = !!signalSettings.jobsQueryUrl && signals.jobs.isLive;  // Apify only needs URL
+  const hasFunding = !!(signalSettings.fundingApiKey && signalSettings.fundingQueryUrl) && signals.funding.isLive;
+  const hasLayoffs = !!(signalSettings.layoffsApiKey && signalSettings.layoffsQueryUrl) && signals.layoffs.isLive;
+  const hasHiring = !!(signalSettings.hiringApiKey && signalSettings.hiringQueryUrl) && signals.hiringVelocity.isLive;
+  const hasTech = !!(signalSettings.techApiKey && signalSettings.techQueryUrl) && signals.toolAdoption.isLive;
+  const hasAnyLiveSignals = hasJobs || hasFunding || hasLayoffs || hasHiring || hasTech;
+
+  const activeResult = matchingResults[activeResultIndex] || null;
+
+  const showToast = (type: 'success' | 'error' | 'warning', message: string) => {
+    setToastNotification({ type, message });
+    setTimeout(() => setToastNotification(null), 4000);
+  };
+
+  const previousState = useRef<{
+    forecast: string;
+    signalStrength: number;
+    fundingCount: number;
+    layoffsCount: number;
+    trendDirection?: 'up' | 'down' | 'flat';
+  }>({
+    forecast: 'stable',
+    signalStrength: 0,
+    fundingCount: 0,
+    layoffsCount: 0,
+    trendDirection: 'flat',
+  });
+
+  useEffect(() => {
+    loadSettingsFromDatabase();
+    loadSignalHistory();
+    loadRecentNotifications();
+  }, []);
+
+  const loadRecentNotifications = async () => {
+    const notifications = await getNotifications();
+    setRecentNotifications(notifications.slice(0, 3));
+  };
+
+  const loadSettingsFromDatabase = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('operator_settings')
+        .select('*')
+        .eq('user_id', 'default')
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setProvider({
+          servicesDelivered: data.services_delivered || [],
+          idealClient: data.ideal_client || '',
+          averageDealSize: data.average_deal_size || 0,
+          geographyServed: data.geography_served || '',
+          capacity: data.capacity || 0,
+          nicheExpertise: data.niche_expertise || [],
+          apiKey: data.signals_api_key || '',
+        });
+
+        // Build AI config based on selected provider
+        const selectedProvider = data.ai_provider || 'none';
+        const loadedAiConfig = {
+          // Map keys based on selected provider
+          openaiKey: selectedProvider === 'openai' ? (data.ai_openai_api_key || '') : '',
+          azureKey: selectedProvider === 'azure' ? (data.ai_azure_api_key || '') : '',
+          azureEndpoint: selectedProvider === 'azure' ? (data.ai_azure_endpoint || '') : '',
+          claudeKey: selectedProvider === 'anthropic' ? (data.ai_anthropic_api_key || '') : '',
+          model: data.ai_model || 'gpt-4o-mini',
+          enableRewrite: data.ai_enable_rewrite ?? true,
+          enableCleaning: data.ai_enable_signal_cleaning ?? true,
+          enableEnrichment: data.ai_enable_enrichment ?? true,
+          enableForecasting: data.ai_enable_forecasting ?? false,
+        };
+        setAiConfig(loadedAiConfig);
+        console.log('[Settings] AI provider:', selectedProvider, 'Config loaded:', !!loadedAiConfig.openaiKey || !!loadedAiConfig.azureKey || !!loadedAiConfig.claudeKey);
+
+        const loadedInsightMode = data.ai_insight_mode || 'template';
+        setInsightMode(loadedInsightMode);
+
+        const aiCleanViewDefault = data.ai_clean_view_default ?? false;
+        const shouldEnableCleanView = aiCleanViewDefault &&
+          isAIConfigured(loadedAiConfig) &&
+          loadedAiConfig.enableCleaning;
+
+        if (shouldEnableCleanView) {
+          setShowCleanJobs(true);
+          setShowCleanFunding(true);
+          setShowCleanLayoffs(true);
+          setShowCleanHiring(true);
+          setShowCleanTech(true);
+        }
+
+        setEmailAlertsEnabled(data.email_alerts_enabled || false);
+        setAlertEmail(data.alert_email || '');
+
+        setEnrichmentConfig({
+          provider: (data.enrichment_provider as any) || 'none',
+          apiKey: data.enrichment_api_key || undefined,
+          endpointUrl: data.enrichment_endpoint_url || undefined
+        });
+
+        setInstantlyConfig({
+          apiKey: data.instantly_api_key || '',
+          campaignId: data.instantly_campaign_id || '',
+          campaignDemand: data.instantly_campaign_demand || '',
+          campaignSupply: data.instantly_campaign_supply || ''
+        });
+
+        setCampaignMode(data.operator_campaign_mode || 'pure_connector');
+        setOperatorName(data.operator_name || '');
+        setOperatorCompany(data.operator_company || '');
+
+        const rawProfile = (data.connector_profile ?? null) as ConnectorProfile | null;
+        setConnectorProfile(rawProfile);
+
+        // Load signal API settings
+        setSignalSettings({
+          jobsApiKey: data.jobs_api_key || '',
+          jobsQueryUrl: data.jobs_api_url || '',
+          supplyQueryUrl: data.supply_api_url || '',
+          fundingApiKey: data.funding_api_key || '',
+          fundingQueryUrl: data.funding_api_url || '',
+          layoffsApiKey: data.layoffs_api_key || '',
+          layoffsQueryUrl: data.layoffs_api_url || '',
+          hiringApiKey: data.hiring_api_key || '',
+          hiringQueryUrl: data.hiring_api_url || '',
+          techApiKey: data.tech_api_key || '',
+          techQueryUrl: data.tech_api_url || '',
+        });
+
+        // Load work owner search settings
+        const deptString = data.work_owner_departments || '';
+        const keywordsString = data.work_owner_keywords || '';
+        setWorkOwnerSettings({
+          departments: deptString ? deptString.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+          keywords: keywordsString ? keywordsString.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+        });
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    } finally {
+      setSettingsLoaded(true);
+    }
+  };
+
+  const loadSignalHistory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('signal_history')
+        .select('signal_strength, created_at')
+        .eq('user_id', 'default')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+
+      if (data) {
+        const history = data.map(item => ({
+          signalStrength: Number(item.signal_strength),
+          timestamp: item.created_at,
+        })).reverse();
+        setSignalHistory(history);
+      }
+    } catch (error) {
+      console.error('Error loading signal history:', error);
+    }
+  };
+
+  const extractCompanyCount = (metadata?: JobSignalInsight): number => {
+    if (!metadata?.companySummary) return 0;
+    const match = metadata.companySummary.match(/(\d+)\+?\s+compan/i);
+    if (match) return parseInt(match[1]);
+    if (metadata.companySummary.includes('all roles at')) return 1;
+    return 0;
+  };
+
+  const calculateSignalStrength = (currentSignals: SignalsState): number => {
+    const roleCount = parseInt(currentSignals.jobs.value.match(/\d+/)?.[0] || '0');
+    const companyCount = extractCompanyCount(currentSignals.jobs.metadata);
+    const fundingAmount = parseInt(currentSignals.funding.value.match(/\d+/)?.[0] || '0');
+    const layoffsCount = parseInt(currentSignals.layoffs.value.match(/\d+/)?.[0] || '0');
+    const hiringVelocityScore = parseInt(currentSignals.hiringVelocity.value.match(/\d+/)?.[0] || '0');
+    const toolAdoptionDelta = parseInt(currentSignals.toolAdoption.value.match(/\d+/)?.[0] || '0');
+
+    const industryMatch = currentSignals.jobs.metadata?.industryMatch || 'medium';
+    const industryMultiplier = industryMatch === 'high' ? 1.2 : industryMatch === 'medium' ? 1.0 : 0.7;
+
+    const companyWeightedScore = Math.min(100, companyCount * 8 + roleCount * 2) * industryMultiplier;
+
+    const rawScore =
+      companyWeightedScore * 0.5 +
+      fundingAmount * 0.2 +
+      layoffsCount * 0.1 +
+      hiringVelocityScore * 0.15 +
+      toolAdoptionDelta * 0.05;
+
+    const normalizedScore = Math.min(100, Math.max(0, (rawScore / 10)));
+
+    return Math.round(normalizedScore);
+  };
+
+  const saveSignalToHistory = async (strength: number, trend: SignalTrend, forecast: string) => {
+    try {
+      const whoRoles = activeResult?.whoHasPressureRoles || [];
+      const titles = activeResult?.targetTitles || [];
+      const personData = activeResult ? personDataByDomain[activeResult.domain] : null;
+      const personPressureProfile = activeResult ? personPressureProfileByDomain[activeResult.domain] : null;
+
+      const { error } = await supabase
+        .from('signal_history')
+        .insert({
+          user_id: 'default',
+          signal_strength: strength,
+          jobs_count: trend.jobsCount,
+          funding_amount: trend.fundingAmount,
+          layoffs_count: trend.layoffsCount,
+          hiring_velocity: trend.hiringVelocity,
+          tool_adoption: trend.toolAdoption,
+          momentum_score: predictionResult.momentumScore,
+          pressure_forecast: forecast,
+          who_has_pressure_roles: whoRoles,
+          target_titles: titles,
+          person_name: personData?.name || null,
+          person_email: personData?.email || null,
+          person_title: personData?.title || null,
+          person_linkedin: personData?.linkedin || null,
+          person_pressure_profile: personPressureProfile || null,
+          company_domain: activeResult?.domain || null,
+          created_at: new Date().toISOString(),
+        });
+
+      if (error) throw error;
+
+      await loadSignalHistory();
+    } catch (error) {
+      console.error('Error saving signal to history:', error);
+    }
+  };
+
+  const logUsage = async (introGenerated: boolean = false) => {
+    if (!user) return;
+
+    try {
+      await supabase.from('usage_logs').insert({
+        user_id: user.id,
+        tool_name: 'Matching Engine V3',
+        signal_strength: signalStrength,
+        pressure_forecast: predictionResult.pressureForecast,
+        momentum_score: predictionResult.momentumScore,
+        intro_generated: introGenerated,
+        metadata: {
+          provider: {
+            services: provider.servicesDelivered,
+            tier: user.tier,
+          },
+        },
+        created_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error('Error logging usage:', error);
+    }
+  };
+
+  const checkForNotifications = async () => {
+    const currentForecast = predictionResult.pressureForecast;
+    const currentStrength = signalStrength;
+    const fundingCount = parseInt(signals.funding.value.match(/\d+/)?.[0] || '0');
+    const layoffsCount = parseInt(signals.layoffs.value.match(/\d+/)?.[0] || '0');
+
+    let notificationAdded = false;
+
+    if (previousState.current.forecast !== 'rising' && currentForecast === 'rising') {
+      await addNotification({
+        type: 'pressure_rising',
+        message: 'Pressure window forming — momentum increasing.',
+        signal_strength: currentStrength,
+        momentum: predictionResult.momentumScore,
+        forecast: currentForecast,
+      });
+      notificationAdded = true;
+    }
+
+    if (fundingCount > previousState.current.fundingCount && fundingCount > 0) {
+      const delta = fundingCount - previousState.current.fundingCount;
+      await addNotification({
+        type: 'funding_spike',
+        message: `${delta} new funding event${delta > 1 ? 's' : ''} detected in your target market.`,
+        signal_strength: currentStrength,
+        momentum: predictionResult.momentumScore,
+        forecast: currentForecast,
+      });
+      notificationAdded = true;
+    }
+
+    if (layoffsCount > previousState.current.layoffsCount && layoffsCount > 0) {
+      const delta = layoffsCount - previousState.current.layoffsCount;
+      await addNotification({
+        type: 'layoffs_increase',
+        message: `${delta.toLocaleString()} new layoffs reported — potential window opening.`,
+        signal_strength: currentStrength,
+        momentum: predictionResult.momentumScore,
+        forecast: currentForecast,
+      });
+      notificationAdded = true;
+    }
+
+    if (notificationAdded) {
+      await loadRecentNotifications();
+    }
+
+    previousState.current = {
+      forecast: currentForecast,
+      signalStrength: currentStrength,
+      fundingCount,
+      layoffsCount,
+    };
+  };
+
+  useEffect(() => {
+    try {
+      const strength = calculateSignalStrength(signals);
+      setSignalStrength(strength);
+
+      const currentTrend = PredictionService.extractSignalTrend(signals);
+      const historicalTrends: SignalTrend[] = [];
+
+      const prediction = PredictionService.predictPressure(historicalTrends, signals);
+      setPredictionResult(prediction);
+
+      if (prediction.pressureForecast === 'rising' && emailAlertsEnabled && alertEmail && lastAlertForecast !== 'rising') {
+        sendPressureAlert(alertEmail, prediction.pressureForecast);
+        setLastAlertForecast('rising');
+      }
+
+      if (prediction.pressureForecast !== 'rising') {
+        setLastAlertForecast(prediction.pressureForecast);
+      }
+
+      if (strength > 0 && signals.jobs.value && user) {
+        saveSignalToHistory(strength, currentTrend, prediction.pressureForecast);
+        logUsage(true);
+        checkForNotifications();
+      }
+    } catch (error) {
+      console.error('[MatchingEngine] Error processing signals:', error);
+    }
+  }, [signals, emailAlertsEnabled, alertEmail, user]);
+
+  const fetchSignals = async () => {
+    setIsRefreshing(true);
+    setSignals(prev => ({ ...prev, loading: true, error: null }));
+
+    try {
+      const config = await loadSignalsConfig();
+
+      const providerNiche = [...provider.nicheExpertise, provider.idealClient, ...provider.servicesDelivered].join(' ');
+
+      // Fetch demand signals (jobs, funding, etc.)
+      const [jobsRes, fundingRes, layoffsRes, hiringRes, toolRes] = await Promise.allSettled([
+        fetchJobSignals(config, providerNiche),
+        fetchFundingSignals(config),
+        fetchLayoffSignals(config),
+        fetchHiringVelocitySignals(config),
+        fetchToolAdoptionSignals(config),
+      ]);
+
+      // Fetch supply signals (dynamic provider discovery)
+      if (config.supplyApiUrl) {
+        setSupplyDiscoveryStatus('loading');
+        try {
+          const supplyResult = await fetchSupplySignals(config.supplyApiUrl);
+          if (supplyResult.isLive) {
+            setDiscoveredSupplyCompanies(supplyResult.companies);
+            setSupplyDiscoveryStatus('loaded');
+            console.log(`[Supply] Discovered ${supplyResult.companies.length} supply companies from ${supplyResult.totalDiscovered} total`);
+          } else {
+            setSupplyDiscoveryStatus('error');
+          }
+        } catch (error) {
+          console.error('[Supply] Discovery failed:', error);
+          setSupplyDiscoveryStatus('error');
+        }
+      } else {
+        console.log('[Supply] No supply URL configured - two-sided matching disabled');
+        setDiscoveredSupplyCompanies([]);
+        setSupplyDiscoveryStatus('idle');
+      }
+
+      const newSignals: Partial<SignalsState> = {};
+      const now = new Date().toISOString();
+
+      if (jobsRes.status === 'fulfilled') {
+        newSignals.jobs = jobsRes.value;
+      }
+
+      if (fundingRes.status === 'fulfilled') {
+        newSignals.funding = fundingRes.value;
+      }
+
+      if (layoffsRes.status === 'fulfilled') {
+        newSignals.layoffs = layoffsRes.value;
+      }
+
+      if (hiringRes.status === 'fulfilled') {
+        newSignals.hiringVelocity = hiringRes.value;
+      }
+
+      if (toolRes.status === 'fulfilled') {
+        newSignals.toolAdoption = toolRes.value;
+      }
+
+      setSignals(prev => ({
+        ...prev,
+        ...newSignals,
+        loading: false,
+        lastSyncTime: now,
+      }));
+
+      if (jobsRes.status === 'fulfilled' && jobsRes.value.rawPayload?.data) {
+        const richJobs = createRichJobsSignal(jobsRes.value.rawPayload.data);
+        setRichJobsSignal(richJobs);
+      } else {
+        setRichJobsSignal(null);
+      }
+
+      if (fundingRes.status === 'fulfilled' && fundingRes.value.rawPayload?.dataset) {
+        const richFunding = createRichFundingSignal(fundingRes.value.rawPayload.dataset);
+        setRichFundingSignal(richFunding);
+      } else {
+        setRichFundingSignal(null);
+      }
+
+      if (layoffsRes.status === 'fulfilled' && layoffsRes.value.rawPayload?.dataset) {
+        const richLayoffs = createRichLayoffsSignal(layoffsRes.value.rawPayload.dataset);
+        setRichLayoffsSignal(richLayoffs);
+      } else {
+        setRichLayoffsSignal(null);
+      }
+
+      setRoleFilter(config.jobRoleFilter || '');
+      setIndustryFilter(config.jobIndustryFilter || '');
+
+      if (jobsRes.status === 'fulfilled' && jobsRes.value.metadata?.subtitle) {
+        const subtitle = jobsRes.value.metadata.subtitle;
+        const sourcesMatch = subtitle.match(/from (\d+) source/);
+        if (sourcesMatch) {
+          setSourcesCount(parseInt(sourcesMatch[1]));
+        } else {
+          setSourcesCount(1);
+        }
+      }
+
+      // Refresh complete
+      setIsRefreshing(false);
+    } catch (error) {
+      setSignals(prev => ({
+        ...prev,
+        loading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch signals',
+      }));
+      setIsRefreshing(false);
+    }
+  };
+
+  // REMOVED: Auto-fetch on provider change - user must manually refresh to save tokens
+  // useEffect(() => {
+  //   const debounceTimer = setTimeout(() => {
+  //     fetchSignals();
+  //   }, 500);
+  //   return () => clearTimeout(debounceTimer);
+  // }, [provider.apiKey]);
+
+  // REMOVED: Auto-refresh every 15 minutes - user must manually refresh to save tokens
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     fetchSignals();
+  //   }, 15 * 60 * 1000);
+  //   return () => clearInterval(interval);
+  // }, []);
+
+  useEffect(() => {
+    if (activeResult && signals.jobs.metadata) {
+      const insights = generateJobInsights(
+        signals.jobs.metadata,
+        trendDirection,
+        sourcesCount,
+        roleFilter,
+        industryFilter
+      );
+      setJobInsights(insights);
+    }
+  }, [activeResultIndex, activeResult, signals.jobs.metadata, trendDirection, sourcesCount, roleFilter, industryFilter]);
+
+  useEffect(() => {
+    if (signals.jobs.metadata) {
+      if (previousState.current?.trendDirection && previousState.current.trendDirection !== trendDirection) {
+        if (trendDirection === 'up') {
+          const keyword = signals.jobs.metadata.keyword || 'roles';
+          addNotification(
+            'trend_change',
+            `Hiring trend rising in ${keyword}: possible pressure window.`,
+            signalStrength,
+            predictionResult.momentumScore,
+            predictionResult.pressureForecast
+          );
+        } else if (trendDirection === 'down') {
+          addNotification(
+            'trend_change',
+            'Hiring volume cooling — window tightening.',
+            signalStrength,
+            predictionResult.momentumScore,
+            predictionResult.pressureForecast
+          );
+        }
+      }
+
+      previousState.current = {
+        ...previousState.current,
+        trendDirection,
+      } as any;
+    }
+  }, [signals.jobs.metadata, trendDirection, sourcesCount, roleFilter, industryFilter, signalStrength, predictionResult]);
+
+  function detectIndustry(companyName?: string | null, domain?: string | null): string {
+    const name = safeLower(companyName);
+    const host = safeLower(domain);
+
+    if (name.includes('health') || name.includes('med') || name.includes('clinic') || name.includes('pharma')) {
+      return 'Healthcare';
+    }
+    if (name.includes('bank') || name.includes('finance') || name.includes('capital')) {
+      return 'FinTech';
+    }
+    if (name.includes('retail') || name.includes('store')) {
+      return 'Retail';
+    }
+    if (name.includes('logistics') || name.includes('freight') || name.includes('transport')) {
+      return 'Logistics';
+    }
+    if (name.includes('energy') || name.includes('climate') || name.includes('solar')) {
+      return 'Energy';
+    }
+
+    if (host.endsWith('.ai')) return 'AI/ML';
+    if (host.includes('saas')) return 'SaaS';
+    if (host.includes('health')) return 'Healthcare';
+    if (host.includes('bank') || host.includes('fin')) return 'FinTech';
+
+    return 'Tech';
+  }
+
+  function extractCompanySize(job: any, jobCount?: number): number | null {
+    if (job?.employer_company_size && typeof job.employer_company_size === 'number') {
+      return job.employer_company_size;
+    }
+    if (job?.company_employees && typeof job.company_employees === 'number') {
+      return job.company_employees;
+    }
+
+    const count = jobCount || 1;
+    if (count < 5) return 50;
+    if (count < 20) return 200;
+    if (count < 50) return 500;
+    return 1000;
+  }
+
+  function extractGeography(job: any): string {
+    // Use universal extraction - handles ANY location format
+    const extracted = extractJobLikeFields(job);
+    let rawLocation = extracted.locationText;
+
+    // Fallback to individual fields if locationText is empty
+    if (!rawLocation) {
+      const city = safeText(job?.job_city);
+      const state = safeText(job?.job_state);
+      const country = safeText(job?.job_country);
+      rawLocation = [city, state, country].filter(Boolean).join(', ');
+    }
+
+    const locationLower = safeLower(rawLocation);
+
+    if (locationLower.includes('united states') || locationLower.includes('usa') || locationLower.includes('us')) {
+      return 'North America';
+    }
+    if (locationLower.includes('canada') || locationLower.includes('toronto') || locationLower.includes('vancouver')) {
+      return 'North America';
+    }
+    if (locationLower.includes('remote')) {
+      return 'Remote';
+    }
+
+    if (rawLocation) return rawLocation;
+
+    return '';
+  }
+
+  function normalizeDomain(raw: unknown): string | null {
+    if (raw == null) return null;
+    const str = typeof raw === 'string' ? raw : String(raw);
+    if (!str) return null;
+    try {
+      let d = str.trim();
+      if (d.startsWith('http://') || d.startsWith('https://')) {
+        const u = new URL(d);
+        d = u.hostname;
+      }
+      return d.replace(/^www\./i, '');
+    } catch {
+      return str.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+    }
+  }
+
+  const determineWindowStatus = (strength: number, momentum: string): string => {
+    if (strength >= 60) return 'OPEN';
+    if (strength >= 30) return 'WATCH';
+    if (strength >= 10) return 'BUILDING';
+    return 'EARLY';
+  };
+
+  const calculateMatching = (): MatchingResult[] => {
+    const momentum = predictionResult.momentumDirection || 'Flat';
+    const windowStatus = determineWindowStatus(signalStrength, momentum);
+
+    const companySize = signals.jobs.metadata?.companySize;
+    const fundingRound = signals.funding.metadata?.round;
+
+    let signalType = 'jobs';
+    if (signals.funding.isLive && signals.funding.value !== 'No data') {
+      signalType = 'funding';
+    } else if (signals.layoffs.isLive && signals.layoffs.value !== 'No data') {
+      signalType = 'layoffs';
+    } else if (signals.hiringVelocity.isLive && signals.hiringVelocity.value !== 'No data') {
+      signalType = 'hiringVelocity';
+    } else if (signals.toolAdoption.isLive && signals.toolAdoption.value !== 'No data') {
+      signalType = 'tech';
+    }
+
+    const companies: { name: string; domain: string; jobCount: number; sampleJob?: any; industry?: string; companySize?: number; geography?: string; jobTitles: string[] }[] = [];
+
+    // DEFENSIVE: Use universal normalizer to get items from ANY payload shape
+    const rawPayload = signals.jobs.rawPayload;
+    const jobItems = normalizeToItems(rawPayload?.data ?? rawPayload);
+
+    // DEFENSIVE: Ensure we have an array before iterating
+    const safeJobItems = Array.isArray(jobItems) ? jobItems : [];
+
+    if (safeJobItems.length > 0) {
+      const companyMap = new Map<string, { name: string; count: number; sampleJob: any; jobTitles: Set<string> }>();
+
+      safeJobItems.forEach((job: any) => {
+        // Use universal field extractor - handles ANY job object shape
+        const extracted = extractJobLikeFields(job);
+        const name = extracted.companyName;
+
+        // Generate domain from URL or slugify company name
+        let domain = extracted.companyUrl;
+        if (!domain) {
+          domain = safeLower(name).replace(/[^a-z0-9]/g, '') + '.com';
+        }
+
+        const key = safeLower(domain);
+        const jobTitle = extracted.title;
+
+        if (companyMap.has(key)) {
+          const existing = companyMap.get(key)!;
+          if (jobTitle) existing.jobTitles.add(jobTitle);
+          companyMap.set(key, { ...existing, count: existing.count + 1 });
+        } else {
+          const titles = new Set<string>();
+          if (jobTitle) titles.add(jobTitle);
+          companyMap.set(key, { name, count: 1, sampleJob: job, jobTitles: titles });
+        }
+      });
+
+      companyMap.forEach((value, domain) => {
+        const normalizedDomain = normalizeDomain(domain);
+        const industry = detectIndustry(value.name, normalizedDomain);
+        const extractedSize = extractCompanySize(value.sampleJob, value.count);
+        const geography = extractGeography(value.sampleJob);
+
+        companies.push({
+          name: value.name,
+          domain,
+          jobCount: value.count,
+          sampleJob: value.sampleJob,
+          industry,
+          companySize: extractedSize ?? undefined,
+          geography,
+          jobTitles: Array.from(value.jobTitles), // Job titles being hired
+        });
+      });
+    }
+
+    // Log extracted companies
+    console.log('[MatchingEngine] Built companies:', companies.length, companies.slice(0, 3));
+
+    // If no companies extracted, return empty results - don't show fake placeholders
+    if (companies.length === 0) {
+      console.warn('[MatchingEngine] No companies extracted from signals.jobs.rawPayload.data');
+      return [];
+    }
+
+    if (process.env.NODE_ENV === 'development') {
+      console.groupCollapsed('[MatchingEngine] Match scoring - batch start');
+      console.log('Total companies (raw):', companies.length);
+      console.log('Connector profile used:', {
+        services_offered: connectorProfile?.services_offered || [],
+        industries_served: connectorProfile?.industries_served || [],
+        solves_for_roles: connectorProfile?.solves_for_roles || [],
+        pain_points_solved: connectorProfile?.pain_points_solved || [],
+        ideal_company_size: connectorProfile?.ideal_company_size || null,
+        geography: connectorProfile?.geography || [],
+      });
+      console.groupEnd();
+    }
+
+    const results: MatchingResult[] = companies.map((company, index) => {
+      const whoHasPressureRoles = detectWhoHasPressure(
+        { type: signalType, companySize, round: fundingRound },
+        companySize
+      );
+
+      const topRole = whoHasPressureRoles[0] || 'CEO';
+      const roleCount = whoHasPressureRoles.length;
+      const whoHasPressure = roleCount > 1
+        ? `${topRole} and ${roleCount - 1} other role${roleCount > 2 ? 's' : ''}`
+        : topRole;
+
+      const targetTitles = detectTargetTitles(whoHasPressureRoles);
+
+      const pressureProfile = `${company.jobCount} open role${company.jobCount !== 1 ? 's' : ''} detected`;
+
+      const whoCanSolve = provider.idealClient || 'Provider matching your profile';
+
+      const timelineLabels = {
+        EARLY: 'Early signal',
+        BUILDING: 'Signal building',
+        WATCH: 'Active signal',
+        OPEN: 'Strong signal'
+      };
+
+      const suggestedTimeline = timelineLabels[windowStatus] || 'Signal detected';
+
+      const { score: matchScore, reasons: matchReasons, breakdown } = calculateMatchScoreForCompany(
+        {
+          whoRoles: whoHasPressureRoles,
+          industry: company.industry ?? null,
+          companySize: company.companySize ?? null,
+          pressureType: signalType,
+          geography: company.geography ?? null
+        },
+        connectorProfile
+      );
+
+      if (process.env.NODE_ENV === 'development') {
+        console.groupCollapsed('[MatchingEngine] Match score for company:', company.name);
+        console.log('Final match score:', matchScore);
+        console.log('Breakdown:', breakdown);
+        console.log('Enriched company meta:', {
+          industry: company.industry,
+          companySize: company.companySize,
+          geography: company.geography,
+        });
+        console.log('Raw data:', {
+          whoRoles: whoHasPressureRoles || [],
+          industry: company.industry ?? null,
+          companySize: company.companySize ?? null,
+          pressureType: signalType,
+          geography: company.geography ?? null,
+        });
+        console.groupEnd();
+      }
+
+      const dealValueEstimate = estimateDealValue(
+        company.companySize || 50,
+        matchScore,
+        signalStrength
+      );
+
+      const probabilityOfClose = calculateProbability(
+        matchScore,
+        signalStrength,
+        windowStatus
+      );
+
+      const exactAngle = getConnectorAngle(topRole);
+
+      return {
+        id: `${company.domain}-${index}`,
+        companyName: company.name,
+        domain: company.domain,
+        signalSummary: `${company.jobCount} open ${company.jobCount === 1 ? 'role' : 'roles'} at ${company.name}`,
+        windowStatus,
+        dealValueEstimate,
+        probabilityOfClose,
+        exactAngle,
+        whoHasPressure,
+        whoHasPressureRoles,  // WHO we contact
+        targetTitles,
+        jobTitlesBeingHired: company.jobTitles || [],  // WHAT is being hired (from signal)
+        pressureProfile,
+        whoCanSolve,
+        suggestedTimeline,
+        jobCount: company.jobCount,
+        signalStrength,
+        matchScore,
+        matchReasons,
+        companySize: company.companySize || 50,
+        signalType: signalType,
+      };
+    });
+
+    const MATCH_THRESHOLD = 0;
+    const filteredResults = results
+      .filter((r) => (connectorProfile ? r.matchScore >= MATCH_THRESHOLD : true))
+      .sort((a, b) => {
+        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        return (b.signalStrength || 0) - (a.signalStrength || 0);
+      });
+
+    if (process.env.NODE_ENV === 'development') {
+      const allScores = results.map((r) => r.matchScore ?? 0);
+      const maxScore = allScores.length ? Math.max(...allScores) : 0;
+
+      console.groupCollapsed('[MatchingEngine] Match scoring - batch result');
+      console.log('Total companies scored:', results.length);
+      console.log('Threshold used:', MATCH_THRESHOLD);
+      console.log('Companies passing threshold:', filteredResults.length);
+      console.log('Highest match score in batch:', maxScore);
+      console.groupEnd();
+    }
+
+    if (filteredResults.length === 0 && connectorProfile && process.env.NODE_ENV === 'development') {
+      const allScores = results.map((r) => r.matchScore ?? 0);
+      const maxScore = allScores.length ? Math.max(...allScores) : 0;
+
+      console.warn('[MatchingEngine] No strong matches in this batch.', {
+        threshold: MATCH_THRESHOLD,
+        maxScoreInBatch: maxScore,
+        totalCompanies: results.length,
+      });
+    }
+
+    return filteredResults;
+  };
+
+  useEffect(() => {
+    try {
+      const results = calculateMatching();
+      setMatchingResults(results);
+      if (results.length > 0 && activeResultIndex >= results.length) {
+        setActiveResultIndex(0);
+      }
+    } catch (error) {
+      console.error('[MatchingEngine] Error calculating matches:', error);
+      setMatchingResults([]);
+    }
+  }, [signalStrength, predictionResult, signals.jobs, signals.funding, signals.layoffs, signals.hiringVelocity, signals.toolAdoption, provider, connectorProfile]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (matchingResults.length === 0) return;
+
+      if (e.key === 'ArrowLeft' && activeResultIndex > 0) {
+        setActiveResultIndex(prev => prev - 1);
+      } else if (e.key === 'ArrowRight' && activeResultIndex < matchingResults.length - 1) {
+        setActiveResultIndex(prev => prev + 1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [matchingResults.length, activeResultIndex]);
+
+  useEffect(() => {
+    if (activeResult?.pressureProfile && activeResult.domain) {
+      const personData = personDataByDomain[activeResult.domain];
+      if (!personData?.title) {
+        setPersonPressureProfileByDomain(prev => ({
+          ...prev,
+          [activeResult.domain]: activeResult.pressureProfile
+        }));
+      }
+    }
+  }, [activeResult?.pressureProfile, activeResult?.domain, personDataByDomain]);
+
+  useEffect(() => {
+    if (activeResult?.domain && isAIConfigured(aiConfig) && !aiWhyNowByDomain[activeResult.domain]) {
+      generateWhyNowAndWhyYou(activeResult.domain);
+    }
+  }, [activeResult?.domain, aiConfig]);
+
+  useEffect(() => {
+    if (!activeResult) return;
+    const personData = personDataByDomain[activeResult.domain];
+    const aiRewrittenIntro = aiRewrittenIntroByDomain[activeResult.domain];
+    const finalIntro = finalIntroByDomain[activeResult.domain];
+    const outboundReadiness = calculateOutboundReadiness(personData);
+    if (outboundReadiness === 'ready' && aiRewrittenIntro && !finalIntro) {
+      setFinalIntroByDomain(prev => ({ ...prev, [activeResult.domain]: aiRewrittenIntro }));
+      setIntroUnlockedByDomain(prev => ({ ...prev, [activeResult.domain]: false }));
+      console.log('[MatchingEngine] Auto-locked intro — contact became ready');
+    }
+  }, [activeResult?.domain, personDataByDomain, aiRewrittenIntroByDomain, finalIntroByDomain]);
+
+  useEffect(() => {
+    if (!activeResult) return;
+    const personData = personDataByDomain[activeResult.domain];
+    const hasDemandIntro = demandIntroByDomain[activeResult.domain];
+    const hasSupplyIntro = supplyIntroByDomain[activeResult.domain];
+    const shouldAutoGenerate =
+      activeResult.whoHasPressureRoles.length > 0 &&
+      personData &&
+      signalStrength > 0 &&
+      (!hasDemandIntro || !hasSupplyIntro) &&
+      !isGeneratingDemandIntro &&
+      !isGeneratingSupplyIntro &&
+      aiConfig &&
+      isAIConfigured(aiConfig);
+
+    if (shouldAutoGenerate) {
+      console.log('[MatchingEngine] Auto-generating dual intros...');
+      generateDualIntros(activeResult.domain);
+    }
+  }, [activeResult?.whoHasPressureRoles, activeResult?.domain, personDataByDomain, signalStrength, demandIntroByDomain, supplyIntroByDomain, aiConfig]);
+
+  const getSignalStrengthColor = (strength: number) => {
+    if (strength >= 70) return '#26F7C7';
+    if (strength >= 40) return '#3A9CFF';
+    return '#666666';
+  };
+
+  const getOperatorCue = () => {
+    const companyCount = matchingResults.length;
+    const totalRoles = matchingResults.reduce((sum, r) => sum + (r.jobCount || 0), 0);
+    return `${companyCount} ${companyCount === 1 ? 'company' : 'companies'} with ${totalRoles} open ${totalRoles === 1 ? 'role' : 'roles'}`;
+  };
+
+  const getSuggestedIntro = (domain: string) => {
+    const personData = personDataByDomain[domain];
+    const finalIntro = finalIntroByDomain[domain];
+    const aiRewrittenIntro = aiRewrittenIntroByDomain[domain];
+    const outboundReadiness = calculateOutboundReadiness(personData);
+    if (finalIntro && outboundReadiness === 'ready') {
+      return finalIntro;
+    }
+
+    if (aiRewrittenIntro) {
+      return aiRewrittenIntro;
+    }
+
+    if (isRewritingIntro) {
+      return 'Writing message…';
+    }
+
+    return '';
+  };
+
+  const handleAiRewriteIntro = async (domain: string) => {
+    if (!aiConfig || !isAIConfigured(aiConfig)) {
+      showToast('warning', 'Please set up AI in Settings first.');
+      return;
+    }
+
+    const result = matchingResults.find(r => r.domain === domain);
+    if (!result) return;
+
+    const personData = personDataByDomain[domain];
+    const personPressureProfile = personPressureProfileByDomain[domain];
+    const primaryRole = result.whoHasPressureRoles[0] || 'CEO';
+    const need = provider.servicesDelivered[0] || 'operational excellence';
+
+    const cacheKey = `${result.signalSummary}-${personData?.name || primaryRole}-${personData?.title || ''}`;
+
+    if (rewriteCache.has(cacheKey)) {
+      const cached = rewriteCache.get(cacheKey)!;
+      setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: cached }));
+
+      const outboundReadiness = calculateOutboundReadiness(personData);
+      if (outboundReadiness === 'ready') {
+        setFinalIntroByDomain(prev => ({ ...prev, [domain]: cached }));
+        setIntroUnlockedByDomain(prev => ({ ...prev, [domain]: false }));
+      }
+      return;
+    }
+
+    setIsRewritingIntro(true);
+
+    try {
+      const windowStatus = result.windowStatus;
+      const signalContext = result.signalSummary;
+
+      const firstName = personData?.name?.split(' ')[0] || primaryRole;
+
+      let primarySignalSummary = '';
+      let actualSignalType = 'jobs';
+
+      const signalContextLower = safeLower(signalContext);
+      if (result.jobCount && result.jobCount > 0) {
+        const roleWord = result.jobCount === 1 ? 'role' : 'roles';
+        primarySignalSummary = `${result.jobCount} open ${roleWord}`;
+        actualSignalType = 'jobs';
+      } else if (signalContextLower.includes('funding') || signalContextLower.includes('raised')) {
+        primarySignalSummary = 'fresh funding round';
+        actualSignalType = 'funding';
+      } else if (signalContextLower.includes('layoff')) {
+        primarySignalSummary = 'recent team changes';
+        actualSignalType = 'layoffs';
+      } else {
+        primarySignalSummary = typeof signalContext === 'string' ? signalContext : '';
+        actualSignalType = 'jobs';
+      }
+
+      let connectorValue = 'extra help';
+      if (connectorProfile?.services_offered && connectorProfile.services_offered.length > 0) {
+        const service = safeLower(connectorProfile.services_offered[0]);
+        if (service.includes('sales')) {
+          connectorValue = 'extra sales capacity';
+        } else if (service.includes('ops')) {
+          connectorValue = 'vetted ops operators';
+        } else if (service.includes('implementation') || service.includes('saas')) {
+          connectorValue = 'implementation specialists';
+        } else {
+          connectorValue = `${service} help`;
+        }
+      } else if (connectorProfile?.pain_points_solved && connectorProfile.pain_points_solved.length > 0) {
+        connectorValue = safeLower(connectorProfile.pain_points_solved[0]);
+      }
+
+      const originalIntro = `hey ${safeLower(firstName)} — saw ${primarySignalSummary}, i can connect you with ${connectorValue}, want a quick look?`;
+
+      const companyName = result.companyName;
+
+      const rewritten = await rewriteIntro(originalIntro, aiConfig, {
+        personFirstName: firstName,
+        personFullName: personData?.name,
+        personTitle: personData?.title || primaryRole,  // Person we're contacting (for messaging)
+        companyName: companyName,
+        companyDomain: result.domain,
+        signalType: actualSignalType,
+        signalSummary: primarySignalSummary,
+        roleCount: result.jobCount || 1,
+        windowStatus: windowStatus,
+        pressureProfile: personPressureProfile || result.pressureProfile,
+        jobTitlesBeingHired: result.jobTitlesBeingHired || [],  // Job titles FROM SIGNAL for connector selection
+        connectorProfile: connectorProfile || undefined,
+        campaignMode: campaignMode
+      });
+
+      const finalIntro = rewritten && rewritten.trim() !== '' ? rewritten : originalIntro;
+
+      setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: finalIntro }));
+
+      const newCache = new Map(rewriteCache);
+      newCache.set(cacheKey, finalIntro);
+      setRewriteCache(newCache);
+
+      const outboundReadiness = calculateOutboundReadiness(personData);
+      if (outboundReadiness === 'ready') {
+        setFinalIntroByDomain(prev => ({ ...prev, [domain]: finalIntro }));
+        setIntroUnlockedByDomain(prev => ({ ...prev, [domain]: false }));
+        console.log('[MatchingEngine] Intro locked — ready to send');
+      }
+    } catch (error) {
+      console.error('Error rewriting intro:', error);
+      showToast('error', 'AI rewrite failed. Check Settings and try again.');
+    } finally {
+      setIsRewritingIntro(false);
+    }
+  };
+
+  const handleRegenerateIntro = (domain: string) => {
+    const result = matchingResults.find(r => r.domain === domain);
+    if (!result) return;
+
+    const personData = personDataByDomain[domain];
+    const primaryRole = result.whoHasPressureRoles[0] || 'CEO';
+
+    // Clear the cache entry to force a new generation
+    const cacheKey = `${result.signalSummary}-${personData?.name || primaryRole}-${personData?.title || ''}`;
+    setRewriteCache(prev => {
+      const newCache = new Map(prev);
+      newCache.delete(cacheKey);
+      return newCache;
+    });
+
+    setFinalIntroByDomain(prev => ({ ...prev, [domain]: '' }));
+    setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: '' }));
+    setDemandIntroByDomain(prev => ({ ...prev, [domain]: '' }));
+    setSupplyIntroByDomain(prev => ({ ...prev, [domain]: '' }));
+    setIntroUnlockedByDomain(prev => ({ ...prev, [domain]: true }));
+    console.log('[MatchingEngine] Clearing intro and cache for regeneration');
+
+    setTimeout(() => {
+      generateDualIntros(domain);
+    }, 100);
+  };
+
+  // Generate both demand and supply intros for a domain
+  const generateDualIntros = async (domain: string) => {
+    const result = matchingResults.find(r => r.domain === domain);
+    if (!result) return;
+
+    const personData = personDataByDomain[domain];
+    if (!personData?.name || !personData?.email) {
+      console.log('[DualIntros] No contact data, skipping intro generation');
+      return;
+    }
+
+    console.log('[DualIntros] Generating demand and supply intros for', domain);
+
+    // Get the selected PROVIDER (like Toptal, Terminal, etc.) for this domain
+    const selectedProvider = selectedSupplyByDomain[domain];
+    const supplyContactForIntro = supplyContactByDomain[domain];
+
+    // Provider info for demand intro - this is WHO we're connecting them to
+    const provider = {
+      name: selectedProvider?.name || 'a recruiting partner',
+      company: selectedProvider?.name || 'a staffing firm',
+      specialty: selectedProvider?.specialty || 'fills these roles fast'
+    };
+
+    const firstName = personData.name.split(' ')[0];
+    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+
+    // Generate Demand Intro (to the hiring company)
+    // This mentions the PROVIDER company (e.g., "I know someone at Toptal who...")
+    setIsGeneratingDemandIntro(true);
+    try {
+      const demandIntro = await generateDemandIntro(
+        aiConfig,
+        {
+          firstName,
+          companyName: result.companyName,
+          signalDetail,
+          roleLabel: result.jobTitlesBeingHired?.[0] || '',
+          roleCount: result.jobCount || 1
+        },
+        {
+          name: provider.name,
+          company: provider.company,
+          specialty: provider.specialty
+        }
+      );
+      setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+      // Also set as main intro for backwards compatibility
+      setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+      console.log('[DualIntros] Demand intro generated:', demandIntro);
+    } catch (error) {
+      console.error('[DualIntros] Demand intro failed:', error);
+    } finally {
+      setIsGeneratingDemandIntro(false);
+    }
+
+    // Generate Supply Intro (to the provider/recruiter)
+    // CRITICAL GATE: Only generate if we have a valid supply contact with email
+    if (!supplyContactForIntro || !supplyContactForIntro.email) {
+      console.log('[DualIntros] SKIPPING supply intro - no supply contact found');
+      // Clear any stale supply intro for this domain
+      setSupplyIntroByDomain(prev => {
+        const updated = { ...prev };
+        delete updated[domain];
+        return updated;
+      });
+      return; // Do not generate supply intro without a real contact
+    }
+
+    // This mentions the DEMAND company and DEMAND contact
+    setIsGeneratingSupplyIntro(true);
+    try {
+      const supplyIntro = await generateSupplyIntro(
+        aiConfig,
+        {
+          company_name: result.companyName,
+          person_name: personData.name,
+          title: personData.title || 'decision maker'
+        },
+        {
+          summary: signalDetail,
+          roleCount: result.jobCount || 1,
+          roleLabel: result.jobTitlesBeingHired?.[0] || '', // Pass first job title for role type
+          fitReason: `${result.companyName} is actively hiring`
+        },
+        {
+          name: supplyContactForIntro.name // Use actual contact name, not fallback
+        },
+        // Pass provider info so intro is tailored to the specific provider
+        selectedProvider ? {
+          name: selectedProvider.name,
+          specialty: selectedProvider.specialty
+        } : undefined
+      );
+      setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
+      console.log('[DualIntros] Supply intro generated for', supplyContactForIntro.name, 'at', selectedProvider?.name, ':', supplyIntro);
+    } catch (error) {
+      console.error('[DualIntros] Supply intro failed:', error);
+    } finally {
+      setIsGeneratingSupplyIntro(false);
+    }
+  };
+
+  // Individual regenerate functions for demand and supply intros
+  const regenerateDemandIntro = async (domain: string) => {
+    const result = matchingResults.find(r => r.domain === domain);
+    if (!result) return;
+
+    const personData = personDataByDomain[domain];
+    if (!personData?.name) return;
+
+    // Get the selected provider (like Toptal) for this domain
+    const selectedProvider = selectedSupplyByDomain[domain];
+    const provider = {
+      name: selectedProvider?.name || 'a recruiting partner',
+      company: selectedProvider?.name || 'a staffing firm',
+      specialty: selectedProvider?.specialty || 'fills these roles fast',
+    };
+
+    const firstName = personData.name.split(' ')[0];
+    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+
+    setIsGeneratingDemandIntro(true);
+    try {
+      const demandIntro = await generateDemandIntro(
+        aiConfig,
+        {
+          firstName,
+          companyName: result.companyName,
+          signalDetail,
+          roleLabel: result.jobTitlesBeingHired?.[0] || '',
+          roleCount: result.jobCount || 1
+        },
+        { name: provider.name, company: provider.company, specialty: provider.specialty }
+      );
+      setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+      setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+      console.log('[DualIntros] Demand intro regenerated:', demandIntro);
+    } catch (error) {
+      console.error('[DualIntros] Demand intro failed:', error);
+    } finally {
+      setIsGeneratingDemandIntro(false);
+    }
+  };
+
+  const regenerateSupplyIntro = async (domain: string) => {
+    const result = matchingResults.find(r => r.domain === domain);
+    if (!result) return;
+
+    const personData = personDataByDomain[domain];
+    if (!personData?.name) return;
+
+    // Get the supply contact (person at provider company)
+    const supplyContactForIntro = supplyContactByDomain[domain];
+    // Get the selected provider (Toptal, Terminal, etc.)
+    const selectedProvider = selectedSupplyByDomain[domain];
+
+    // CRITICAL GATE: Only regenerate if we have a valid supply contact with email
+    if (!supplyContactForIntro || !supplyContactForIntro.email) {
+      console.log('[DualIntros] Cannot regenerate supply intro - no supply contact found');
+      return;
+    }
+
+    console.log('[DualIntros] Regenerating supply intro for provider:', selectedProvider?.name, 'contact:', supplyContactForIntro.name);
+
+    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+
+    setIsGeneratingSupplyIntro(true);
+    try {
+      const supplyIntro = await generateSupplyIntro(
+        aiConfig,
+        {
+          company_name: result.companyName,
+          person_name: personData.name,
+          title: personData.title || 'decision maker'
+        },
+        {
+          summary: signalDetail,
+          roleCount: result.jobCount || 1,
+          roleLabel: result.jobTitlesBeingHired?.[0] || '', // Pass first job title for role type
+          fitReason: `${result.companyName} is actively hiring`
+        },
+        { name: supplyContactForIntro.name },
+        // Pass provider info so intro is tailored to the specific provider
+        selectedProvider ? {
+          name: selectedProvider.name,
+          specialty: selectedProvider.specialty
+        } : undefined
+      );
+      setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
+      console.log('[DualIntros] Supply intro regenerated for', supplyContactForIntro.name, 'at', selectedProvider?.name, ':', supplyIntro);
+    } catch (error) {
+      console.error('[DualIntros] Supply intro failed:', error);
+    } finally {
+      setIsGeneratingSupplyIntro(false);
+    }
+  };
+
+  const generateWhyNowAndWhyYou = async (domain: string) => {
+    const result = matchingResults.find(r => r.domain === domain);
+    if (!result || !isAIConfigured(aiConfig)) return;
+
+    try {
+      const sampleJob = signals.jobs.rawPayload?.data?.find((job: any) => {
+        const jobDomain = job.employer_website || job.company_website || '';
+        return jobDomain.includes(result.domain) || result.domain.includes(jobDomain);
+      });
+
+      const whyNowPromise = generateWhyNow(aiConfig, {
+        companyName: result.companyName,
+        jobTitle: sampleJob?.job_title,
+        jobDescription: sampleJob?.job_description,
+        roleCount: result.jobCount || 1,
+        companySize: result.companySize || 50,
+        signalType: result.signalType
+      });
+
+      const primaryRole = result.whoHasPressureRoles[0] || 'CEO';
+      const whyYouPromise = generateWhyYou(aiConfig, {
+        buyerTitle: primaryRole,
+        companyName: result.companyName,
+        jobTitle: sampleJob?.job_title,
+        jobDescription: sampleJob?.job_description,
+        connectorServices: connectorProfile?.services_offered
+      });
+
+      const [whyNow, whyYou] = await Promise.all([whyNowPromise, whyYouPromise]);
+
+      setAiWhyNowByDomain(prev => ({ ...prev, [domain]: whyNow }));
+      setAiWhyYouByDomain(prev => ({ ...prev, [domain]: whyYou }));
+    } catch (error) {
+      console.error('[MatchingEngine] Failed to generate Why Now/Why You:', error);
+    }
+  };
+
+  // Enrich supply contact (person at dynamically discovered supply company)
+  const enrichSupplyContact = async (companyDomain: string, result: MatchingResult, specificSupply?: SupplyCompany) => {
+    // Determine hire category from job titles being hired
+    const hireCategory = extractHireCategory(
+      result.jobTitlesBeingHired?.map(t => ({ title: t })),
+      result.signalSummary
+    );
+
+    // Find matching supply companies from discovered list
+    let selectedSupply: SupplyCompany | null = null;
+    let alternatives: SupplyCompany[] = [];
+
+    if (specificSupply) {
+      // User chose a specific supply company
+      selectedSupply = specificSupply;
+      alternatives = discoveredSupplyCompanies.filter(s => s.domain !== specificSupply.domain);
+    } else {
+      // Auto-select from dynamically discovered supply companies
+      const matches = findMatchingSupply(discoveredSupplyCompanies, hireCategory, 5);
+
+      if (matches.length === 0) {
+        console.log('[SupplyEnrich] No supply companies discovered for category:', hireCategory);
+        console.log('[SupplyEnrich] Configure Supply Apify URL in Settings to enable two-sided matching');
+        return;
+      }
+
+      selectedSupply = matches[0];
+      alternatives = matches.slice(1);
+    }
+
+    // Check if we have Apollo API key
+    const apolloKey = enrichmentConfig?.apolloApiKey || enrichmentConfig?.apiKey;
+    if (!apolloKey) {
+      console.log('[SupplyEnrich] No Apollo API key, skipping supply enrichment');
+      return;
+    }
+
+    // Build list of supply companies to try: selected first, then alternatives
+    const suppliesToTry = [selectedSupply, ...alternatives].filter(Boolean) as SupplyCompany[];
+
+    console.log(`[SupplyEnrich] Will try ${suppliesToTry.length} supply companies: ${suppliesToTry.map(s => s.name).join(' → ')}`);
+
+    // Clear previous supply contact
+    setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: null }));
+    setIsEnrichingSupplyByDomain(prev => ({ ...prev, [companyDomain]: true }));
+
+    // === SUPPLY FALLBACK LOOP ===
+    // Try each supply company until we find a contact with email
+    let foundContact: SupplyContact | null = null;
+    let successfulSupply: SupplyCompany | null = null;
+
+    for (const supply of suppliesToTry) {
+      console.log(`[SupplyEnrich] Trying supply: ${supply.name} (${supply.domain})`);
+
+      // Update UI to show which supply company we're searching
+      setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: supply }));
+
+      try {
+        // Get appropriate titles for this supply company's category
+        const searchTitles = getSupplyEnrichmentTitles(supply.hireCategory);
+
+        const supplyContact = await findSupplyContact(
+          apolloKey,
+          supply.domain,
+          supply.name,
+          searchTitles
+        );
+
+        if (supplyContact && supplyContact.email) {
+          foundContact = supplyContact;
+          successfulSupply = supply;
+          console.log(`[SupplyEnrich] ✓ FOUND at ${supply.name}: ${supplyContact.name} (${supplyContact.title})`);
+          break; // Stop searching, we found one
+        } else {
+          console.log(`[SupplyEnrich] ✗ No contact with email at ${supply.name}`);
+        }
+      } catch (error) {
+        console.error(`[SupplyEnrich] Error at ${supply.name}:`, error);
+      }
+    }
+
+    // Update final state
+    if (foundContact && successfulSupply) {
+      setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: foundContact }));
+      setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: successfulSupply }));
+      // Update alternatives to exclude the successful supply company
+      const remainingAlternatives = suppliesToTry.filter(s => s.domain !== successfulSupply!.domain);
+      setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
+      console.log(`[SupplyEnrich] === SUCCESS: ${foundContact.name} @ ${successfulSupply.name} ===`);
+    } else {
+      console.log(`[SupplyEnrich] === FAILED: No supply contact found at any discovered company ===`);
+      // Keep the last tried supply selected but with null contact
+      setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: alternatives }));
+    }
+
+    setIsEnrichingSupplyByDomain(prev => ({ ...prev, [companyDomain]: false }));
+  };
+
+  // Switch to a different supply company and re-enrich supply contact
+  const handleSwitchSupply = async (companyDomain: string, newSupply: SupplyCompany) => {
+    const result = matchingResults.find(r => r.domain === companyDomain);
+    if (!result) return;
+
+    console.log(`[SupplyEnrich] Switching supply to ${newSupply.name} for ${companyDomain}`);
+
+    // Clear cached supply intro so it regenerates with new supply company
+    setSupplyIntroByDomain(prev => {
+      const updated = { ...prev };
+      delete updated[companyDomain];
+      return updated;
+    });
+
+    // Enrich with new supply company
+    await enrichSupplyContact(companyDomain, result, newSupply);
+
+    // After enrichment completes, regenerate supply intro
+    // Use setTimeout to ensure state has flushed before regeneration
+    setTimeout(() => {
+      console.log(`[SupplyEnrich] Regenerating supply intro for ${companyDomain} after provider switch`);
+      regenerateSupplyIntro(companyDomain);
+    }, 150);
+  };
+
+  const handleEnrichPerson = async (companyDomain?: string) => {
+    if (!companyDomain) {
+      showToast('warning', 'Company info missing. Check signals first.');
+      return;
+    }
+
+    const result = matchingResults.find(r => r.domain === companyDomain);
+    if (!result) {
+      showToast('warning', 'No result available yet.');
+      return;
+    }
+
+    setIsEnrichingDomain(companyDomain);
+    setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: false }));
+
+    try {
+      const { data: cachedRecord } = await supabase
+        .from('signal_history')
+        .select('enriched_at, person_name, person_title, person_email, person_linkedin, target_titles')
+        .eq('company_domain', companyDomain)
+        .not('enriched_at', 'is', null)
+        .order('enriched_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (cachedRecord?.enriched_at) {
+        const enrichedAt = new Date(cachedRecord.enriched_at);
+        const daysSince = (new Date().getTime() - enrichedAt.getTime()) / (1000 * 60 * 60 * 24);
+
+        if (daysSince < 7) {
+          console.log('[MatchingEngine] Using cached enrichment from', enrichedAt);
+          const cachedPerson: PersonData = {
+            name: cachedRecord.person_name,
+            title: cachedRecord.person_title,
+            email: cachedRecord.person_email,
+            linkedin: cachedRecord.person_linkedin,
+            confidence: 90,
+            enrichedAt: enrichedAt,
+            status: calculateEnrichmentStatus({
+              name: cachedRecord.person_name,
+              title: cachedRecord.person_title,
+              email: cachedRecord.person_email,
+              linkedin: cachedRecord.person_linkedin,
+              confidence: 90
+            })
+          };
+          setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: cachedPerson }));
+
+          console.log('[Pressure Profile] CACHED - Person:', {
+            name: cachedPerson.name,
+            title: cachedPerson.title,
+            company: result.companyName
+          });
+
+          if (cachedPerson.title) {
+            const pressureProfile = getContextualPressureProfile({
+              personTitle: cachedPerson.title,
+              signalType: result.signalType,
+              companySize: result.companySize,
+              roleCount: result.jobCount || 1,
+              companyName: result.companyName
+            });
+            console.log('[Pressure Profile] CACHED - Result:', pressureProfile);
+            setPersonPressureProfileByDomain(prev => ({ ...prev, [companyDomain]: pressureProfile }));
+          } else {
+            console.log('[Pressure Profile] CACHED - Skipped (no title)');
+          }
+
+          setIsEnrichingDomain(null);
+          return;
+        }
+      }
+
+      if (enrichmentConfig.provider === 'none' || !isEnrichmentConfigured(enrichmentConfig)) {
+        showToast('warning', 'Set up contact provider in Settings first.');
+        setIsEnrichingDomain(null);
+        return;
+      }
+
+      console.log('[MatchingEngine] Enriching person for domain:', companyDomain);
+      console.log('[MatchingEngine] WHO-derived targetTitles to pass to Apollo:', result.targetTitles);
+      console.log('[MatchingEngine] WHO pressure roles:', result.whoHasPressureRoles);
+      console.log('[MatchingEngine] Work Owner settings:', workOwnerSettings);
+
+      // CRITICAL: Determine hire category for STRICT role alignment
+      // This determines which titles are valid (e.g., engineering signal = only engineering leaders)
+      const determineHireCategory = (): WorkOwnerHireCategory => {
+        const summary = safeLower(result.signalSummary);
+        const jobTitlesArr = Array.isArray(result.jobTitlesBeingHired) ? result.jobTitlesBeingHired : [];
+        const jobTitles = jobTitlesArr.map(t => safeLower(t)).join(' ');
+
+        // Check for sales FIRST (before engineering, since "sales engineer" should be sales)
+        if (/\bsales\b|account exec|sdr\b|bdr\b|closer|revenue|business develop|\bae\b|account manager/.test(summary) ||
+            /\bsales\b|account exec|sdr\b|bdr\b/.test(jobTitles)) {
+          return 'sales';
+        }
+
+        // Engineering
+        if (/engineer|developer|software|frontend|backend|fullstack|full-stack|devops|sre|architect|programmer|data scientist|ml |machine learning/.test(summary) ||
+            /engineer|developer|software/.test(jobTitles)) {
+          return 'engineering';
+        }
+
+        // Marketing
+        if (/marketing|growth|seo|content|brand|demand gen|social media/.test(summary) ||
+            /marketing|growth/.test(jobTitles)) {
+          return 'marketing';
+        }
+
+        // Operations
+        if (/\bops\b|revops|operations|finance|hr\b|human resources|people ops/.test(summary) ||
+            /operations|ops\b/.test(jobTitles)) {
+          return 'operations';
+        }
+
+        // Funding signals
+        if (/fund|series|raise|investment/.test(safeLower(result.signalType))) {
+          return 'funding';
+        }
+
+        // Default to engineering (most common for job signals)
+        console.log('[MatchingEngine] Could not determine hire category, defaulting to engineering');
+        return 'engineering';
+      };
+
+      const hireCategory = determineHireCategory();
+      console.log(`[MatchingEngine] Determined hire category: ${hireCategory.toUpperCase()}`);
+
+      // Step 1: Try Work Owner Search first (if keywords configured)
+      const workOwnerSettingsForApi: WorkOwnerSettings = {
+        work_owner_departments: workOwnerSettings.departments.join(', '),
+        work_owner_keywords: workOwnerSettings.keywords.join(', '),
+      };
+
+      let person: PersonData | null = null;
+      let searchSource = 'existing';
+
+      // CRITICAL: Pass hireCategory to enforce strict role alignment
+      const workOwner = await findWorkOwnerByDomain(
+        companyDomain,
+        workOwnerSettingsForApi,
+        enrichmentConfig.apiKey || '',
+        hireCategory
+      );
+
+      if (workOwner) {
+        // Work owner found - use it directly
+        console.log('[MatchingEngine] Work Owner found:', workOwner.name, workOwner.title);
+        person = {
+          name: workOwner.name,
+          title: workOwner.title,
+          email: workOwner.email,
+          linkedin: workOwner.linkedin,
+          confidence: workOwner.confidence,
+          status: workOwner.email ? 'ready' : 'found_no_contact',
+        };
+        searchSource = 'work_owner';
+      } else {
+        // Step 2: Fall back to existing enrichment pipeline
+        console.log('[MatchingEngine] Work Owner not found, falling back to existing enrichment');
+
+        // Build enrichment context
+        const enrichmentContext = {
+          signalType: result.signalType,
+          jobCategory: roleCategoryFromJobTitle(result.jobTitlesBeingHired?.[0]),
+          companyName: result.companyName,
+          companySize: result.companySize,
+        };
+
+        person = await enrichPerson(companyDomain, result.targetTitles || [], enrichmentConfig, result.whoHasPressureRoles || [], enrichmentContext);
+      }
+
+      if (person) {
+        console.log('[MatchingEngine] Enrichment complete via:', searchSource);
+        console.log('[MatchingEngine] Person:', {
+          name: person.name,
+          title: person.title,
+          company: result.companyName,
+          source: searchSource
+        });
+
+        setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: person }));
+        setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: false }));
+        const strategy = searchSource === 'work_owner' ? 'work_owner' : ((person as any).searchStrategy || 'primary');
+        console.log('[MatchingEngine] Person enriched:', person.name, person.title, 'status:', person.status, 'source:', strategy);
+
+        if (searchSource === 'work_owner') {
+          console.log('[MatchingEngine] Found via Work Owner Search');
+        } else if (strategy === 'fallback') {
+          console.log('[MatchingEngine] Found via fallback - closest decision maker');
+        }
+
+        const title = person.title || 'contact';
+        const sourceLabel = searchSource === 'work_owner' ? ' (work owner)' : '';
+        showToast('success', `Found ${person.name} - ${title}${sourceLabel}`);
+
+        if (person.title) {
+          const pressureProfile = getContextualPressureProfile({
+            personTitle: person.title,
+            signalType: result.signalType,
+            companySize: result.companySize,
+            roleCount: result.jobCount || 1,
+            companyName: result.companyName
+          });
+          console.log('[Pressure Profile] FRESH - Result:', pressureProfile);
+          setPersonPressureProfileByDomain(prev => ({ ...prev, [companyDomain]: pressureProfile }));
+        } else {
+          console.log('[Pressure Profile] FRESH - Skipped (no title)');
+        }
+
+        await supabase
+          .from('signal_history')
+          .update({
+            person_name: person.name,
+            person_title: person.title,
+            person_email: person.email,
+            person_linkedin: person.linkedin,
+            target_titles: result.targetTitles,
+            enriched_at: new Date().toISOString()
+          })
+          .eq('company_domain', companyDomain)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        console.log('[MatchingEngine] Saved enriched person data to database');
+
+        // Step 3: Also enrich supply contact (provider company contact)
+        await enrichSupplyContact(companyDomain, result);
+      } else {
+        setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: true }));
+        showToast('warning', 'No contact found for this company');
+
+        await supabase
+          .from('signal_history')
+          .update({
+            enriched_at: new Date().toISOString()
+          })
+          .eq('company_domain', companyDomain)
+          .order('created_at', { ascending: false })
+          .limit(1);
+      }
+    } catch (error) {
+      console.error('[MatchingEngine] Error enriching person:', error);
+      showToast('error', 'Could not get contact. Check Settings.');
+    } finally {
+      setIsEnrichingDomain(null);
+    }
+  };
+
+  const handleSendToInstantly = async (domain: string) => {
+    console.log('[Instantly] Button clicked');
+
+    const result = matchingResults.find(r => r.domain === domain);
+    const personData = personDataByDomain[domain];
+    const finalIntro = finalIntroByDomain[domain];
+
+    console.log('[Instantly] Person data:', personData);
+    console.log('[Instantly] Config:', {
+      hasKey: !!instantlyConfig?.apiKey,
+      hasCampaign: !!instantlyConfig?.campaignId
+    });
+
+    if (!result || !personData || !personData.email || !finalIntro) {
+      console.error('[Instantly] Missing required data:', {
+        hasResult: !!result,
+        hasPersonData: !!personData,
+        hasEmail: !!personData?.email,
+        hasFinalIntro: !!finalIntro
+      });
+      showToast('error', 'Missing required data for Instantly lead creation');
+      return;
+    }
+
+    if (!instantlyConfig?.apiKey || !instantlyConfig?.campaignId) {
+      console.error('[Instantly] Config missing:', {
+        hasApiKey: !!instantlyConfig?.apiKey,
+        hasCampaignId: !!instantlyConfig?.campaignId
+      });
+      showToast('error', 'Please set up Instantly in Settings first');
+      return;
+    }
+
+    const [first_name, ...rest] = (personData.name || '').split(' ');
+    const last_name = rest.join(' ');
+
+    // Validate required fields
+    if (!personData.email) {
+      console.error('[Instantly] Email is required when using campaign');
+      showToast('error', 'Email is required to send lead to Instantly');
+      return;
+    }
+
+    if (!instantlyConfig.campaignId) {
+      console.error('[Instantly] Campaign ID is required');
+      showToast('error', 'Campaign ID is required. Please configure in Settings');
+      return;
+    }
+
+    const payload = {
+      campaign: instantlyConfig.campaignId,  // Note: "campaign" not "campaign_id"
+      email: personData.email,
+      first_name: first_name || '',
+      last_name: last_name || '',
+      company_name: result.companyName || '',
+      website: result.domain || '',
+      personalization: finalIntro,  // Newlines are preserved
+      skip_if_in_workspace: true,
+      skip_if_in_campaign: true,
+      skip_if_in_list: true,
+      custom_variables: {
+        signal_summary: result.signalSummary,
+        who_has_pressure: result.whoHasPressure,
+        pressure_profile: result.pressureProfile,
+        window_status: result.windowStatus,
+        signal_strength: result.signalStrength.toString()
+      }
+    };
+
+    console.log('[Instantly] Payload being sent:', payload);
+
+    try {
+      setIsSendingInstantlyByDomain(prev => ({ ...prev, [domain]: true }));
+      const ok = await createInstantlyLead(instantlyConfig.apiKey, payload);
+      setIsSendingInstantlyByDomain(prev => ({ ...prev, [domain]: false }));
+
+      if (!ok) {
+        console.error('[Instantly] API returned false/error');
+        showToast('error', 'Could not send to Instantly. Please try again');
+        return;
+      }
+
+      console.log('[Instantly] Lead sent successfully');
+      showToast('success', 'Lead sent to Instantly');
+    } catch (error) {
+      console.error('[Instantly] Full error:', error);
+      console.error('[Instantly] Error message:', (error as Error).message);
+      console.error('[Instantly] Error stack:', (error as Error).stack);
+      setIsSendingInstantlyByDomain(prev => ({ ...prev, [domain]: false }));
+      showToast('error', 'Could not send to Instantly. Please try again');
+    }
+  };
+
+  const handleDualSend = async (domain: string, type: 'DEMAND' | 'SUPPLY') => {
+    console.log(`[DualSend] Sending ${type} for ${domain}`);
+    console.log('[DualSend] Instantly config:', {
+      hasApiKey: !!instantlyConfig?.apiKey,
+      hasCampaignDemand: !!instantlyConfig?.campaignDemand,
+      hasCampaignSupply: !!instantlyConfig?.campaignSupply,
+      hasOldCampaignId: !!instantlyConfig?.campaignId,
+    });
+
+    const result = matchingResults.find(r => r.domain === domain);
+    const personData = personDataByDomain[domain]; // Demand contact (person at hiring company)
+
+    // For DEMAND: we need the demand contact's email
+    if (type === 'DEMAND' && (!result || !personData || !personData.email)) {
+      showToast('error', 'Missing contact data for Demand lead');
+      return;
+    }
+
+    // For SUPPLY: we need to select provider + enrich supply contact
+    let supplyContact: SupplyContact | null = null;
+    let selectedProvider: SupplyProvider | null = null;
+    let supplyIntroForSend: string | undefined;
+
+    if (type === 'SUPPLY') {
+      // Step 1: Check if provider already selected, or select one
+      selectedProvider = selectedSupplyByDomain[domain];
+
+      if (!selectedProvider) {
+        const providerResult = selectProvider(
+          result?.signalType || 'jobs',
+          result?.jobTitlesBeingHired || [],
+          result?.signalSummary || ''
+        );
+
+        if ('blocked' in providerResult) {
+          showToast('error', `Cannot select provider: ${providerResult.reason}`);
+          return;
+        }
+
+        selectedProvider = providerResult.provider;
+        setSelectedProviderByDomain(prev => ({ ...prev, [domain]: selectedProvider }));
+        setAlternativeProvidersByDomain(prev => ({ ...prev, [domain]: providerResult.alternatives }));
+      }
+      console.log(`[DualSend] Selected provider: ${selectedProvider.name} (${selectedProvider.domain})`);
+
+      // Step 2: Check if we already have an enriched supply contact
+      supplyContact = supplyContactByDomain[domain];
+
+      if (!supplyContact) {
+        // Step 3: Enrich supply contact using Apollo
+        const apolloKey = enrichmentConfig?.apolloApiKey;
+        if (!apolloKey) {
+          showToast('error', 'Apollo API key required for supply enrichment. Set it in Settings.');
+          return;
+        }
+
+        console.log(`[DualSend] Enriching supply contact at ${selectedProvider.domain}...`);
+        setIsEnrichingSupplyByDomain(prev => ({ ...prev, [domain]: true }));
+
+        try {
+          supplyContact = await findSupplyContact(
+            apolloKey,
+            selectedProvider.domain,
+            selectedProvider.name,
+            selectedProvider.defaultTitles
+          );
+
+          if (supplyContact) {
+            setSupplyContactByDomain(prev => ({ ...prev, [domain]: supplyContact }));
+            console.log(`[DualSend] Found supply contact: ${supplyContact.name} (${supplyContact.title}) at ${supplyContact.company}`);
+          }
+        } catch (error) {
+          console.error('[DualSend] Supply enrichment failed:', error);
+        } finally {
+          setIsEnrichingSupplyByDomain(prev => ({ ...prev, [domain]: false }));
+        }
+      }
+
+      if (!supplyContact || !supplyContact.email) {
+        showToast('error', `Could not find contact at ${selectedProvider.name}. Try again later.`);
+        return;
+      }
+
+      // Step 4: Generate supply intro with actual supply contact name
+      console.log(`[DualSend] Generating supply intro for ${supplyContact.name}...`);
+      const supplyFirstName = supplyContact.name.split(' ')[0];
+      const demandFirstName = personData?.name?.split(' ')[0] || 'the contact';
+      const roleCount = result?.jobCount || 1;
+      const signalDetail = result?.signalSummary || `${roleCount} open roles`;
+
+      try {
+        const freshSupplyIntro = await generateSupplyIntro(
+          aiConfig,
+          {
+            company_name: result?.companyName || '',
+            person_name: personData?.name || demandFirstName, // Full name for canonical template
+            title: personData?.title || 'decision maker'
+          },
+          {
+            summary: signalDetail,
+            roleCount: roleCount,
+            roleLabel: result?.jobTitlesBeingHired?.[0] || 'role',
+            hireCategory: result?.hireCategory || 'engineering' // Pass category for canonical template
+          },
+          {
+            name: supplyFirstName
+          },
+          // Pass provider info so intro is tailored to the specific provider
+          selectedProvider ? {
+            name: selectedProvider.name,
+            specialty: selectedProvider.specialty
+          } : undefined
+        );
+        setSupplyIntroByDomain(prev => ({ ...prev, [domain]: freshSupplyIntro }));
+        // Store the intro for immediate use (state won't update synchronously)
+        supplyIntroForSend = freshSupplyIntro;
+        console.log(`[DualSend] Fresh supply intro generated for ${supplyContact.name} at ${selectedProvider?.name}:`, freshSupplyIntro);
+      } catch (error) {
+        console.error('[DualSend] Failed to generate supply intro:', error);
+        showToast('error', 'Failed to generate supply intro');
+        return;
+      }
+    }
+
+    let campaignId = type === 'DEMAND'
+      ? instantlyConfig?.campaignDemand
+      : instantlyConfig?.campaignSupply;
+
+    if (!campaignId && instantlyConfig?.campaignId) {
+      console.log('[DualSend] Falling back to old single campaign ID');
+      campaignId = instantlyConfig.campaignId;
+    }
+
+    if (!instantlyConfig?.apiKey) {
+      showToast('error', 'Please set up Instantly API key in Settings first');
+      return;
+    }
+
+    if (!campaignId || campaignId.trim() === '') {
+      showToast('error', `Please set up ${type === 'DEMAND' ? 'Demand' : 'Supply'} campaign in Settings first`);
+      return;
+    }
+
+    // Use the correct intro based on send type
+    // For Supply, use the freshly generated intro (state update is async)
+    const aiGeneratedIntro = type === 'DEMAND'
+      ? (demandIntroByDomain[domain] || aiRewrittenIntroByDomain[domain])
+      : (supplyIntroForSend || supplyIntroByDomain[domain]);
+
+    console.log(`[DualSend] Using ${type} intro:`, aiGeneratedIntro);
+
+    // Build params differently for Demand vs Supply
+    let params: DualSendParams;
+
+    if (type === 'DEMAND') {
+      // DEMAND: Send to the demand contact (the person at the hiring company)
+      const [first_name, ...rest] = (personData?.name || '').split(' ');
+      const last_name = rest.join(' ');
+
+      params = {
+        campaignId,
+        email: personData.email,
+        first_name: first_name || '',
+        last_name: last_name || '',
+        company_name: result?.companyName || '',
+        website: result?.domain,
+        type,
+        signal_metadata: {
+          signal_type: result?.signalSummary,
+          signal_strength: result?.signalStrength,
+          who_has_pressure: result?.whoHasPressure,
+          pressure_profile: result?.pressureProfile,
+          window_status: result?.windowStatus
+        },
+        contact_title: personData?.title,
+        company_domain: result?.domain,
+        intro_text: aiGeneratedIntro
+      };
+    } else {
+      // SUPPLY: Send to the enriched supply contact (person at provider company)
+      // CRITICAL: Use SUPPLY company name/domain, NOT demand company
+      const [supply_first, ...supply_rest] = (supplyContact!.name || '').split(' ');
+      const supply_last = supply_rest.join(' ');
+
+      params = {
+        campaignId,
+        email: supplyContact!.email,
+        first_name: supply_first || '',
+        last_name: supply_last || '',
+        company_name: selectedProvider?.name || supplyContact!.company || '', // SUPPLY company name
+        website: selectedProvider?.domain || '', // SUPPLY company domain
+        type,
+        signal_metadata: {
+          signal_type: result?.signalSummary,
+          signal_strength: result?.signalStrength,
+          // Demand company info for reference in sequences
+          demand_company_name: result?.companyName,
+          demand_company_domain: result?.domain,
+          demand_contact_name: personData?.name,
+          demand_contact_title: personData?.title,
+          demand_contact_email: personData?.email,
+          // Supply company info
+          supply_contact_company: supplyContact!.company,
+          supply_contact_title: supplyContact!.title
+        },
+        contact_title: supplyContact!.title,
+        company_domain: selectedProvider?.domain || '', // SUPPLY company domain
+        intro_text: aiGeneratedIntro
+      };
+
+      console.log(`[DualSend] SUPPLY recipient: ${supplyContact!.email} (${supplyContact!.name} @ ${selectedProvider?.name || supplyContact!.company})`);
+    }
+
+    try {
+      setIsSendingInstantlyByDomain(prev => ({ ...prev, [`${domain}-${type}`]: true }));
+      const sendResult = await sendToInstantly(instantlyConfig.apiKey, params);
+      setIsSendingInstantlyByDomain(prev => ({ ...prev, [`${domain}-${type}`]: false }));
+
+      if (sendResult.success) {
+        console.log(`[DualSend] Successfully sent to ${type} campaign`);
+        showToast('success', `Lead sent to ${type === 'DEMAND' ? 'Demand' : 'Supply'} campaign`);
+
+        // Update status tracking - only on real success
+        if (type === 'DEMAND') {
+          setDemandStatusByDomain(prev => ({ ...prev, [domain]: 'sent' }));
+        } else {
+          setSupplyStatusByDomain(prev => ({ ...prev, [domain]: 'sent' }));
+        }
+      } else {
+        console.error(`[Instantly] ${type.toLowerCase()} failed:`, sendResult.error);
+        // Set failed status
+        if (type === 'DEMAND') {
+          setDemandStatusByDomain(prev => ({ ...prev, [domain]: 'failed' }));
+        } else {
+          setSupplyStatusByDomain(prev => ({ ...prev, [domain]: 'failed' }));
+        }
+        showToast('error', 'Instantly error – check console');
+      }
+    } catch (error) {
+      console.error(`[Instantly] ${type.toLowerCase()} failed:`, error);
+      setIsSendingInstantlyByDomain(prev => ({ ...prev, [`${domain}-${type}`]: false }));
+      // Set failed status on exception
+      if (type === 'DEMAND') {
+        setDemandStatusByDomain(prev => ({ ...prev, [domain]: 'failed' }));
+      } else {
+        setSupplyStatusByDomain(prev => ({ ...prev, [domain]: 'failed' }));
+      }
+      showToast('error', 'Instantly error – check console');
+    }
+  };
+
+  const handleSendBoth = async (domain: string) => {
+    console.log('[SendBoth] start', domain);
+
+    const results = await Promise.allSettled([
+      handleDualSend(domain, 'DEMAND'),
+      handleDualSend(domain, 'SUPPLY'),
+    ]);
+
+    console.log('[SendBoth] done', results);
+  };
+
+  const formatLastSync = () => {
+    if (!signals.lastSyncTime) return 'Never';
+    const now = new Date();
+    const lastSync = new Date(signals.lastSyncTime);
+    const diffMs = now.getTime() - lastSync.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
+
+  const handleToggleCleanView = async (
+    signalType: 'jobs' | 'funding' | 'layoffs' | 'hiring' | 'tech',
+    currentState: boolean,
+    rawPayload: any
+  ) => {
+    const setters = {
+      jobs: { show: setShowCleanJobs, summary: setCleanJobsSummary, cleaning: setIsCleaningJobs, builder: buildCleanJobsSummary },
+      funding: { show: setShowCleanFunding, summary: setCleanFundingSummary, cleaning: setIsCleaningFunding, builder: buildCleanFundingSummary },
+      layoffs: { show: setShowCleanLayoffs, summary: setCleanLayoffsSummary, cleaning: setIsCleaningLayoffs, builder: buildCleanLayoffsSummary },
+      hiring: { show: setShowCleanHiring, summary: setCleanHiringSummary, cleaning: setIsCleaningHiring, builder: buildCleanHiringSummary },
+      tech: { show: setShowCleanTech, summary: setCleanTechSummary, cleaning: setIsCleaningTech, builder: buildCleanTechSummary },
+    };
+
+    const { show, summary, cleaning, builder } = setters[signalType];
+    const summaries = { jobs: cleanJobsSummary, funding: cleanFundingSummary, layoffs: cleanLayoffsSummary, hiring: cleanHiringSummary, tech: cleanTechSummary };
+    const currentSummary = summaries[signalType];
+
+    show(!currentState);
+
+    if (currentState) return;
+
+    if (!rawPayload) return;
+
+    if (!aiConfig || !aiConfig.enableCleaning) return;
+
+    if (currentSummary) return;
+
+    cleaning(true);
+    try {
+      const cleaned = await cleanApiResponse(rawPayload, signalType, aiConfig);
+      const summaryText = builder(cleaned);
+      summary(summaryText);
+    } catch (e) {
+      console.warn(`Failed to clean ${signalType} signal, falling back to raw summary`, e);
+    } finally {
+      cleaning(false);
+    }
+  };
+
+  // Loading skeleton while settings load
+  if (!settingsLoaded) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#0E0E0E] to-[#0A0A0A] text-white px-8 py-12">
+        <div className="max-w-[1400px] mx-auto">
+          <div className="h-4 w-32 bg-white/5 rounded animate-pulse mb-6" />
+          <div className="mb-8">
+            <div className="h-3 w-20 bg-white/5 rounded-full animate-pulse mb-2" />
+            <div className="h-8 w-64 bg-white/5 rounded animate-pulse mb-2" />
+            <div className="h-4 w-96 bg-white/5 rounded animate-pulse" />
+          </div>
+          <div className="grid lg:grid-cols-[300px_1fr] gap-6 mt-8">
+            <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+              <div className="space-y-4">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="space-y-2">
+                    <div className="h-2 w-16 bg-white/5 rounded animate-pulse" />
+                    <div className="h-3 w-full bg-white/5 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-4">
+              <div className="bg-[#111] rounded-lg p-4 border border-white/5 h-48">
+                <div className="h-3 w-24 bg-white/5 rounded animate-pulse mb-4" />
+                <div className="space-y-2">
+                  <div className="h-2 w-full bg-white/5 rounded animate-pulse" />
+                  <div className="h-2 w-3/4 bg-white/5 rounded animate-pulse" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <Dock />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0E0E0E] to-[#0A0A0A] text-white px-8 py-12">
+      {toastNotification && (
+        <div className={`fixed top-6 right-6 px-5 py-3 rounded-lg shadow-2xl z-50 animate-slide-in-right flex items-center gap-2 ${
+          toastNotification.type === 'success' ? 'bg-emerald-500 text-white' :
+          toastNotification.type === 'warning' ? 'bg-amber-500 text-white' :
+          'bg-red-500 text-white'
+        }`}>
+          <span className="text-[13px] font-medium">{toastNotification.message}</span>
+        </div>
+      )}
+
+      <div className="max-w-[1400px] mx-auto">
+        <button
+          onClick={() => navigate('/launcher')}
+          className="flex items-center gap-2 mb-6 text-sm text-gray-400 hover:text-gray-200 transition-colors duration-200"
+        >
+          <ArrowLeft size={16} />
+          Back to Connector OS
+        </button>
+
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <div className="inline-block px-2.5 py-1 bg-[#0F1B17] text-[#3A9CFF] text-[10px] font-medium rounded-full mb-2 border-b border-[#3A9CFF] border-opacity-30">
+              Connector OS
+            </div>
+            <div className="flex items-center gap-4 mb-1.5">
+              <h1 className="text-[32px] font-medium text-white">Matching Engine V3</h1>
+              {/* Signal Status Chips */}
+              <div className="flex items-center gap-1 mt-2">
+                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasJobs ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  Jobs {hasJobs ? 'Live' : 'Mock'}
+                </span>
+                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasFunding ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  Funding {hasFunding ? 'Live' : 'Mock'}
+                </span>
+                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasLayoffs ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  Layoffs {hasLayoffs ? 'Live' : 'Mock'}
+                </span>
+                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasHiring ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  Hiring {hasHiring ? 'Live' : 'Off'}
+                </span>
+                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasTech ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  Tech {hasTech ? 'Live' : 'Off'}
+                </span>
+              </div>
+            </div>
+            <p className="text-[17px] font-light text-white text-opacity-75">
+              Predictive intelligence. Who has pressure. Who can solve it. When to move.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/settings')}
+            className="flex items-center gap-2 px-4 py-2 bg-[#0C0C0C] border border-[#1C1C1C] rounded-lg hover:border-[#3A9CFF] transition-all duration-150"
+          >
+            <SettingsIcon size={16} style={{ color: '#3A9CFF' }} />
+            <span className="text-[13px] text-white text-opacity-70">Configure Settings</span>
+          </button>
+        </div>
+
+
+        <div className="grid lg:grid-cols-[300px_1fr] gap-6 mt-8">
+          <div>
+            <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+              <div>
+                <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
+                  <h3 className="text-[9px] uppercase tracking-wider text-white/30">
+                    Market Signals
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {isRefreshing && (
+                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[9px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                        Refreshing...
+                      </span>
+                    )}
+                    <button
+                      onClick={fetchSignals}
+                      disabled={isRefreshing}
+                      className="p-1 rounded hover:bg-white/5 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title="Refresh Signals"
+                    >
+                      <RefreshCw
+                        size={12}
+                        className={`text-white/40 hover:text-white/60 transition-colors ${isRefreshing ? 'animate-spin' : ''}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {signals.error && (
+                  <div className="mb-4 p-3 bg-red-500 bg-opacity-10 border border-red-500 rounded-lg">
+                    <div className="text-[11px] text-red-400">{signals.error}</div>
+                  </div>
+                )}
+
+                <p className="text-[9px] text-zinc-500 mb-3">
+                  URLs used verbatim · No query modification
+                </p>
+
+                {/* Signal Lines - skeleton during refresh */}
+                {isRefreshing ? (
+                  <div className="space-y-1.5">
+                    {['Jobs', 'Funding', 'Layoffs', 'Hiring', 'Tech', 'Supply'].map((label) => (
+                      <div key={label} className={`flex items-center gap-2 ${label === 'Supply' ? 'pt-1.5 mt-1.5 border-t border-white/5' : ''}`}>
+                        <span className={`text-[10px] w-16 ${label === 'Supply' ? 'text-purple-400/50' : 'text-white/30'}`}>{label}</span>
+                        <div className="h-4 w-8 bg-white/[0.03] rounded animate-pulse" />
+                        <div className="flex-1 h-2 bg-white/[0.02] rounded animate-pulse" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 text-[10px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/60 w-16">Jobs</span>
+                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasJobs ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                        {hasJobs ? 'Live' : 'Mock'}
+                      </span>
+                      <span
+                        className="text-white/40 truncate flex-1 cursor-default"
+                        title={safeText(richJobsSignal?.operatorInsight || signals.jobs.value) || '–'}
+                      >
+                        {safeText(richJobsSignal?.operatorInsight || signals.jobs.value).slice(0, 50) || '–'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/60 w-16">Funding</span>
+                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasFunding ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                        {hasFunding ? 'Live' : 'Mock'}
+                      </span>
+                      <span
+                        className="text-white/40 truncate flex-1 cursor-default"
+                        title={safeText(richFundingSignal?.operatorInsight || signals.funding.value) || '–'}
+                      >
+                        {safeText(richFundingSignal?.operatorInsight || signals.funding.value).slice(0, 50) || '–'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/60 w-16">Layoffs</span>
+                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasLayoffs ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                        {hasLayoffs ? 'Live' : 'Mock'}
+                      </span>
+                      <span
+                        className="text-white/40 truncate flex-1 cursor-default"
+                        title={safeText(richLayoffsSignal?.operatorInsight || signals.layoffs.value) || '–'}
+                      >
+                        {safeText(richLayoffsSignal?.operatorInsight || signals.layoffs.value).slice(0, 50) || '–'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/60 w-16">Hiring</span>
+                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasHiring ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                        {hasHiring ? 'Live' : 'Off'}
+                      </span>
+                      <span
+                        className="text-white/40 truncate flex-1 cursor-default"
+                        title={safeText(signals.hiringVelocity.value) || '–'}
+                      >
+                        {safeText(signals.hiringVelocity.value).slice(0, 50) || '–'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/60 w-16">Tech</span>
+                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasTech ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                        {hasTech ? 'Live' : 'Off'}
+                      </span>
+                      <span
+                        className="text-white/40 truncate flex-1 cursor-default"
+                        title={safeText(signals.toolAdoption.value) || '–'}
+                      >
+                        {safeText(signals.toolAdoption.value).slice(0, 50) || '–'}
+                      </span>
+                    </div>
+                    {/* Supply Discovery Row */}
+                    <div className="flex items-center gap-2 pt-1.5 mt-1.5 border-t border-white/5">
+                      <span className="text-purple-400/80 w-16">Supply</span>
+                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${
+                        supplyDiscoveryStatus === 'loaded' && discoveredSupplyCompanies.length > 0
+                          ? 'bg-purple-500/10 text-purple-400'
+                          : supplyDiscoveryStatus === 'loading'
+                          ? 'bg-yellow-500/10 text-yellow-400'
+                          : 'bg-white/5 text-white/30'
+                      }`}>
+                        {supplyDiscoveryStatus === 'loaded' ? 'Live' : supplyDiscoveryStatus === 'loading' ? '...' : 'Off'}
+                      </span>
+                      <span
+                        className="text-white/40 truncate flex-1 cursor-default"
+                        title={(() => {
+                          if (discoveredSupplyCompanies.length === 0) return 'Configure Supply URL in Settings';
+                          const categorized = discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown');
+                          const byCategory = categorized.reduce((acc, s) => {
+                            acc[s.hireCategory] = (acc[s.hireCategory] || 0) + 1;
+                            return acc;
+                          }, {} as Record<string, number>);
+                          const categoryList = Object.entries(byCategory).map(([k, v]) => `${v} ${k}`).join(', ');
+                          return `${categorized.length} categorized: ${categoryList}`;
+                        })()}
+                      >
+                        {supplyDiscoveryStatus === 'loading'
+                          ? 'Discovering providers...'
+                          : discoveredSupplyCompanies.length > 0
+                          ? (() => {
+                              const categorized = discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown');
+                              if (categorized.length === 0) {
+                                return `${discoveredSupplyCompanies.length} found (0 categorized)`;
+                              }
+                              const byCategory = categorized.reduce((acc, s) => {
+                                acc[s.hireCategory] = (acc[s.hireCategory] || 0) + 1;
+                                return acc;
+                              }, {} as Record<string, number>);
+                              const top = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 3);
+                              return `${categorized.length} categorized (${top.map(([k, v]) => `${v} ${k}`).join(', ')})`;
+                            })()
+                          : 'No supply URL configured'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <JobTrendChart userId="default" onTrendChange={setTrendDirection} />
+
+              </div>
+            </div>
+
+            {/* Dual Intros - Demand and Supply */}
+            <div className="bg-[#111] rounded-lg p-4 border border-white/5 mt-4">
+              <div className="space-y-4">
+                {/* Demand Intro (to hiring company) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-[9px] uppercase tracking-wider text-white/30">
+                        Demand Intro
+                      </h3>
+                      <span className="text-[8px] text-white/20">(to company)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {activeResult && demandIntroByDomain[activeResult.domain] && !isGeneratingDemandIntro && (
+                        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-400">
+                          Ready
+                        </span>
+                      )}
+                      {isGeneratingDemandIntro && (
+                        <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-400">
+                          <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" />
+                          Generating
+                        </span>
+                      )}
+                      {activeResult && demandIntroByDomain[activeResult.domain] && !isGeneratingDemandIntro && (
+                        <>
+                          <button
+                            onClick={() => regenerateDemandIntro(activeResult.domain)}
+                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
+                          >
+                            Regenerate
+                          </button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(demandIntroByDomain[activeResult.domain]);
+                              showToast('success', 'Copied');
+                            }}
+                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
+                          >
+                            Copy
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded border border-white/5 bg-black/40 px-3 py-2.5 min-h-[50px]">
+                    {isRefreshing ? (
+                      <div className="space-y-1.5">
+                        <div className="h-2.5 w-full bg-zinc-800/50 rounded animate-pulse" />
+                        <div className="h-2.5 w-4/5 bg-zinc-800/40 rounded animate-pulse" />
+                      </div>
+                    ) : activeResult && demandIntroByDomain[activeResult.domain] ? (
+                      <p className="text-[11px] leading-relaxed text-white/80 whitespace-pre-wrap">
+                        {demandIntroByDomain[activeResult.domain]}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-white/30">
+                        {isGeneratingDemandIntro ? 'Generating...' : 'Select a company to see intro'}
+                      </p>
+                    )}
+                  </div>
+                  {activeResult && demandIntroByDomain[activeResult.domain] && (
+                    <div className="text-[9px] text-white/30 text-right mt-1">
+                      {demandIntroByDomain[activeResult.domain].length} chars
+                    </div>
+                  )}
+                </div>
+
+                {/* Supply Intro (to provider/connector) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-[9px] uppercase tracking-wider text-white/30">
+                        Supply Intro
+                      </h3>
+                      <span className="text-[8px] text-white/20">(to provider)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
+                        <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[8px] text-blue-400">
+                          Ready
+                        </span>
+                      )}
+                      {isGeneratingSupplyIntro && (
+                        <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-400">
+                          <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" />
+                          Generating
+                        </span>
+                      )}
+                      {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
+                        <>
+                          <button
+                            onClick={() => regenerateSupplyIntro(activeResult.domain)}
+                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
+                          >
+                            Regenerate
+                          </button>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(supplyIntroByDomain[activeResult.domain]);
+                              showToast('success', 'Copied');
+                            }}
+                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
+                          >
+                            Copy
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded border border-white/5 bg-black/40 px-3 py-2.5 min-h-[50px]">
+                    {isRefreshing ? (
+                      <div className="space-y-1.5">
+                        <div className="h-2.5 w-full bg-zinc-800/50 rounded animate-pulse" />
+                        <div className="h-2.5 w-4/5 bg-zinc-800/40 rounded animate-pulse" />
+                      </div>
+                    ) : activeResult && supplyIntroByDomain[activeResult.domain] ? (
+                      <p className="text-[11px] leading-relaxed text-white/80 whitespace-pre-wrap">
+                        {supplyIntroByDomain[activeResult.domain]}
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-white/30">
+                        {isGeneratingSupplyIntro ? 'Generating...' : 'Select a company to see intro'}
+                      </p>
+                    )}
+                  </div>
+                  {activeResult && supplyIntroByDomain[activeResult.domain] && (
+                    <div className="text-[9px] text-white/30 text-right mt-1">
+                      {supplyIntroByDomain[activeResult.domain].length} chars
+                    </div>
+                  )}
+                </div>
+
+                {/* Regenerate button */}
+                {activeResult && aiConfig && isAIConfigured(aiConfig) && !conversationStartedByDomain[activeResult.domain] && (
+                  <button
+                    onClick={() => handleRegenerateIntro(activeResult.domain)}
+                    disabled={isGeneratingDemandIntro || isGeneratingSupplyIntro}
+                    className="flex items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] text-white/60 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    {(isGeneratingDemandIntro || isGeneratingSupplyIntro) ? (
+                      <>
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Writing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3 h-3" />
+                        Regenerate Both
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+
+          <div>
+            <div className="flex gap-4">
+              <div className="w-56 flex-shrink-0">
+              <div className="bg-[#111] rounded-lg p-3 border border-white/5 sticky top-4">
+                <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/5">
+                  <h3 className="text-[9px] uppercase tracking-wider text-white/30">
+                    {isRefreshing ? (
+                      <span className="flex items-center gap-1.5">
+                        Companies
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-white/20 animate-pulse" />
+                      </span>
+                    ) : matchingResults.length > 0 ? (
+                      `Companies (${matchingResults.length})`
+                    ) : (
+                      'Companies'
+                    )}
+                  </h3>
+                </div>
+                <div className="space-y-0 max-h-[400px] overflow-y-auto">
+                  {isRefreshing ? (
+                    <>
+                      {[1, 2, 3, 4, 5, 6].map((i) => (
+                        <div
+                          key={i}
+                          className="w-full px-2 py-2 border-b border-white/5"
+                        >
+                          <div className="h-3 w-24 bg-white/5 rounded animate-pulse mb-1" />
+                          <div className="h-2 w-16 bg-white/[0.03] rounded animate-pulse" />
+                        </div>
+                      ))}
+                    </>
+                  ) : (
+                    matchingResults.map((result, idx) => (
+                      <button
+                        key={result.id}
+                        onClick={() => setActiveResultIndex(idx)}
+                        className={`w-full text-left px-2 py-2 border-b border-white/5 transition-all duration-150 ${
+                          idx === activeResultIndex
+                            ? 'bg-emerald-500/10 border-l-2 border-l-emerald-400'
+                            : 'hover:bg-white/[0.02] border-l-2 border-l-transparent'
+                        }`}
+                      >
+                        <div className={`text-[11px] font-semibold truncate ${
+                          idx === activeResultIndex ? 'text-white' : 'text-white/80'
+                        }`}>
+                          {result.companyName}
+                        </div>
+                        <div className="text-[9px] text-white/40 mt-0.5">
+                          Score {result.signalStrength} • {result.jobCount} {result.jobCount === 1 ? 'role' : 'roles'}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1">
+              {matchingResults.length === 0 && connectorProfile && !isRefreshing && (
+                <div className="rounded-lg border border-dashed border-white/10 bg-[#111] p-4 text-center">
+                  <div className="text-[11px] text-white/60 mb-2">
+                    No matches found.
+                  </div>
+                  <div className="text-[10px] text-white/40">
+                    Could not build company list from jobs response. Check console for details.
+                  </div>
+                </div>
+              )}
+
+              <div className="relative">
+                {/* Skeleton placeholder during refresh */}
+                {isRefreshing && matchingResults.length === 0 && (
+                  <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+                    {/* Skeleton header */}
+                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/5">
+                      <div className="flex items-center gap-2">
+                        <div className="h-3.5 w-28 bg-white/5 rounded animate-pulse" />
+                        <div className="h-2.5 w-16 bg-white/[0.03] rounded animate-pulse" />
+                      </div>
+                      <div className="h-4 w-14 bg-white/[0.03] rounded animate-pulse" />
+                    </div>
+
+                    {/* Skeleton person card */}
+                    <div className="space-y-3">
+                      <div className="p-3 rounded bg-white/[0.02] border border-white/5">
+                        <div className="flex items-center gap-3 mb-2">
+                          <div className="h-8 w-8 bg-white/5 rounded-full animate-pulse" />
+                          <div className="flex-1 space-y-1.5">
+                            <div className="h-2.5 w-24 bg-white/5 rounded animate-pulse" />
+                            <div className="h-2 w-16 bg-white/[0.03] rounded animate-pulse" />
+                          </div>
+                        </div>
+                        <div className="flex gap-2 mt-3">
+                          <div className="h-7 flex-1 bg-white/[0.03] rounded animate-pulse" />
+                          <div className="h-7 flex-1 bg-white/[0.03] rounded animate-pulse" />
+                        </div>
+                      </div>
+
+                      {/* Skeleton why now */}
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-10 bg-white/[0.02] rounded animate-pulse" />
+                        <div className="flex-1 h-2 bg-white/[0.03] rounded animate-pulse" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {matchingResults.map((result, resultIndex) => {
+                  if (resultIndex !== activeResultIndex) return null;
+                const personData = personDataByDomain[result.domain];
+                const personPressureProfile = personPressureProfileByDomain[result.domain];
+                const conversationStarted = conversationStartedByDomain[result.domain];
+                const isEnrichingPerson = isEnrichingDomain === result.domain;
+                const finalIntro = finalIntroByDomain[result.domain];
+                const isSendingInstantly = isSendingInstantlyByDomain[result.domain];
+                const outboundReadiness = calculateOutboundReadiness(personData);
+                const canPushToInstantly = result && personData && personData.email && outboundReadiness === 'ready' && instantlyConfig?.apiKey;
+
+                const matchBadge = getMatchBadge(result.matchScore);
+                return (
+                  <div key={result.id}>
+                    <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+                      {/* Company Header */}
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h3 className="text-[11px] font-medium text-white/90 truncate">
+                            {result.companyName}
+                          </h3>
+                          {result.domain && (
+                            <span className="text-[8px] text-white/30">
+                              {result.domain}
+                            </span>
+                          )}
+                        </div>
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] flex-shrink-0 ${
+                          matchBadge.color === 'emerald'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : matchBadge.color === 'blue'
+                            ? 'bg-blue-500/10 text-blue-400'
+                            : 'bg-white/5 text-white/40'
+                        }`}>
+                          {matchBadge.text}
+                        </span>
+                      </div>
+
+                      <div className="space-y-3">
+                        {/* Available Providers Panel */}
+                        {discoveredSupplyCompanies.length > 0 && (
+                          <div className="bg-purple-500/5 rounded-lg p-2.5 border border-purple-500/10">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[9px] uppercase tracking-wider text-purple-400/70">Available Providers</span>
+                              <span className="text-[8px] text-purple-300/50">
+                                {result.hireCategory || 'unknown'} staffing
+                              </span>
+                            </div>
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              {(() => {
+                                // Get matched providers for this company's hire category
+                                const currentSupply = selectedSupplyByDomain[result.domain];
+                                const alternatives = alternativeSupplyByDomain[result.domain] || [];
+                                const allMatched = currentSupply ? [currentSupply, ...alternatives] : alternatives;
+
+                                // Filter to only show category matches (strict)
+                                const categoryMatched = allMatched.filter(s => s.hireCategory !== 'unknown');
+
+                                if (categoryMatched.length === 0) {
+                                  return (
+                                    <div className="text-[10px] text-orange-400/80 py-2 text-center">
+                                      No {result.hireCategory || ''} staffing providers found.
+                                      <br />
+                                      <span className="text-[9px] text-white/40">
+                                        Add a specialized staffing Apify URL in Settings.
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
+                                return categoryMatched.map((supply) => {
+                                  const isSelected = currentSupply?.domain === supply.domain;
+                                  return (
+                                    <button
+                                      key={supply.domain}
+                                      onClick={() => handleSwitchSupply(result.domain, supply)}
+                                      className={`w-full text-left px-2 py-1.5 rounded transition-colors flex items-center justify-between ${
+                                        isSelected
+                                          ? 'bg-purple-500/20 border border-purple-500/30'
+                                          : 'bg-white/5 hover:bg-white/10 border border-transparent'
+                                      }`}
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5">
+                                          {isSelected && <span className="text-purple-400 text-[10px]">✓</span>}
+                                          <span className={`text-[10px] truncate ${isSelected ? 'text-purple-300' : 'text-white/70'}`}>
+                                            {supply.name}
+                                          </span>
+                                        </div>
+                                        <div className="text-[8px] text-white/40 truncate flex items-center gap-1">
+                                          <span className={`px-1 py-0.5 rounded text-[7px] ${
+                                            supply.hireCategory === 'engineering' ? 'bg-blue-500/20 text-blue-300' :
+                                            supply.hireCategory === 'sales' ? 'bg-orange-500/20 text-orange-300' :
+                                            supply.hireCategory === 'marketing' ? 'bg-pink-500/20 text-pink-300' :
+                                            supply.hireCategory === 'finance' ? 'bg-green-500/20 text-green-300' :
+                                            'bg-gray-500/20 text-gray-300'
+                                          }`}>
+                                            {supply.hireCategory}
+                                          </span>
+                                          <span className="truncate">{supply.specialty?.slice(0, 25) || ''}</span>
+                                        </div>
+                                      </div>
+                                      <span className={`text-[8px] px-1.5 py-0.5 rounded ${
+                                        supply.classification.confidence === 'high'
+                                          ? 'bg-emerald-500/20 text-emerald-400'
+                                          : supply.classification.confidence === 'medium'
+                                          ? 'bg-yellow-500/20 text-yellow-400'
+                                          : 'bg-white/10 text-white/40'
+                                      }`}>
+                                        {supply.classification.confidence}
+                                      </span>
+                                    </button>
+                                  );
+                                });
+                              })()}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Person Contact Card */}
+                        <PersonContactCard
+                          personData={personData}
+                          targetTitles={result.targetTitles || []}
+                          isEnriching={isEnrichingPerson}
+                          onEnrichClick={() => !conversationStarted && handleEnrichPerson(result.domain)}
+                          enrichmentConfigured={isEnrichmentConfigured(enrichmentConfig)}
+                          intro={getSuggestedIntro(result.domain)}
+                          onRefreshContact={!conversationStarted ? () => handleEnrichPerson(result.domain) : undefined}
+                          onConversationStarted={() => setConversationStartedByDomain(prev => ({ ...prev, [result.domain]: true }))}
+                          demandStatus={demandStatusByDomain[result.domain] || 'not_sent'}
+                          supplyStatus={supplyStatusByDomain[result.domain] || 'not_sent'}
+                          onSendToDemand={() => handleDualSend(result.domain, 'DEMAND')}
+                          onSendToSupply={() => handleDualSend(result.domain, 'SUPPLY')}
+                          onSendBoth={() => handleSendBoth(result.domain)}
+                          onSkip={() => setActiveResultIndex((activeResultIndex + 1) % matchingResults.length)}
+                          hasDemandCampaign={!!instantlyConfig?.campaignDemand}
+                          hasSupplyCampaign={!!instantlyConfig?.campaignSupply}
+                          isSendingDemand={isSendingInstantlyByDomain[`${result.domain}-DEMAND`] || false}
+                          isSendingSupply={isSendingInstantlyByDomain[`${result.domain}-SUPPLY`] || false}
+                          supplyContact={supplyContactByDomain[result.domain]}
+                          selectedSupply={selectedSupplyByDomain[result.domain]}
+                          alternativeSupply={alternativeSupplyByDomain[result.domain] || []}
+                          onSwitchSupply={(supply) => handleSwitchSupply(result.domain, supply)}
+                          isEnrichingSupply={isEnrichingSupplyByDomain[result.domain] || false}
+                          demandIntro={demandIntroByDomain[result.domain]}
+                          supplyIntro={supplyIntroByDomain[result.domain]}
+                        />
+
+                        {/* Why Now - hide during refresh */}
+                        {!isRefreshing && (aiWhyNowByDomain[result.domain] || personPressureProfile) && (
+                          <div className="text-[10px] text-white/50 leading-snug line-clamp-2">
+                            <span className="text-white/30 uppercase text-[8px] tracking-wider mr-1.5">Why now</span>
+                            {aiWhyNowByDomain[result.domain] || personPressureProfile}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+                {currentStep === 'matching-engine' && matchingResults.length > 0 && (
+                  <TourTooltip
+                    step="Step 3 of 4"
+                    title="Your First Match"
+                    description="Here's your first match. This is where you see pressure, forecasting, and insights."
+                    onNext={nextStep}
+                    onSkip={skipOnboarding}
+                    position="bottom"
+                  />
+                )}
+              </div>
+
+              {/* Operator Summary */}
+              {!isRefreshing && matchingResults.length > 0 && (
+                <div className="mt-3 p-2 rounded bg-white/[0.02] border border-white/5">
+                  <p className="text-[10px] text-white/40">{getOperatorCue()}</p>
+                </div>
+              )}
+            </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div className="mt-6 text-center">
+          <div className="text-[11px] text-white text-opacity-40 italic">
+            V3.6 with predictive engine and background sync.
+          </div>
+        </div>
+      </div>
+
+      <div className="fixed bottom-6 right-6 text-[11px] text-white opacity-60 font-light">
+        Matching Engine V3 • Connector OS
+      </div>
+
+      <AppHeader />
+      <Dock />
+    </div>
+  );
+}
+
+export default MatchingEngineV3;
