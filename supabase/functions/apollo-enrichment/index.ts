@@ -59,12 +59,34 @@ Deno.serve(async (req: Request) => {
         apolloUrl = 'https://api.apollo.io/v1/mixed_people/search';
         apolloMethod = 'POST';
 
-        const { domain, titles, seniorities, departments, keywords } = params;
+        const { domain, organization_name, titles, seniorities, departments, keywords } = params;
         apolloPayload = {
-          q_organization_domains_list: [domain],
           page: 1,
           per_page: 25
         };
+
+        // Support searching by either domain OR organization name
+        // Use organization_name when domain is fake/auto-generated
+        if (organization_name) {
+          // Search by company name (useful when no valid domain exists)
+          apolloPayload.q_organization_name = organization_name;
+          console.log('[Apollo Proxy] Searching by organization name:', organization_name);
+        } else if (domain) {
+          // Search by domain (preferred when domain is real)
+          apolloPayload.q_organization_domains_list = [domain];
+          console.log('[Apollo Proxy] Searching by domain:', domain);
+        } else {
+          return new Response(
+            JSON.stringify({ error: 'people_search requires either domain or organization_name' }),
+            {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        }
 
         // Use departments for functional targeting (e.g., engineering, sales, marketing)
         if (departments && departments.length > 0) {

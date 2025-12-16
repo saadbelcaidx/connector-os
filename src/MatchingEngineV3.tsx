@@ -1757,6 +1757,9 @@ function MatchingEngineV3() {
 
     setIsGeneratingSupplyIntro(true);
     try {
+      // Use actual company name from the contact (from Apollo) - more accurate than selectedProvider
+      const actualProviderName = supplyContactForIntro.company;
+
       // Run generation with minimum delay to prevent UI glitch
       const [supplyIntro] = await Promise.all([
         generateSupplyIntro(
@@ -1774,15 +1777,15 @@ function MatchingEngineV3() {
             fitReason: `${result.companyName} is actively hiring`
           },
           { name: supplyContactForIntro.name },
-          selectedProvider ? {
-            name: selectedProvider.name,
-            specialty: selectedProvider.specialty
-          } : undefined
+          {
+            name: actualProviderName,
+            specialty: selectedProvider?.specialty
+          }
         ),
         new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
       ]);
       setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
-      console.log('[DualIntros] Supply intro generated for', supplyContactForIntro.name, 'at', selectedProvider?.name, ':', supplyIntro);
+      console.log('[DualIntros] Supply intro generated for', supplyContactForIntro.name, 'at', actualProviderName, ':', supplyIntro);
     } catch (error) {
       console.error('[DualIntros] Supply intro failed:', error);
     } finally {
@@ -1857,7 +1860,9 @@ function MatchingEngineV3() {
       return;
     }
 
-    console.log('[DualIntros] Regenerating supply intro for provider:', selectedProvider?.name, 'contact:', supplyContactForIntro.name);
+    // Use actual company name from the contact (from Apollo) - more accurate than selectedProvider
+    const actualProviderName = supplyContactForIntro.company;
+    console.log('[DualIntros] Regenerating supply intro for provider:', actualProviderName, 'contact:', supplyContactForIntro.name);
 
     const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
 
@@ -1880,15 +1885,15 @@ function MatchingEngineV3() {
             fitReason: `${result.companyName} is actively hiring`
           },
           { name: supplyContactForIntro.name },
-          selectedProvider ? {
-            name: selectedProvider.name,
-            specialty: selectedProvider.specialty
-          } : undefined
+          {
+            name: actualProviderName,
+            specialty: selectedProvider?.specialty
+          }
         ),
         new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
       ]);
       setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
-      console.log('[DualIntros] Supply intro regenerated for', supplyContactForIntro.name, 'at', selectedProvider?.name, ':', supplyIntro);
+      console.log('[DualIntros] Supply intro regenerated for', supplyContactForIntro.name, 'at', actualProviderName, ':', supplyIntro);
     } catch (error) {
       console.error('[DualIntros] Supply intro failed:', error);
     } finally {
@@ -2032,19 +2037,18 @@ function MatchingEngineV3() {
     if (foundContact && successfulSupply) {
       setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: foundContact }));
       setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: successfulSupply }));
-      // Update alternatives: use ALL discovered companies (matching category) minus the selected one
-      // This ensures switching providers always shows all available options
-      const allMatchingSupplies = findMatchingSupply(discoveredSupplyCompanies, hireCategory, 50);
-      const remainingAlternatives = allMatchingSupplies.filter(s => s.domain !== successfulSupply!.domain);
+      // Update alternatives: use ALL discovered companies minus the selected one
+      // This allows user to manually pick ANY provider, not just matching categories
+      const remainingAlternatives = discoveredSupplyCompanies.filter(s => s.domain !== successfulSupply!.domain);
       setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
       console.log(`[SupplyEnrich] === SUCCESS: ${foundContact.name} @ ${successfulSupply.name} (${remainingAlternatives.length} alternatives) ===`);
     } else {
       console.log(`[SupplyEnrich] === FAILED: No supply contact found at any discovered company ===`);
-      // Keep alternatives based on ALL matching supplies minus current selection
-      const allMatchingSupplies = findMatchingSupply(discoveredSupplyCompanies, hireCategory, 50);
+      // Keep alternatives based on ALL discovered supplies minus current selection
+      // User should be able to try any provider manually
       const remainingAlternatives = selectedSupply
-        ? allMatchingSupplies.filter(s => s.domain !== selectedSupply.domain)
-        : allMatchingSupplies;
+        ? discoveredSupplyCompanies.filter(s => s.domain !== selectedSupply.domain)
+        : discoveredSupplyCompanies;
       setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
     }
 
@@ -2085,7 +2089,9 @@ function MatchingEngineV3() {
     }
 
     // Generate the new supply intro with FRESH data (not stale state)
-    console.log(`[SupplySwitch] Generating intro for ${freshSupplyContact.name} at ${actualSupply?.name || newSupply.name}`);
+    // Use the actual company name from the contact (from Apollo), not the selected supply company
+    const actualProviderName = freshSupplyContact.company;
+    console.log(`[SupplySwitch] Generating intro for ${freshSupplyContact.name} at ${actualProviderName}`);
 
     const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
     const providerInfo = actualSupply || newSupply;
@@ -2106,11 +2112,11 @@ function MatchingEngineV3() {
           fitReason: `${result.companyName} is actively hiring`
         },
         { name: freshSupplyContact.name },
-        { name: providerInfo.name, specialty: providerInfo.specialty }
+        { name: actualProviderName, specialty: providerInfo.specialty }
       );
 
       setSupplyIntroByDomain(prev => ({ ...prev, [companyDomain]: supplyIntro }));
-      console.log(`[SupplySwitch] ✓ Intro generated for ${freshSupplyContact.name} at ${providerInfo.name}`);
+      console.log(`[SupplySwitch] ✓ Intro generated for ${freshSupplyContact.name} at ${actualProviderName}`);
     } catch (error) {
       console.error('[SupplySwitch] Intro generation failed:', error);
     } finally {
@@ -2124,7 +2130,10 @@ function MatchingEngineV3() {
       return;
     }
 
-    const result = matchingResults.find(r => r.domain === companyDomain);
+    // Normalize domain (strip https://, www., trailing slashes)
+    const cleanDomain = normalizeDomain(companyDomain) || companyDomain;
+
+    const result = matchingResults.find(r => r.domain === companyDomain || r.domain === cleanDomain);
     if (!result) {
       showToast('warning', 'No result available yet.');
       return;
@@ -2137,7 +2146,7 @@ function MatchingEngineV3() {
       const { data: cachedRecord } = await supabase
         .from('signal_history')
         .select('enriched_at, person_name, person_title, person_email, person_linkedin, target_titles')
-        .eq('company_domain', companyDomain)
+        .eq('company_domain', cleanDomain)
         .not('enriched_at', 'is', null)
         .order('enriched_at', { ascending: false })
         .limit(1)
@@ -2338,14 +2347,14 @@ function MatchingEngineV3() {
             target_titles: result.targetTitles,
             enriched_at: new Date().toISOString()
           })
-          .eq('company_domain', companyDomain)
+          .eq('company_domain', cleanDomain)
           .order('created_at', { ascending: false })
           .limit(1);
 
         console.log('[MatchingEngine] Saved enriched person data to database');
 
         // Step 3: Also enrich supply contact (provider company contact)
-        await enrichSupplyContact(companyDomain, result);
+        await enrichSupplyContact(cleanDomain, result);
       } else {
         setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: true }));
         showToast('warning', 'No contact found for this company');
@@ -2355,7 +2364,7 @@ function MatchingEngineV3() {
           .update({
             enriched_at: new Date().toISOString()
           })
-          .eq('company_domain', companyDomain)
+          .eq('company_domain', cleanDomain)
           .order('created_at', { ascending: false })
           .limit(1);
       }
@@ -2532,7 +2541,9 @@ function MatchingEngineV3() {
       }
 
       // Step 4: Generate supply intro with actual supply contact name
-      console.log(`[DualSend] Generating supply intro for ${supplyContact.name}...`);
+      // Use actual company name from the contact (from Apollo) - more accurate than selectedProvider
+      const actualProviderName = supplyContact.company;
+      console.log(`[DualSend] Generating supply intro for ${supplyContact.name} at ${actualProviderName}...`);
       const supplyFirstName = supplyContact.name.split(' ')[0];
       const demandFirstName = personData?.name?.split(' ')[0] || 'the contact';
       const roleCount = result?.jobCount || 1;
@@ -2555,16 +2566,16 @@ function MatchingEngineV3() {
           {
             name: supplyFirstName
           },
-          // Pass provider info so intro is tailored to the specific provider
-          selectedProvider ? {
-            name: selectedProvider.name,
-            specialty: selectedProvider.specialty
-          } : undefined
+          // Pass actual provider name from Apollo contact - more accurate
+          {
+            name: actualProviderName,
+            specialty: selectedProvider?.specialty
+          }
         );
         setSupplyIntroByDomain(prev => ({ ...prev, [domain]: freshSupplyIntro }));
         // Store the intro for immediate use (state won't update synchronously)
         supplyIntroForSend = freshSupplyIntro;
-        console.log(`[DualSend] Fresh supply intro generated for ${supplyContact.name} at ${selectedProvider?.name}:`, freshSupplyIntro);
+        console.log(`[DualSend] Fresh supply intro generated for ${supplyContact.name} at ${actualProviderName}:`, freshSupplyIntro);
       } catch (error) {
         console.error('[DualSend] Failed to generate supply intro:', error);
         showToast('error', 'Failed to generate supply intro');

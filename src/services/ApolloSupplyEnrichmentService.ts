@@ -11,9 +11,16 @@
  * IMPORTANT: Uses Supabase Edge Function proxy to avoid CORS issues with Apollo API.
  */
 
-// Get the Supabase URL from environment - this is where the Apollo proxy lives
+// Get the Supabase URL and anon key from environment - this is where the Apollo proxy lives
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const APOLLO_PROXY_URL = `${SUPABASE_URL}/functions/v1/apollo-enrichment`;
+
+// Standard headers for Supabase Edge Function calls
+const getProxyHeaders = () => ({
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+});
 
 export interface SupplyContact {
   name: string;
@@ -140,13 +147,102 @@ function scoreSupplyContact(person: ApolloPersonResult): number {
 }
 
 /**
+ * Check if a domain looks auto-generated (fake)
+ * Auto-generated domains are created when Apify data has no website field
+ */
+function isDomainLikelyFake(domain: string, companyName: string): boolean {
+  if (!domain) return true;
+
+  // Clean company name for comparison
+  const cleanName = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const domainBase = domain.replace(/\.com$/, '').replace(/\.net$/, '').replace(/\.org$/, '');
+
+  // If domain is exactly the company name with no dots except TLD, it's likely fake
+  if (domainBase === cleanName && domain.split('.').length === 2) {
+    return true;
+  }
+
+  // Very long single-segment domains are likely fake
+  if (domainBase.length > 20 && !domainBase.includes('-') && domain.split('.').length === 2) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if a person's organization matches the requested company name
+ * Used to filter out results from wrong companies when searching by org name
+ */
+function isFromCorrectCompany(person: ApolloPersonResult, requestedCompany: string): boolean {
+  const orgName = person.organization?.name;
+  if (!orgName) return false;
+
+  // Normalize both names for comparison
+  const normalizeForComparison = (name: string) =>
+    name.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '') // Remove special chars except spaces
+      .replace(/\s+/g, ' ')         // Normalize whitespace
+      .replace(/\b(inc|llc|ltd|corp|co|company|group|services|staffing|consulting)\b/g, '') // Remove common suffixes
+      .trim();
+
+  const normalizedOrg = normalizeForComparison(orgName);
+  const normalizedRequested = normalizeForComparison(requestedCompany);
+
+  // Exact match after normalization
+  if (normalizedOrg === normalizedRequested) return true;
+
+  // One contains the other (for partial matches)
+  if (normalizedOrg.includes(normalizedRequested) || normalizedRequested.includes(normalizedOrg)) {
+    return true;
+  }
+
+  // Check if key words match (first 2-3 significant words)
+  const orgWords = normalizedOrg.split(' ').filter(w => w.length > 2);
+  const requestedWords = normalizedRequested.split(' ').filter(w => w.length > 2);
+
+  if (orgWords.length > 0 && requestedWords.length > 0) {
+    // At least 50% of words should match
+    const matchingWords = orgWords.filter(w => requestedWords.includes(w));
+    const matchRatio = matchingWords.length / Math.min(orgWords.length, requestedWords.length);
+    if (matchRatio >= 0.5) return true;
+  }
+
+  console.log(`[SupplyEnrichment] Rejecting ${person.name} - org "${orgName}" doesn't match "${requestedCompany}"`);
+  return false;
+}
+
+/**
+ * Helper to filter results when searching by org name
+ * Apollo org name search can return people from similar companies
+ */
+function filterByCompany(people: ApolloPersonResult[], companyName: string, searchedByOrgName: boolean): ApolloPersonResult[] {
+  if (!searchedByOrgName) return people; // No filtering needed for domain search
+
+  const filtered = people.filter(p => isFromCorrectCompany(p, companyName));
+  console.log(`[SupplyEnrichment] Filtered ${people.length} → ${filtered.length} (matching "${companyName}")`);
+  return filtered;
+}
+
+/**
  * PASS 1: Search Apollo for supply-side contacts
  * Multi-stage search with increasing broadness
+ *
+ * If domain looks fake, searches by company name instead
+ * When searching by org name, filters results to ensure correct company
  */
 async function wideNetSearch(
   apolloApiKey: string,
-  domain: string
+  domain: string,
+  companyName: string
 ): Promise<ApolloPersonResult[]> {
+
+  // Check if domain looks auto-generated
+  const domainIsFake = isDomainLikelyFake(domain, companyName);
+
+  if (domainIsFake) {
+    console.log(`[SupplyEnrichment] Domain "${domain}" looks auto-generated, will search by company name: "${companyName}"`);
+  }
 
   // Stage 1: Try with specific titles (like demand does)
   const targetTitles = [
@@ -159,68 +255,94 @@ async function wideNetSearch(
     'account manager'
   ];
 
-  console.log('[SupplyEnrichment] Stage 1 - Searching with titles:', { domain, titles: targetTitles });
+  console.log('[SupplyEnrichment] Stage 1 - Searching with titles:', { domain: domainIsFake ? '(using company name)' : domain, companyName, titles: targetTitles });
 
-  let proxyPayload: any = {
-    type: 'people_search',
-    apiKey: apolloApiKey,
-    domain: domain,
-    titles: targetTitles,
-    per_page: 25,
-  };
+  // If domain is fake, search by company name instead
+  let proxyPayload: any = domainIsFake
+    ? {
+        type: 'people_search',
+        apiKey: apolloApiKey,
+        organization_name: companyName,  // Search by company name
+        titles: targetTitles,
+        per_page: 50, // Request more since we'll filter
+      }
+    : {
+        type: 'people_search',
+        apiKey: apolloApiKey,
+        domain: domain,
+        titles: targetTitles,
+        per_page: 25,
+      };
 
   let response = await fetch(APOLLO_PROXY_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getProxyHeaders(),
     body: JSON.stringify(proxyPayload),
   });
 
   if (response.ok) {
     const data = await response.json();
     if (!data.error && data.people && data.people.length > 0) {
-      console.log(`[SupplyEnrichment] Stage 1 found ${data.people.length} people`);
-      return data.people;
+      console.log(`[SupplyEnrichment] Stage 1 found ${data.people.length} people (raw)`);
+      const filtered = filterByCompany(data.people, companyName, domainIsFake);
+      if (filtered.length > 0) return filtered;
     }
   }
 
-  // Stage 2: Try with just domain (get anyone at company)
-  console.log('[SupplyEnrichment] Stage 2 - Broader search (decision makers at domain)...');
+  // Stage 2: Try with seniority filter
+  console.log('[SupplyEnrichment] Stage 2 - Broader search (decision makers)...');
 
-  proxyPayload = {
-    type: 'people_search',
-    apiKey: apolloApiKey,
-    domain: domain,
-    seniorities: ['vp', 'director', 'manager', 'senior', 'c_suite'],
-    per_page: 25,
-  };
+  proxyPayload = domainIsFake
+    ? {
+        type: 'people_search',
+        apiKey: apolloApiKey,
+        organization_name: companyName,
+        seniorities: ['vp', 'director', 'manager', 'senior', 'c_suite'],
+        per_page: 50,
+      }
+    : {
+        type: 'people_search',
+        apiKey: apolloApiKey,
+        domain: domain,
+        seniorities: ['vp', 'director', 'manager', 'senior', 'c_suite'],
+        per_page: 25,
+      };
 
   response = await fetch(APOLLO_PROXY_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getProxyHeaders(),
     body: JSON.stringify(proxyPayload),
   });
 
   if (response.ok) {
     const data = await response.json();
     if (!data.error && data.people && data.people.length > 0) {
-      console.log(`[SupplyEnrichment] Stage 2 found ${data.people.length} people`);
-      return data.people;
+      console.log(`[SupplyEnrichment] Stage 2 found ${data.people.length} people (raw)`);
+      const filtered = filterByCompany(data.people, companyName, domainIsFake);
+      if (filtered.length > 0) return filtered;
     }
   }
 
-  // Stage 3: Most broad - just domain, no filters
-  console.log('[SupplyEnrichment] Stage 3 - Broadest search (anyone at domain)...');
+  // Stage 3: Most broad - no filters
+  console.log('[SupplyEnrichment] Stage 3 - Broadest search (anyone)...');
 
-  proxyPayload = {
-    type: 'people_search',
-    apiKey: apolloApiKey,
-    domain: domain,
-    per_page: 25,
-  };
+  proxyPayload = domainIsFake
+    ? {
+        type: 'people_search',
+        apiKey: apolloApiKey,
+        organization_name: companyName,
+        per_page: 50,
+      }
+    : {
+        type: 'people_search',
+        apiKey: apolloApiKey,
+        domain: domain,
+        per_page: 25,
+      };
 
   response = await fetch(APOLLO_PROXY_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getProxyHeaders(),
     body: JSON.stringify(proxyPayload),
   });
 
@@ -237,8 +359,8 @@ async function wideNetSearch(
     return [];
   }
 
-  console.log(`[SupplyEnrichment] Stage 3 found ${(data.people || []).length} people`);
-  return data.people || [];
+  console.log(`[SupplyEnrichment] Stage 3 found ${(data.people || []).length} people (raw)`);
+  return filterByCompany(data.people || [], companyName, domainIsFake);
 }
 
 /**
@@ -276,9 +398,7 @@ async function revealPersonEmail(
 
     const response = await fetch(APOLLO_PROXY_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getProxyHeaders(),
       body: JSON.stringify(proxyPayload),
     });
 
@@ -339,12 +459,13 @@ export async function findSupplyContact(
 
   try {
     // === PASS 1: Wide Net Search ===
-    const people = await wideNetSearch(apolloApiKey, connectorDomain);
+    // Pass company name so we can search by org name if domain looks fake
+    const people = await wideNetSearch(apolloApiKey, connectorDomain, connectorCompany);
 
     console.log(`[SupplyEnrichment] PASS 1 returned ${people.length} candidates`);
 
     if (people.length === 0) {
-      console.log('[SupplyEnrichment] No people found at this domain');
+      console.log('[SupplyEnrichment] No people found at this company');
       return null;
     }
 
@@ -389,13 +510,17 @@ export async function findSupplyContact(
 
       // Only accept real emails (not placeholders)
       if (isRealEmail(email)) {
+        // Use actual organization name from Apollo (more accurate), fallback to requested name
+        const actualCompanyName = person.organization?.name || connectorCompany;
+        const actualDomain = person.organization?.primary_domain || connectorDomain;
+
         const supplyContact: SupplyContact = {
           name: person.name || `${person.first_name} ${person.last_name}`,
           email,
           title: person.title || 'Unknown',
           linkedin: person.linkedin_url,
-          company: connectorCompany,
-          domain: connectorDomain,
+          company: actualCompanyName,
+          domain: actualDomain,
           confidence: score > 8 ? 95 : score > 5 ? 85 : score > 2 ? 75 : 60,
         };
 
