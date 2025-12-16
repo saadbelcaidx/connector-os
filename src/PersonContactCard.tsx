@@ -49,8 +49,8 @@ function getStatusBadge(status: EnrichmentStatus) {
   switch (status) {
     case 'ready':
       return {
-        text: 'Ready',
-        className: 'text-white/60 bg-white/[0.06]'
+        text: '',
+        className: 'hidden'
       };
     case 'contact_unverified':
       return {
@@ -247,15 +247,27 @@ export function PersonContactCard({
               )}
             </div>
 
-            {/* Provider selector */}
+            {/* Provider selector - shows matched provider */}
             {selectedSupply && (
               <div className="mb-1.5 relative">
                 <button
                   onClick={() => alternativeSupply.length > 0 && setShowProviderPicker(!showProviderPicker)}
-                  className={`text-[9px] text-white/50 truncate block text-left ${alternativeSupply.length > 0 ? 'hover:text-white/70 cursor-pointer' : ''}`}
+                  className={`text-[9px] text-white/60 truncate block text-left ${alternativeSupply.length > 0 ? 'hover:text-white/80 cursor-pointer' : ''}`}
                 >
-                  {supplyContact?.company || selectedSupply.name} {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
+                  {supplyContact?.company || selectedSupply.name}
+                  {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
                 </button>
+                {/* Show why matched - specialty, category, or inferred from name */}
+                <div className="text-[8px] text-white/40 truncate mt-0.5">
+                  {selectedSupply.specialty
+                    ? selectedSupply.specialty.slice(0, 40)
+                    : selectedSupply.hireCategory !== 'unknown'
+                      ? `${selectedSupply.hireCategory} staffing`
+                      : /recruit|staffing|talent|consult/i.test(selectedSupply.name)
+                        ? 'Staffing & Recruiting'
+                        : 'Service Provider'
+                  }
+                </div>
 
                 {/* Provider dropdown */}
                 {showProviderPicker && alternativeSupply.length > 0 && (
@@ -275,7 +287,9 @@ export function PersonContactCard({
                           className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
                         >
                           <div className="text-[10px] text-white/70 truncate">{supply.name}</div>
-                          <div className="text-[8px] text-white/30 truncate">{supply.specialty?.slice(0, 30)}</div>
+                          {supply.specialty && (
+                            <div className="text-[8px] text-white/30 truncate">{supply.specialty.slice(0, 30)}</div>
+                          )}
                         </button>
                       ))}
                     </div>
@@ -527,32 +541,7 @@ export function PersonContactCard({
         {/* Deploy Section */}
         {(hasDemandCampaign || hasSupplyCampaign) && (
           <div className="mt-3 pt-3 border-t border-white/[0.04]">
-            <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Deploy</div>
-
-            {/* Status row */}
-            <div className="flex items-center gap-1.5 text-[9px] mb-2">
-              {hasDemandCampaign && (
-                <span className={`${
-                  demandStatus === 'sent' ? 'text-white/60'
-                  : demandStatus === 'failed' ? 'text-white/40'
-                  : 'text-white/25'
-                }`}>
-                  {demandStatus === 'sent' ? '● sent' : demandStatus === 'failed' ? '○ failed' : '○ ready'}
-                </span>
-              )}
-              {hasDemandCampaign && hasSupplyCampaign && (
-                <span className="text-white/15">·</span>
-              )}
-              {hasSupplyCampaign && (
-                <span className={`${
-                  supplyStatus === 'sent' ? 'text-white/60'
-                  : supplyStatus === 'failed' ? 'text-white/40'
-                  : 'text-white/25'
-                }`}>
-                  {supplyStatus === 'sent' ? '● sent' : supplyStatus === 'failed' ? '○ failed' : '○ ready'}
-                </span>
-              )}
-            </div>
+            <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Send</div>
 
             {/* Buttons row */}
             <div className="flex items-center gap-2">
@@ -573,6 +562,8 @@ export function PersonContactCard({
                 >
                   {isSendingDemand ? (
                     <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-white/30 border-t-transparent" />
+                  ) : demandStatus === 'sent' ? (
+                    '✓ Company'
                   ) : (
                     'Company'
                   )}
@@ -595,6 +586,8 @@ export function PersonContactCard({
                 >
                   {isSendingSupply ? (
                     <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-white/30 border-t-transparent" />
+                  ) : supplyStatus === 'sent' ? (
+                    '✓ Provider'
                   ) : (
                     'Provider'
                   )}
@@ -617,6 +610,8 @@ export function PersonContactCard({
                 >
                   {(isSendingDemand || isSendingSupply) ? (
                     <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-black/30 border-t-transparent" />
+                  ) : (demandStatus === 'sent' && supplyStatus === 'sent') ? (
+                    '✓ Sent'
                   ) : (
                     'Both'
                   )}
@@ -629,7 +624,7 @@ export function PersonContactCard({
         {/* Fallback when no Instantly campaigns configured */}
         {!hasDemandCampaign && !hasSupplyCampaign && (
           <div className="mt-3 pt-3 border-t border-white/[0.04] text-[10px] text-white/30">
-            Connect Instantly in Settings to deploy.
+            Add Instantly campaigns in Settings to send.
           </div>
         )}
       </div>

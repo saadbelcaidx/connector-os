@@ -428,24 +428,153 @@ async function revealPersonEmail(
 }
 
 /**
+ * Find a specific person's email using Apollo people/match
+ * Used when Apify has a name but no email
+ */
+async function findSpecificPersonEmail(
+  apolloApiKey: string,
+  domain: string,
+  companyName: string,
+  personName: string,
+  linkedinUrl?: string
+): Promise<{ email: string; title?: string; linkedin?: string } | null> {
+  try {
+    console.log(`[SupplyEnrichment] Searching Apollo for specific person: "${personName}" at ${companyName}`);
+
+    // Try people/match first with name + company
+    const matchPayload: Record<string, any> = {
+      name: personName,
+      reveal_personal_emails: false,
+      reveal_phone_number: false,
+    };
+
+    // Add domain if it looks real
+    if (domain && !isDomainLikelyFake(domain, companyName)) {
+      matchPayload.domain = domain;
+    } else {
+      matchPayload.organization_name = companyName;
+    }
+
+    // Add LinkedIn if available (most accurate match)
+    if (linkedinUrl) {
+      matchPayload.linkedin_url = linkedinUrl;
+    }
+
+    const proxyPayload = {
+      type: 'people_match',
+      apiKey: apolloApiKey,
+      payload: matchPayload,
+    };
+
+    const response = await fetch(APOLLO_PROXY_URL, {
+      method: 'POST',
+      headers: getProxyHeaders(),
+      body: JSON.stringify(proxyPayload),
+    });
+
+    if (!response.ok) {
+      console.warn(`[SupplyEnrichment] Apollo match failed for ${personName}:`, response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    const person = data.person;
+
+    if (person && person.email && isRealEmail(person.email)) {
+      console.log(`[SupplyEnrichment] Found specific person: ${person.name} - ${person.email}`);
+      return {
+        email: person.email,
+        title: person.title,
+        linkedin: person.linkedin_url,
+      };
+    }
+
+    console.log(`[SupplyEnrichment] No email found for specific person "${personName}"`);
+    return null;
+  } catch (error) {
+    console.error(`[SupplyEnrichment] Error finding specific person:`, error);
+    return null;
+  }
+}
+
+/**
+ * Existing contact info from Apify data (Wellfound, Clutch, etc.)
+ */
+export interface ExistingContactInfo {
+  name?: string;
+  email?: string;
+  title?: string;
+  linkedin?: string;
+}
+
+/**
  * Find the best supply contact at a provider company
  *
- * TWO-PASS APPROACH:
- * 1. Wide net query to get candidates
- * 2. Local scoring to find best match
+ * OPTIMIZED APPROACH:
+ * 0. Check if Apify data already has a valid contact - use it directly
+ * 1. If existing contact has name but no email - search Apollo for that specific person
+ * 2. Otherwise: Wide net query to get candidates, then local scoring
  *
  * @param apolloApiKey - Apollo API key
  * @param connectorDomain - Domain of the provider company (e.g. "toptal.com")
  * @param connectorCompany - Name of the provider company (e.g. "Toptal")
  * @param _preferredTitles - Ignored (we use standardized titles for supply)
+ * @param existingContact - Optional pre-existing contact from Apify data
  */
 export async function findSupplyContact(
   apolloApiKey: string,
   connectorDomain: string,
   connectorCompany: string,
-  _preferredTitles?: string[]
+  _preferredTitles?: string[],
+  existingContact?: ExistingContactInfo
 ): Promise<SupplyContact | null> {
   console.log(`[SupplyEnrichment] === Finding contact at ${connectorCompany} (${connectorDomain}) ===`);
+
+  // === PASS 0: Check if Apify already has a usable contact ===
+  if (existingContact) {
+    console.log('[SupplyEnrichment] Apify provided existing contact:', existingContact);
+
+    // If Apify already has a valid email, skip Apollo entirely
+    if (existingContact.email && isRealEmail(existingContact.email)) {
+      console.log(`[SupplyEnrichment] Using Apify contact directly - email already exists: ${existingContact.email}`);
+      return {
+        name: existingContact.name || 'Contact',
+        email: existingContact.email,
+        title: existingContact.title || 'Contact',
+        linkedin: existingContact.linkedin,
+        company: connectorCompany,
+        domain: connectorDomain,
+        confidence: 90, // High confidence since it came from source data
+      };
+    }
+
+    // If Apify has a name but no email, try to find that specific person in Apollo
+    if (existingContact.name && apolloApiKey) {
+      console.log(`[SupplyEnrichment] Apify has name "${existingContact.name}" but no email - searching Apollo for this person...`);
+
+      const specificPerson = await findSpecificPersonEmail(
+        apolloApiKey,
+        connectorDomain,
+        connectorCompany,
+        existingContact.name,
+        existingContact.linkedin
+      );
+
+      if (specificPerson) {
+        return {
+          name: existingContact.name,
+          email: specificPerson.email,
+          title: existingContact.title || specificPerson.title || 'Contact',
+          linkedin: existingContact.linkedin || specificPerson.linkedin,
+          company: connectorCompany,
+          domain: connectorDomain,
+          confidence: 85,
+        };
+      }
+      // If not found, fall through to general search
+      console.log('[SupplyEnrichment] Could not find specific person in Apollo, falling back to general search...');
+    }
+  }
 
   if (!apolloApiKey) {
     console.error('[SupplyEnrichment] No Apollo API key provided');

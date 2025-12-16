@@ -24,6 +24,13 @@ export interface SupplyCompany {
   hireCategory: HireCategory;
   classification: ClassificationResult;
   raw: any;
+  // Pre-extracted contact info from Apify (if available)
+  existingContact?: {
+    name?: string;
+    email?: string;
+    title?: string;
+    linkedin?: string;
+  };
 }
 
 export interface SupplySignalData {
@@ -46,6 +53,12 @@ function extractCompanyFields(item: any): {
   industry: string;
   tags: string[];
   raw: any;
+  existingContact?: {
+    name?: string;
+    email?: string;
+    title?: string;
+    linkedin?: string;
+  };
 } {
   if (!item || typeof item !== 'object') {
     return { name: '', domain: '', description: '', industry: '', tags: [], raw: item };
@@ -122,6 +135,71 @@ function extractCompanyFields(item: any): {
     ? tagsRaw.map(t => safeText(t)).filter(Boolean)
     : safeText(tagsRaw).split(',').map(t => t.trim()).filter(Boolean);
 
+  // Extract existing contact info if available
+  // Sources: Apify Apollo scraper (first_name/last_name/email), Wellfound (hiring_contact), Clutch, etc.
+
+  // Email - Apollo scraper puts it directly on item, Wellfound in hiring_contact
+  const contactEmail = safeText(
+    item.email ??
+    item.contact_email ??
+    item.contactEmail ??
+    item.hiring_contact?.email ??
+    item.hiringContact?.email ??
+    item.recruiter_email ??
+    item.recruiterEmail ??
+    ''
+  );
+
+  // Name - Apollo scraper has first_name/last_name, Wellfound has hiring_contact.name
+  const firstName = safeText(item.first_name ?? item.firstName ?? '');
+  const lastName = safeText(item.last_name ?? item.lastName ?? '');
+  const fullNameFromParts = (firstName && lastName) ? `${firstName} ${lastName}` : (firstName || lastName);
+
+  const contactName = fullNameFromParts || safeText(
+    item.contact_name ??
+    item.contactName ??
+    item.hiring_contact?.name ??
+    item.hiringContact?.name ??
+    item.hiring_contact_name ??
+    item.hiringContactName ??
+    item.recruiter_name ??
+    item.recruiterName ??
+    item.contact ??
+    ''
+  );
+
+  // Title - Apollo scraper has it directly (only use if we have person data to avoid conflict with company title)
+  const contactTitle = safeText(
+    (fullNameFromParts ? item.title : null) ?? // Only use item.title if we have first_name/last_name
+    item.contact_title ??
+    item.contactTitle ??
+    item.hiring_contact?.title ??
+    item.hiringContact?.title ??
+    item.recruiter_title ??
+    item.recruiterTitle ??
+    ''
+  );
+
+  // LinkedIn - various formats
+  const contactLinkedin = safeText(
+    item.person_linkedin_url ??
+    item.linkedin_url ??
+    item.linkedinUrl ??
+    item.contact_linkedin ??
+    item.contactLinkedin ??
+    item.hiring_contact?.linkedin ??
+    item.hiringContact?.linkedin ??
+    ''
+  );
+
+  // Build existing contact object if any info found
+  const existingContact = (contactEmail || contactName) ? {
+    name: contactName || undefined,
+    email: contactEmail || undefined,
+    title: contactTitle || undefined,
+    linkedin: contactLinkedin || undefined,
+  } : undefined;
+
   return {
     name: name.trim() || 'Unknown Company',
     domain: domain.trim(),
@@ -129,6 +207,7 @@ function extractCompanyFields(item: any): {
     industry: industry.trim(),
     tags,
     raw: item,
+    existingContact,
   };
 }
 
@@ -237,6 +316,7 @@ export async function fetchSupplySignals(
           hireCategory: finalCategory,
           classification: { ...classification, hireCategory: finalCategory },
           raw: extracted.raw,
+          existingContact: extracted.existingContact,
         });
       }
     }

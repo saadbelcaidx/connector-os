@@ -2017,7 +2017,8 @@ function MatchingEngineV3() {
           apolloKey,
           supply.domain,
           supply.name,
-          searchTitles
+          searchTitles,
+          supply.existingContact // Pass Apify contact if available
         );
 
         if (supplyContact && supplyContact.email) {
@@ -2524,7 +2525,8 @@ function MatchingEngineV3() {
             apolloKey,
             selectedProvider.domain,
             selectedProvider.name,
-            selectedProvider.defaultTitles
+            selectedProvider.defaultTitles,
+            selectedProvider.existingContact // Pass Apify contact if available
           );
 
           if (supplyContact) {
