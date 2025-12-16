@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { TrendingUp, TrendingDown, Minus, Info } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -16,10 +16,25 @@ interface JobTrendChartProps {
   onTrendChange?: (direction: 'up' | 'down' | 'flat') => void;
 }
 
+/**
+ * Calculate 7-day rolling average to smooth noisy data
+ */
+function calculateRollingAverage(data: TrendData[], window: number = 7): TrendData[] {
+  if (data.length < window) return data;
+
+  return data.map((item, index) => {
+    const start = Math.max(0, index - window + 1);
+    const slice = data.slice(start, index + 1);
+    const avg = slice.reduce((sum, d) => sum + d.count, 0) / slice.length;
+    return { date: item.date, count: Math.round(avg) };
+  });
+}
+
 export function JobTrendChart({ userId = 'default', onTrendChange }: JobTrendChartProps) {
   const [trendData, setTrendData] = useState<TrendData[]>([]);
   const [trendDirection, setTrendDirection] = useState<'up' | 'down' | 'flat'>('flat');
   const [loading, setLoading] = useState(true);
+  const [signalConfidence, setSignalConfidence] = useState<'high' | 'medium' | 'low'>('low');
 
   useEffect(() => {
     loadTrendData();
@@ -53,6 +68,15 @@ export function JobTrendChart({ userId = 'default', onTrendChange }: JobTrendCha
 
         setTrendData(trends);
         calculateTrend(trends);
+
+        // Determine signal confidence based on data density
+        if (data.length >= 14) {
+          setSignalConfidence('high');
+        } else if (data.length >= 7) {
+          setSignalConfidence('medium');
+        } else {
+          setSignalConfidence('low');
+        }
       }
     } catch (error) {
       console.error('Error loading trend data:', error);
@@ -90,8 +114,18 @@ export function JobTrendChart({ userId = 'default', onTrendChange }: JobTrendCha
     }
   };
 
-  const maxCount = Math.max(...trendData.map(d => d.count), 1);
-  const minCount = Math.min(...trendData.map(d => d.count), 0);
+  // Apply 7-day rolling average for smoother visualization
+  const smoothedData = useMemo(() => calculateRollingAverage(trendData), [trendData]);
+
+  // Sample data to reduce visual noise (show max ~20 points)
+  const sampledData = useMemo(() => {
+    if (smoothedData.length <= 20) return smoothedData;
+    const step = Math.ceil(smoothedData.length / 20);
+    return smoothedData.filter((_, i) => i % step === 0 || i === smoothedData.length - 1);
+  }, [smoothedData]);
+
+  const maxCount = Math.max(...sampledData.map(d => d.count), 1);
+  const minCount = Math.min(...sampledData.map(d => d.count), 0);
 
   const getY = (count: number, height: number): number => {
     if (maxCount === minCount) return height / 2;
@@ -100,30 +134,41 @@ export function JobTrendChart({ userId = 'default', onTrendChange }: JobTrendCha
 
   if (loading) {
     return (
-      <div className="mt-4 p-4 bg-[#0F0F0F] rounded-lg border border-[#1C1C1C]">
-        <div className="text-[11px] text-white text-opacity-40">Loading trend data...</div>
+      <div className="mt-4 p-4 bg-[#0a0a0a] rounded-2xl border border-white/[0.04]">
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-3 rounded-full bg-white/10 animate-pulse" />
+          <div className="h-2 w-24 bg-white/5 rounded animate-pulse" />
+        </div>
       </div>
     );
   }
 
   if (trendData.length === 0) {
     return (
-      <div className="mt-4 p-4 bg-[#0F0F0F] rounded-lg border border-[#1C1C1C]">
-        <div className="text-[11px] text-white text-opacity-70 mb-2">Job Volume Trend (Last 60 Days)</div>
-        <div className="text-[10px] text-white text-opacity-40">
-          Trend data will appear as signals update
+      <div className="mt-4 p-4 bg-[#0a0a0a] rounded-2xl border border-white/[0.04]">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] text-white/40">Hiring Pressure Trend</div>
+          <div className="text-[9px] text-white/20">Awaiting data</div>
+        </div>
+        <div className="mt-3 h-10 flex items-center justify-center">
+          <div className="text-[9px] text-white/20">
+            Trend data builds as signals refresh
+          </div>
+        </div>
+        <div className="mt-3 pt-2 border-t border-white/[0.04]">
+          <span className="text-[8px] text-white/20">Source: Apify (Wellfound / LinkedIn)</span>
         </div>
       </div>
     );
   }
 
-  const width = 300;
-  const height = 50;
-  const padding = 2;
+  const width = 280;
+  const height = 40;
+  const padding = 4;
 
-  const points = trendData
+  const points = sampledData
     .map((d, i) => {
-      const x = (i / (trendData.length - 1)) * (width - padding * 2) + padding;
+      const x = (i / Math.max(sampledData.length - 1, 1)) * (width - padding * 2) + padding;
       const y = getY(d.count, height - padding * 2) + padding;
       return `${x},${y}`;
     })
@@ -131,69 +176,86 @@ export function JobTrendChart({ userId = 'default', onTrendChange }: JobTrendCha
 
   const areaPoints = `${padding},${height} ${points} ${width - padding},${height}`;
 
+  // Neutral color scheme - premium monochrome
+  const trendColor = trendDirection === 'up'
+    ? 'rgba(255, 255, 255, 0.6)'
+    : trendDirection === 'down'
+    ? 'rgba(255, 255, 255, 0.35)'
+    : 'rgba(255, 255, 255, 0.25)';
+
+  const gradientId = `trendGradient-${userId}`;
+
   return (
-    <div className="mt-4 p-4 bg-[#0F0F0F] rounded-lg border border-[#1C1C1C]">
+    <div className="mt-4 p-4 bg-[#0a0a0a] rounded-2xl border border-white/[0.04]">
+      {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[11px] text-white text-opacity-70">Job Volume Trend (Last 60 Days)</div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-white/40">Hiring Pressure</span>
+          {signalConfidence !== 'high' && (
+            <span
+              className="text-[8px] px-1.5 py-0.5 rounded bg-white/[0.04] text-white/40 flex items-center gap-1"
+              title="Limited historical data — trend may be unreliable"
+            >
+              <Info size={8} />
+              {signalConfidence === 'low' ? 'Low confidence' : 'Building'}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
           {trendDirection === 'up' && (
             <>
-              <TrendingUp size={12} className="text-[#26F7C7]" />
-              <span className="text-[10px] text-[#26F7C7]">Upward</span>
+              <TrendingUp size={10} className="text-white/60" />
+              <span className="text-[9px] text-white/60">Rising</span>
             </>
           )}
           {trendDirection === 'down' && (
             <>
-              <TrendingDown size={12} className="text-red-400" />
-              <span className="text-[10px] text-red-400">Downward</span>
+              <TrendingDown size={10} className="text-white/35" />
+              <span className="text-[9px] text-white/35">Falling</span>
             </>
           )}
           {trendDirection === 'flat' && (
             <>
-              <Minus size={12} className="text-white text-opacity-40" />
-              <span className="text-[10px] text-white text-opacity-40">Flat</span>
+              <Minus size={10} className="text-white/30" />
+              <span className="text-[9px] text-white/30">Stable</span>
             </>
           )}
         </div>
       </div>
+
+      {/* Chart - calm sparse area */}
       <svg
         width="100%"
         height={height}
         viewBox={`0 0 ${width} ${height}`}
         className="overflow-visible"
+        style={{ opacity: 0.9 }}
       >
         <defs>
-          <linearGradient id="trendGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#26F7C7" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="#26F7C7" stopOpacity="0.05" />
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor={trendColor} stopOpacity="0.15" />
+            <stop offset="100%" stopColor={trendColor} stopOpacity="0.02" />
           </linearGradient>
         </defs>
-        <polygon points={areaPoints} fill="url(#trendGradient)" />
+        {/* Subtle area fill */}
+        <polygon points={areaPoints} fill={`url(#${gradientId})`} />
+        {/* Thin trend line */}
         <polyline
           points={points}
           fill="none"
-          stroke="#26F7C7"
-          strokeWidth="2"
+          stroke={trendColor}
+          strokeWidth="1.5"
           strokeLinecap="round"
           strokeLinejoin="round"
+          opacity="0.6"
         />
-        {trendData.map((d, i) => {
-          const x = (i / (trendData.length - 1)) * (width - padding * 2) + padding;
-          const y = getY(d.count, height - padding * 2) + padding;
-          return (
-            <circle
-              key={i}
-              cx={x}
-              cy={y}
-              r="2"
-              fill="#26F7C7"
-              className="hover:r-3 transition-all cursor-pointer"
-            >
-              <title>{`${d.date}: ${d.count} roles`}</title>
-            </circle>
-          );
-        })}
       </svg>
+
+      {/* Source attribution */}
+      <div className="mt-3 pt-2 border-t border-white/[0.04] flex items-center justify-between">
+        <span className="text-[8px] text-white/20">Source: Apify (Wellfound / LinkedIn)</span>
+        <span className="text-[8px] text-white/15">7d avg • {sampledData.length} samples</span>
+      </div>
     </div>
   );
 }

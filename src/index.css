@@ -63,3 +63,153 @@ body {
     transform: translateX(0);
   }
 }
+
+/* ========================================
+   PREMIUM SCROLL SYSTEM
+   Linear + Raycast style
+   ======================================== */
+
+/* Hide native scrollbar but keep scroll functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Ghost scroll with fade edges - implies depth */
+.scroll-fade {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 6%,
+    black 94%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 6%,
+    black 94%,
+    transparent 100%
+  );
+}
+
+/* Scroll snap for intentional feel */
+.snap-list {
+  scroll-snap-type: y proximity;
+}
+
+.snap-item {
+  scroll-snap-align: start;
+}
+
+/* ========================================
+   CUSTOM SCROLLBAR
+   Minimal, dark mode, premium
+   ======================================== */
+
+/* Custom scrollbar - appears on hover */
+.custom-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Firefox */
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+}
+
+/* ========================================
+   SIGNAL FEED STYLES
+   Company list - minimal
+   ======================================== */
+
+/* Active company - subtle highlight */
+.signal-row-active {
+  background: rgba(255, 255, 255, 0.04);
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Micro-hover - subtle, premium */
+.signal-row {
+  transition: all 250ms ease;
+  border-left: 1px solid transparent;
+}
+
+.signal-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* ========================================
+   LOADING STATES
+   Premium shimmer effect
+   ======================================== */
+
+/* Shimmer animation for "thinking" state */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.02) 0%,
+    rgba(255, 255, 255, 0.06) 50%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ========================================
+   PREMIUM POLISH
+   Vercel-level refinement
+   ======================================== */
+
+/* Soft glow buttons */
+.btn-glow {
+  transition: all 300ms ease;
+}
+
+.btn-glow:hover {
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.05);
+}
+
+/* Slower, more intentional animations */
+.transition-premium {
+  transition: all 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 2xl corners everywhere */
+.rounded-premium {
+  border-radius: 16px;
+}
+
+/* Soft contrast borders */
+.border-soft {
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+.border-soft-hover:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+}

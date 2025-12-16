@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Briefcase, TrendingUp, AlertTriangle, Users, Zap, Target, Loader2, Radio, Settings as SettingsIcon, Bell, RefreshCw, Sparkles, Eye, EyeOff, Lock, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, TrendingUp, Loader2, Radio, Settings as SettingsIcon, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
 import { PredictionService, SignalTrend } from './PredictionService';
@@ -22,7 +22,7 @@ import {
   safeLower,
   safeText,
 } from './services/SignalsClient';
-import { addNotification, getNotifications, Notification } from './services/NotificationsService';
+// Notifications removed - using toast only
 import { generateJobInsights, JobInsights } from './services/JobInsightsEngine';
 import { rewriteIntro, isAIConfigured, rewriteInsight, cleanApiResponse, generateWhyNow, generateWhyYou, generateDemandIntro, generateSupplyIntro } from './services/AIService';
 import { createRichFundingSignal, createRichJobsSignal, createRichLayoffsSignal, RichSignal } from './services/SignalFormatters';
@@ -247,16 +247,6 @@ function getConnectorAngle(buyerTitle: string) {
   return `${buyerTitle}s usually deal with this before anyone else.`;
 }
 
-function getMatchBadge(matchScore: number): { text: string; color: string } {
-  if (matchScore >= 70) {
-    return { text: 'Strong fit', color: 'emerald' };
-  }
-  if (matchScore >= 40) {
-    return { text: 'Good fit', color: 'blue' };
-  }
-  return { text: 'Okay fit', color: 'gray' };
-}
-
 type MatchScoreBreakdown = {
   rolePoints: number;
   industryPoints: number;
@@ -373,7 +363,7 @@ function SignalBlock({
 }) {
   return (
     <div
-      className="flex items-start gap-3 p-3 rounded-lg mb-2 relative"
+      className="flex items-start gap-3 p-3 rounded-2xl mb-2 relative transition-all duration-350"
       style={{
         background: 'rgba(14, 165, 233, 0.04)',
         border: '1px solid rgba(14, 165, 233, 0.15)',
@@ -431,7 +421,7 @@ function RichSignalBlock({
 
   return (
     <div
-      className="p-4 rounded-lg mb-3"
+      className="p-4 rounded-2xl mb-3 transition-all duration-350"
       style={{
         background: 'rgba(14, 165, 233, 0.04)',
         border: '1px solid rgba(14, 165, 233, 0.15)',
@@ -571,7 +561,6 @@ function MatchingEngineV3() {
   const [insightMode, setInsightMode] = useState<'template' | 'template_plus_ai' | 'ai_only'>('template');
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [isRewritingInsight, setIsRewritingInsight] = useState(false);
-  const [recentNotifications, setRecentNotifications] = useState<Notification[]>([]);
   const [trendDirection, setTrendDirection] = useState<'up' | 'down' | 'flat'>('flat');
   const [jobInsights, setJobInsights] = useState<JobInsights | null>(null);
   const [roleFilter, setRoleFilter] = useState<string>('');
@@ -693,13 +682,7 @@ function MatchingEngineV3() {
   useEffect(() => {
     loadSettingsFromDatabase();
     loadSignalHistory();
-    loadRecentNotifications();
   }, []);
-
-  const loadRecentNotifications = async () => {
-    const notifications = await getNotifications();
-    setRecentNotifications(notifications.slice(0, 3));
-  };
 
   const loadSettingsFromDatabase = async () => {
     try {
@@ -926,61 +909,6 @@ function MatchingEngineV3() {
     }
   };
 
-  const checkForNotifications = async () => {
-    const currentForecast = predictionResult.pressureForecast;
-    const currentStrength = signalStrength;
-    const fundingCount = parseInt(signals.funding.value.match(/\d+/)?.[0] || '0');
-    const layoffsCount = parseInt(signals.layoffs.value.match(/\d+/)?.[0] || '0');
-
-    let notificationAdded = false;
-
-    if (previousState.current.forecast !== 'rising' && currentForecast === 'rising') {
-      await addNotification({
-        type: 'pressure_rising',
-        message: 'Pressure window forming — momentum increasing.',
-        signal_strength: currentStrength,
-        momentum: predictionResult.momentumScore,
-        forecast: currentForecast,
-      });
-      notificationAdded = true;
-    }
-
-    if (fundingCount > previousState.current.fundingCount && fundingCount > 0) {
-      const delta = fundingCount - previousState.current.fundingCount;
-      await addNotification({
-        type: 'funding_spike',
-        message: `${delta} new funding event${delta > 1 ? 's' : ''} detected in your target market.`,
-        signal_strength: currentStrength,
-        momentum: predictionResult.momentumScore,
-        forecast: currentForecast,
-      });
-      notificationAdded = true;
-    }
-
-    if (layoffsCount > previousState.current.layoffsCount && layoffsCount > 0) {
-      const delta = layoffsCount - previousState.current.layoffsCount;
-      await addNotification({
-        type: 'layoffs_increase',
-        message: `${delta.toLocaleString()} new layoffs reported — potential window opening.`,
-        signal_strength: currentStrength,
-        momentum: predictionResult.momentumScore,
-        forecast: currentForecast,
-      });
-      notificationAdded = true;
-    }
-
-    if (notificationAdded) {
-      await loadRecentNotifications();
-    }
-
-    previousState.current = {
-      forecast: currentForecast,
-      signalStrength: currentStrength,
-      fundingCount,
-      layoffsCount,
-    };
-  };
-
   useEffect(() => {
     try {
       const strength = calculateSignalStrength(signals);
@@ -1004,7 +932,6 @@ function MatchingEngineV3() {
       if (strength > 0 && signals.jobs.value && user) {
         saveSignalToHistory(strength, currentTrend, prediction.pressureForecast);
         logUsage(true);
-        checkForNotifications();
       }
     } catch (error) {
       console.error('[MatchingEngine] Error processing signals:', error);
@@ -1158,33 +1085,12 @@ function MatchingEngineV3() {
 
   useEffect(() => {
     if (signals.jobs.metadata) {
-      if (previousState.current?.trendDirection && previousState.current.trendDirection !== trendDirection) {
-        if (trendDirection === 'up') {
-          const keyword = signals.jobs.metadata.keyword || 'roles';
-          addNotification(
-            'trend_change',
-            `Hiring trend rising in ${keyword}: possible pressure window.`,
-            signalStrength,
-            predictionResult.momentumScore,
-            predictionResult.pressureForecast
-          );
-        } else if (trendDirection === 'down') {
-          addNotification(
-            'trend_change',
-            'Hiring volume cooling — window tightening.',
-            signalStrength,
-            predictionResult.momentumScore,
-            predictionResult.pressureForecast
-          );
-        }
-      }
-
       previousState.current = {
         ...previousState.current,
         trendDirection,
       } as any;
     }
-  }, [signals.jobs.metadata, trendDirection, sourcesCount, roleFilter, industryFilter, signalStrength, predictionResult]);
+  }, [signals.jobs.metadata, trendDirection]);
 
   function detectIndustry(companyName?: string | null, domain?: string | null): string {
     const name = safeLower(companyName);
@@ -1792,23 +1698,27 @@ function MatchingEngineV3() {
     // This mentions the PROVIDER company (e.g., "I know someone at Toptal who...")
     setIsGeneratingDemandIntro(true);
     try {
-      const demandIntro = await generateDemandIntro(
-        aiConfig,
-        {
-          firstName,
-          companyName: result.companyName,
-          signalDetail,
-          roleLabel: result.jobTitlesBeingHired?.[0] || '',
-          roleCount: result.jobCount || 1
-        },
-        {
-          name: provider.name,
-          company: provider.company,
-          specialty: provider.specialty
-        }
-      );
+      // Run generation with minimum delay to prevent UI glitch
+      const [demandIntro] = await Promise.all([
+        generateDemandIntro(
+          aiConfig,
+          {
+            firstName,
+            companyName: result.companyName,
+            signalDetail,
+            roleLabel: result.jobTitlesBeingHired?.[0] || '',
+            roleCount: result.jobCount || 1,
+            jobTitles: result.jobTitlesBeingHired || []
+          },
+          {
+            name: provider.name,
+            company: provider.company,
+            specialty: provider.specialty
+          }
+        ),
+        new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
+      ]);
       setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
-      // Also set as main intro for backwards compatibility
       setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
       console.log('[DualIntros] Demand intro generated:', demandIntro);
     } catch (error) {
@@ -1831,30 +1741,38 @@ function MatchingEngineV3() {
     }
 
     // This mentions the DEMAND company and DEMAND contact
+    // Determine hire category from job titles for better matching
+    const hireCategory = extractHireCategory(
+      result.jobTitlesBeingHired?.map(t => ({ title: t })),
+      result.signalSummary
+    );
+
     setIsGeneratingSupplyIntro(true);
     try {
-      const supplyIntro = await generateSupplyIntro(
-        aiConfig,
-        {
-          company_name: result.companyName,
-          person_name: personData.name,
-          title: personData.title || 'decision maker'
-        },
-        {
-          summary: signalDetail,
-          roleCount: result.jobCount || 1,
-          roleLabel: result.jobTitlesBeingHired?.[0] || '', // Pass first job title for role type
-          fitReason: `${result.companyName} is actively hiring`
-        },
-        {
-          name: supplyContactForIntro.name // Use actual contact name, not fallback
-        },
-        // Pass provider info so intro is tailored to the specific provider
-        selectedProvider ? {
-          name: selectedProvider.name,
-          specialty: selectedProvider.specialty
-        } : undefined
-      );
+      // Run generation with minimum delay to prevent UI glitch
+      const [supplyIntro] = await Promise.all([
+        generateSupplyIntro(
+          aiConfig,
+          {
+            company_name: result.companyName,
+            person_name: personData.name,
+            title: personData.title || 'decision maker'
+          },
+          {
+            summary: signalDetail,
+            roleCount: result.jobCount || 1,
+            roleLabel: result.jobTitlesBeingHired?.[0] || '',
+            hireCategory: hireCategory,
+            fitReason: `${result.companyName} is actively hiring`
+          },
+          { name: supplyContactForIntro.name },
+          selectedProvider ? {
+            name: selectedProvider.name,
+            specialty: selectedProvider.specialty
+          } : undefined
+        ),
+        new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
+      ]);
       setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
       console.log('[DualIntros] Supply intro generated for', supplyContactForIntro.name, 'at', selectedProvider?.name, ':', supplyIntro);
     } catch (error) {
@@ -1865,6 +1783,7 @@ function MatchingEngineV3() {
   };
 
   // Individual regenerate functions for demand and supply intros
+  // Added minimum delay to prevent UI glitching from fast state changes
   const regenerateDemandIntro = async (domain: string) => {
     const result = matchingResults.find(r => r.domain === domain);
     if (!result) return;
@@ -1884,18 +1803,24 @@ function MatchingEngineV3() {
     const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
 
     setIsGeneratingDemandIntro(true);
+
     try {
-      const demandIntro = await generateDemandIntro(
-        aiConfig,
-        {
-          firstName,
-          companyName: result.companyName,
-          signalDetail,
-          roleLabel: result.jobTitlesBeingHired?.[0] || '',
-          roleCount: result.jobCount || 1
-        },
-        { name: provider.name, company: provider.company, specialty: provider.specialty }
-      );
+      // Run generation with minimum delay to prevent UI glitch
+      const [demandIntro] = await Promise.all([
+        generateDemandIntro(
+          aiConfig,
+          {
+            firstName,
+            companyName: result.companyName,
+            signalDetail,
+            roleLabel: result.jobTitlesBeingHired?.[0] || '',
+            roleCount: result.jobCount || 1,
+            jobTitles: result.jobTitlesBeingHired || []
+          },
+          { name: provider.name, company: provider.company, specialty: provider.specialty }
+        ),
+        new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
+      ]);
       setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
       setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
       console.log('[DualIntros] Demand intro regenerated:', demandIntro);
@@ -1929,27 +1854,31 @@ function MatchingEngineV3() {
     const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
 
     setIsGeneratingSupplyIntro(true);
+
     try {
-      const supplyIntro = await generateSupplyIntro(
-        aiConfig,
-        {
-          company_name: result.companyName,
-          person_name: personData.name,
-          title: personData.title || 'decision maker'
-        },
-        {
-          summary: signalDetail,
-          roleCount: result.jobCount || 1,
-          roleLabel: result.jobTitlesBeingHired?.[0] || '', // Pass first job title for role type
-          fitReason: `${result.companyName} is actively hiring`
-        },
-        { name: supplyContactForIntro.name },
-        // Pass provider info so intro is tailored to the specific provider
-        selectedProvider ? {
-          name: selectedProvider.name,
-          specialty: selectedProvider.specialty
-        } : undefined
-      );
+      // Run generation with minimum delay to prevent UI glitch
+      const [supplyIntro] = await Promise.all([
+        generateSupplyIntro(
+          aiConfig,
+          {
+            company_name: result.companyName,
+            person_name: personData.name,
+            title: personData.title || 'decision maker'
+          },
+          {
+            summary: signalDetail,
+            roleCount: result.jobCount || 1,
+            roleLabel: result.jobTitlesBeingHired?.[0] || '',
+            fitReason: `${result.companyName} is actively hiring`
+          },
+          { name: supplyContactForIntro.name },
+          selectedProvider ? {
+            name: selectedProvider.name,
+            specialty: selectedProvider.specialty
+          } : undefined
+        ),
+        new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
+      ]);
       setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
       console.log('[DualIntros] Supply intro regenerated for', supplyContactForIntro.name, 'at', selectedProvider?.name, ':', supplyIntro);
     } catch (error) {
@@ -1997,7 +1926,7 @@ function MatchingEngineV3() {
   };
 
   // Enrich supply contact (person at dynamically discovered supply company)
-  const enrichSupplyContact = async (companyDomain: string, result: MatchingResult, specificSupply?: SupplyCompany) => {
+  const enrichSupplyContact = async (companyDomain: string, result: MatchingResult, specificSupply?: SupplyCompany): Promise<{ contact: SupplyContact | null; supply: SupplyCompany | null }> => {
     // Determine hire category from job titles being hired
     const hireCategory = extractHireCategory(
       result.jobTitlesBeingHired?.map(t => ({ title: t })),
@@ -2019,7 +1948,7 @@ function MatchingEngineV3() {
       if (matches.length === 0) {
         console.log('[SupplyEnrich] No supply companies discovered for category:', hireCategory);
         console.log('[SupplyEnrich] Configure Supply Apify URL in Settings to enable two-sided matching');
-        return;
+        return { contact: null, supply: null };
       }
 
       selectedSupply = matches[0];
@@ -2030,13 +1959,17 @@ function MatchingEngineV3() {
     const apolloKey = enrichmentConfig?.apolloApiKey || enrichmentConfig?.apiKey;
     if (!apolloKey) {
       console.log('[SupplyEnrich] No Apollo API key, skipping supply enrichment');
-      return;
+      return { contact: null, supply: selectedSupply };
     }
 
-    // Build list of supply companies to try: selected first, then alternatives
-    const suppliesToTry = [selectedSupply, ...alternatives].filter(Boolean) as SupplyCompany[];
+    // Build list of supply companies to try
+    // If user explicitly selected a provider, ONLY try that one (no fallback)
+    // If auto-selected, try selected + alternatives as fallback
+    const suppliesToTry = specificSupply
+      ? [selectedSupply].filter(Boolean) as SupplyCompany[]  // No fallback for explicit selection
+      : [selectedSupply, ...alternatives].filter(Boolean) as SupplyCompany[];
 
-    console.log(`[SupplyEnrich] Will try ${suppliesToTry.length} supply companies: ${suppliesToTry.map(s => s.name).join(' → ')}`);
+    console.log(`[SupplyEnrich] Will try ${suppliesToTry.length} supply companies: ${suppliesToTry.map(s => s.name).join(' → ')}${specificSupply ? ' (explicit selection, no fallback)' : ''}`);
 
     // Clear previous supply contact
     setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: null }));
@@ -2092,6 +2025,9 @@ function MatchingEngineV3() {
     }
 
     setIsEnrichingSupplyByDomain(prev => ({ ...prev, [companyDomain]: false }));
+
+    // Return the results directly so callers don't need to read from stale state
+    return { contact: foundContact, supply: successfulSupply };
   };
 
   // Switch to a different supply company and re-enrich supply contact
@@ -2099,24 +2035,63 @@ function MatchingEngineV3() {
     const result = matchingResults.find(r => r.domain === companyDomain);
     if (!result) return;
 
-    console.log(`[SupplyEnrich] Switching supply to ${newSupply.name} for ${companyDomain}`);
+    console.log(`[SupplySwitch] Switching to ${newSupply.name} for ${companyDomain}`);
 
-    // Clear cached supply intro so it regenerates with new supply company
+    // Clear cached supply intro immediately
     setSupplyIntroByDomain(prev => {
       const updated = { ...prev };
       delete updated[companyDomain];
       return updated;
     });
 
-    // Enrich with new supply company
-    await enrichSupplyContact(companyDomain, result, newSupply);
+    // Enrich with new supply company - returns the contact directly (no stale state)
+    const { contact: freshSupplyContact, supply: actualSupply } = await enrichSupplyContact(companyDomain, result, newSupply);
 
-    // After enrichment completes, regenerate supply intro
-    // Use setTimeout to ensure state has flushed before regeneration
-    setTimeout(() => {
-      console.log(`[SupplyEnrich] Regenerating supply intro for ${companyDomain} after provider switch`);
-      regenerateSupplyIntro(companyDomain);
-    }, 150);
+    // Check if we got a valid contact
+    if (!freshSupplyContact?.email) {
+      console.log('[SupplySwitch] No supply contact with email found at', newSupply.name);
+      return;
+    }
+
+    // Check if we have demand person data
+    const personData = personDataByDomain[companyDomain];
+    if (!personData?.name) {
+      console.log('[SupplySwitch] No demand contact yet - skipping intro generation');
+      return;
+    }
+
+    // Generate the new supply intro with FRESH data (not stale state)
+    console.log(`[SupplySwitch] Generating intro for ${freshSupplyContact.name} at ${actualSupply?.name || newSupply.name}`);
+
+    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+    const providerInfo = actualSupply || newSupply;
+
+    setIsGeneratingSupplyIntro(true);
+    try {
+      const supplyIntro = await generateSupplyIntro(
+        aiConfig,
+        {
+          company_name: result.companyName,
+          person_name: personData.name,
+          title: personData.title || 'decision maker'
+        },
+        {
+          summary: signalDetail,
+          roleCount: result.jobCount || 1,
+          roleLabel: result.jobTitlesBeingHired?.[0] || '',
+          fitReason: `${result.companyName} is actively hiring`
+        },
+        { name: freshSupplyContact.name },
+        { name: providerInfo.name, specialty: providerInfo.specialty }
+      );
+
+      setSupplyIntroByDomain(prev => ({ ...prev, [companyDomain]: supplyIntro }));
+      console.log(`[SupplySwitch] ✓ Intro generated for ${freshSupplyContact.name} at ${providerInfo.name}`);
+    } catch (error) {
+      console.error('[SupplySwitch] Intro generation failed:', error);
+    } finally {
+      setIsGeneratingSupplyIntro(false);
+    }
   };
 
   const handleEnrichPerson = async (companyDomain?: string) => {
@@ -2481,28 +2456,16 @@ function MatchingEngineV3() {
 
     // For SUPPLY: we need to select provider + enrich supply contact
     let supplyContact: SupplyContact | null = null;
-    let selectedProvider: SupplyProvider | null = null;
+    let selectedProvider: SupplyCompany | null = null;
     let supplyIntroForSend: string | undefined;
 
     if (type === 'SUPPLY') {
-      // Step 1: Check if provider already selected, or select one
+      // Step 1: Check if provider already selected
       selectedProvider = selectedSupplyByDomain[domain];
 
       if (!selectedProvider) {
-        const providerResult = selectProvider(
-          result?.signalType || 'jobs',
-          result?.jobTitlesBeingHired || [],
-          result?.signalSummary || ''
-        );
-
-        if ('blocked' in providerResult) {
-          showToast('error', `Cannot select provider: ${providerResult.reason}`);
-          return;
-        }
-
-        selectedProvider = providerResult.provider;
-        setSelectedProviderByDomain(prev => ({ ...prev, [domain]: selectedProvider }));
-        setAlternativeProvidersByDomain(prev => ({ ...prev, [domain]: providerResult.alternatives }));
+        showToast('error', 'No provider selected. Enrich contact first.');
+        return;
       }
       console.log(`[DualSend] Selected provider: ${selectedProvider.name} (${selectedProvider.domain})`);
 
@@ -2789,7 +2752,7 @@ function MatchingEngineV3() {
             <div className="h-4 w-96 bg-white/5 rounded animate-pulse" />
           </div>
           <div className="grid lg:grid-cols-[300px_1fr] gap-6 mt-8">
-            <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+            <div className="bg-[#0a0a0a] rounded-2xl p-4 border border-white/[0.04]">
               <div className="space-y-4">
                 {[1, 2, 3, 4, 5].map((i) => (
                   <div key={i} className="space-y-2">
@@ -2800,7 +2763,7 @@ function MatchingEngineV3() {
               </div>
             </div>
             <div className="space-y-4">
-              <div className="bg-[#111] rounded-lg p-4 border border-white/5 h-48">
+              <div className="bg-[#0a0a0a] rounded-2xl p-4 border border-white/[0.04] h-48">
                 <div className="h-3 w-24 bg-white/5 rounded animate-pulse mb-4" />
                 <div className="space-y-2">
                   <div className="h-2 w-full bg-white/5 rounded animate-pulse" />
@@ -2818,10 +2781,10 @@ function MatchingEngineV3() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0E0E0E] to-[#0A0A0A] text-white px-8 py-12">
       {toastNotification && (
-        <div className={`fixed top-6 right-6 px-5 py-3 rounded-lg shadow-2xl z-50 animate-slide-in-right flex items-center gap-2 ${
-          toastNotification.type === 'success' ? 'bg-emerald-500 text-white' :
-          toastNotification.type === 'warning' ? 'bg-amber-500 text-white' :
-          'bg-red-500 text-white'
+        <div className={`fixed top-6 right-6 px-5 py-3 rounded-2xl shadow-2xl z-50 animate-slide-in-right flex items-center gap-2 ${
+          toastNotification.type === 'success' ? 'bg-white/90 text-black' :
+          toastNotification.type === 'warning' ? 'bg-white/70 text-black' :
+          'bg-white/50 text-black'
         }`}>
           <span className="text-[13px] font-medium">{toastNotification.message}</span>
         </div>
@@ -2838,198 +2801,108 @@ function MatchingEngineV3() {
 
         <div className="mb-8 flex items-start justify-between">
           <div>
-            <div className="inline-block px-2.5 py-1 bg-[#0F1B17] text-[#3A9CFF] text-[10px] font-medium rounded-full mb-2 border-b border-[#3A9CFF] border-opacity-30">
-              Connector OS
-            </div>
-            <div className="flex items-center gap-4 mb-1.5">
-              <h1 className="text-[32px] font-medium text-white">Matching Engine V3</h1>
-              {/* Signal Status Chips */}
-              <div className="flex items-center gap-1 mt-2">
-                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasJobs ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                  Jobs {hasJobs ? 'Live' : 'Mock'}
-                </span>
-                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasFunding ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                  Funding {hasFunding ? 'Live' : 'Mock'}
-                </span>
-                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasLayoffs ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                  Layoffs {hasLayoffs ? 'Live' : 'Mock'}
-                </span>
-                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasHiring ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                  Hiring {hasHiring ? 'Live' : 'Off'}
-                </span>
-                <span className={`px-1.5 py-0.5 text-[9px] rounded ${hasTech ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                  Tech {hasTech ? 'Live' : 'Off'}
-                </span>
-              </div>
-            </div>
-            <p className="text-[17px] font-light text-white text-opacity-75">
-              Predictive intelligence. Who has pressure. Who can solve it. When to move.
+            <h1 className="text-2xl font-medium text-white/90 mb-1">Matching Engine</h1>
+            <p className="text-sm text-white/40">
+              Signal-driven prospecting
             </p>
           </div>
           <button
             onClick={() => navigate('/settings')}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0C0C0C] border border-[#1C1C1C] rounded-lg hover:border-[#3A9CFF] transition-all duration-150"
+            className="flex items-center gap-2 px-4 py-2 bg-white/[0.02] border border-white/[0.06] rounded-xl hover:bg-white/[0.04] transition-all duration-300"
           >
-            <SettingsIcon size={16} style={{ color: '#3A9CFF' }} />
-            <span className="text-[13px] text-white text-opacity-70">Configure Settings</span>
+            <SettingsIcon size={14} className="text-white/40" />
+            <span className="text-xs text-white/50">Settings</span>
           </button>
         </div>
 
-
-        <div className="grid lg:grid-cols-[300px_1fr] gap-6 mt-8">
+        <div className="grid lg:grid-cols-[280px_1fr] gap-6 mt-6">
           <div>
-            <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+            <div className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.04]">
               <div>
-                <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
-                  <h3 className="text-[9px] uppercase tracking-wider text-white/30">
-                    Market Signals
-                  </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xs font-medium text-white/50">Signals</h3>
                   <div className="flex items-center gap-2">
                     {isRefreshing && (
-                      <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[9px]">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                        Refreshing...
-                      </span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
                     )}
                     <button
                       onClick={fetchSignals}
                       disabled={isRefreshing}
-                      className="p-1 rounded hover:bg-white/5 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title="Refresh Signals"
+                      className="p-1.5 rounded-lg hover:bg-white/[0.04] transition-all duration-200 disabled:opacity-30"
+                      title="Refresh"
                     >
                       <RefreshCw
                         size={12}
-                        className={`text-white/40 hover:text-white/60 transition-colors ${isRefreshing ? 'animate-spin' : ''}`}
+                        className={`text-white/30 ${isRefreshing ? 'animate-spin' : ''}`}
                       />
                     </button>
                   </div>
                 </div>
 
                 {signals.error && (
-                  <div className="mb-4 p-3 bg-red-500 bg-opacity-10 border border-red-500 rounded-lg">
-                    <div className="text-[11px] text-red-400">{signals.error}</div>
+                  <div className="mb-4 p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl">
+                    <div className="text-xs text-white/50">{signals.error}</div>
                   </div>
                 )}
 
-                <p className="text-[9px] text-zinc-500 mb-3">
-                  URLs used verbatim · No query modification
-                </p>
-
-                {/* Signal Lines - skeleton during refresh */}
+                {/* Signal Lines - Minimal */}
                 {isRefreshing ? (
-                  <div className="space-y-1.5">
-                    {['Jobs', 'Funding', 'Layoffs', 'Hiring', 'Tech', 'Supply'].map((label) => (
-                      <div key={label} className={`flex items-center gap-2 ${label === 'Supply' ? 'pt-1.5 mt-1.5 border-t border-white/5' : ''}`}>
-                        <span className={`text-[10px] w-16 ${label === 'Supply' ? 'text-purple-400/50' : 'text-white/30'}`}>{label}</span>
-                        <div className="h-4 w-8 bg-white/[0.03] rounded animate-pulse" />
-                        <div className="flex-1 h-2 bg-white/[0.02] rounded animate-pulse" />
+                  <div className="space-y-4">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div key={i} className="space-y-1.5">
+                        <div className="h-2.5 w-16 bg-white/[0.04] rounded" />
+                        <div className="h-2 w-full bg-white/[0.02] rounded" />
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="space-y-1.5 text-[10px]">
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/60 w-16">Jobs</span>
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasJobs ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                        {hasJobs ? 'Live' : 'Mock'}
-                      </span>
-                      <span
-                        className="text-white/40 truncate flex-1 cursor-default"
-                        title={safeText(richJobsSignal?.operatorInsight || signals.jobs.value) || '–'}
-                      >
-                        {safeText(richJobsSignal?.operatorInsight || signals.jobs.value).slice(0, 50) || '–'}
-                      </span>
+                  <div className="space-y-4">
+                    {/* Jobs */}
+                    <div className="group">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`w-1 h-1 rounded-full ${hasJobs ? 'bg-white/50' : 'bg-white/20'}`} />
+                        <span className="text-xs text-white/50">Jobs</span>
+                      </div>
+                      <p className="text-xs text-white/30 leading-relaxed pl-3">
+                        {safeText(richJobsSignal?.operatorInsight || signals.jobs.value) || '–'}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/60 w-16">Funding</span>
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasFunding ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                        {hasFunding ? 'Live' : 'Mock'}
-                      </span>
-                      <span
-                        className="text-white/40 truncate flex-1 cursor-default"
-                        title={safeText(richFundingSignal?.operatorInsight || signals.funding.value) || '–'}
-                      >
-                        {safeText(richFundingSignal?.operatorInsight || signals.funding.value).slice(0, 50) || '–'}
-                      </span>
+
+                    {/* Funding */}
+                    <div className="group">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`w-1 h-1 rounded-full ${hasFunding ? 'bg-white/50' : 'bg-white/20'}`} />
+                        <span className="text-xs text-white/50">Funding</span>
+                      </div>
+                      <p className="text-xs text-white/30 leading-relaxed pl-3">
+                        {safeText(richFundingSignal?.operatorInsight || signals.funding.value) || '–'}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/60 w-16">Layoffs</span>
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasLayoffs ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                        {hasLayoffs ? 'Live' : 'Mock'}
-                      </span>
-                      <span
-                        className="text-white/40 truncate flex-1 cursor-default"
-                        title={safeText(richLayoffsSignal?.operatorInsight || signals.layoffs.value) || '–'}
-                      >
-                        {safeText(richLayoffsSignal?.operatorInsight || signals.layoffs.value).slice(0, 50) || '–'}
-                      </span>
+
+                    {/* Layoffs */}
+                    <div className="group">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`w-1 h-1 rounded-full ${hasLayoffs ? 'bg-white/50' : 'bg-white/20'}`} />
+                        <span className="text-xs text-white/50">Layoffs</span>
+                      </div>
+                      <p className="text-xs text-white/30 leading-relaxed pl-3">
+                        {safeText(richLayoffsSignal?.operatorInsight || signals.layoffs.value) || '–'}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/60 w-16">Hiring</span>
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasHiring ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                        {hasHiring ? 'Live' : 'Off'}
-                      </span>
-                      <span
-                        className="text-white/40 truncate flex-1 cursor-default"
-                        title={safeText(signals.hiringVelocity.value) || '–'}
-                      >
-                        {safeText(signals.hiringVelocity.value).slice(0, 50) || '–'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-white/60 w-16">Tech</span>
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${hasTech ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
-                        {hasTech ? 'Live' : 'Off'}
-                      </span>
-                      <span
-                        className="text-white/40 truncate flex-1 cursor-default"
-                        title={safeText(signals.toolAdoption.value) || '–'}
-                      >
-                        {safeText(signals.toolAdoption.value).slice(0, 50) || '–'}
-                      </span>
-                    </div>
-                    {/* Supply Discovery Row */}
-                    <div className="flex items-center gap-2 pt-1.5 mt-1.5 border-t border-white/5">
-                      <span className="text-purple-400/80 w-16">Supply</span>
-                      <span className={`px-1.5 py-0.5 text-[8px] rounded ${
-                        supplyDiscoveryStatus === 'loaded' && discoveredSupplyCompanies.length > 0
-                          ? 'bg-purple-500/10 text-purple-400'
-                          : supplyDiscoveryStatus === 'loading'
-                          ? 'bg-yellow-500/10 text-yellow-400'
-                          : 'bg-white/5 text-white/30'
-                      }`}>
-                        {supplyDiscoveryStatus === 'loaded' ? 'Live' : supplyDiscoveryStatus === 'loading' ? '...' : 'Off'}
-                      </span>
-                      <span
-                        className="text-white/40 truncate flex-1 cursor-default"
-                        title={(() => {
-                          if (discoveredSupplyCompanies.length === 0) return 'Configure Supply URL in Settings';
-                          const categorized = discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown');
-                          const byCategory = categorized.reduce((acc, s) => {
-                            acc[s.hireCategory] = (acc[s.hireCategory] || 0) + 1;
-                            return acc;
-                          }, {} as Record<string, number>);
-                          const categoryList = Object.entries(byCategory).map(([k, v]) => `${v} ${k}`).join(', ');
-                          return `${categorized.length} categorized: ${categoryList}`;
-                        })()}
-                      >
+
+                    {/* Supply */}
+                    <div className="group pt-3 border-t border-white/[0.04]">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`w-1 h-1 rounded-full ${discoveredSupplyCompanies.length > 0 ? 'bg-white/50' : 'bg-white/20'}`} />
+                        <span className="text-xs text-white/50">Supply</span>
+                      </div>
+                      <p className="text-xs text-white/30 leading-relaxed pl-3">
                         {supplyDiscoveryStatus === 'loading'
-                          ? 'Discovering providers...'
+                          ? 'Discovering...'
                           : discoveredSupplyCompanies.length > 0
-                          ? (() => {
-                              const categorized = discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown');
-                              if (categorized.length === 0) {
-                                return `${discoveredSupplyCompanies.length} found (0 categorized)`;
-                              }
-                              const byCategory = categorized.reduce((acc, s) => {
-                                acc[s.hireCategory] = (acc[s.hireCategory] || 0) + 1;
-                                return acc;
-                              }, {} as Record<string, number>);
-                              const top = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 3);
-                              return `${categorized.length} categorized (${top.map(([k, v]) => `${v} ${k}`).join(', ')})`;
-                            })()
-                          : 'No supply URL configured'}
-                      </span>
+                          ? `${discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown').length} providers`
+                          : '–'}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -3039,160 +2912,82 @@ function MatchingEngineV3() {
               </div>
             </div>
 
-            {/* Dual Intros - Demand and Supply */}
-            <div className="bg-[#111] rounded-lg p-4 border border-white/5 mt-4">
-              <div className="space-y-4">
-                {/* Demand Intro (to hiring company) */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-[9px] uppercase tracking-wider text-white/30">
-                        Demand Intro
-                      </h3>
-                      <span className="text-[8px] text-white/20">(to company)</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {activeResult && demandIntroByDomain[activeResult.domain] && !isGeneratingDemandIntro && (
-                        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[8px] text-emerald-400">
-                          Ready
-                        </span>
-                      )}
-                      {isGeneratingDemandIntro && (
-                        <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-400">
-                          <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" />
-                          Generating
-                        </span>
-                      )}
-                      {activeResult && demandIntroByDomain[activeResult.domain] && !isGeneratingDemandIntro && (
-                        <>
-                          <button
-                            onClick={() => regenerateDemandIntro(activeResult.domain)}
-                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
-                          >
-                            Regenerate
-                          </button>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(demandIntroByDomain[activeResult.domain]);
-                              showToast('success', 'Copied');
-                            }}
-                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
-                          >
-                            Copy
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded border border-white/5 bg-black/40 px-3 py-2.5 min-h-[50px]">
-                    {isRefreshing ? (
-                      <div className="space-y-1.5">
-                        <div className="h-2.5 w-full bg-zinc-800/50 rounded animate-pulse" />
-                        <div className="h-2.5 w-4/5 bg-zinc-800/40 rounded animate-pulse" />
-                      </div>
-                    ) : activeResult && demandIntroByDomain[activeResult.domain] ? (
-                      <p className="text-[11px] leading-relaxed text-white/80 whitespace-pre-wrap">
-                        {demandIntroByDomain[activeResult.domain]}
-                      </p>
-                    ) : (
-                      <p className="text-[10px] text-white/30">
-                        {isGeneratingDemandIntro ? 'Generating...' : 'Select a company to see intro'}
-                      </p>
-                    )}
-                  </div>
-                  {activeResult && demandIntroByDomain[activeResult.domain] && (
-                    <div className="text-[9px] text-white/30 text-right mt-1">
-                      {demandIntroByDomain[activeResult.domain].length} chars
-                    </div>
+            {/* Intro Cards - Clean, spacious */}
+            <div className="mt-6 space-y-4">
+              {/* TO COMPANY */}
+              <div className="group">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-white/25">To {activeResult?.companyName || 'company'}</span>
+                  {activeResult && demandIntroByDomain[activeResult.domain] && !isGeneratingDemandIntro && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(demandIntroByDomain[activeResult.domain]);
+                        showToast('success', 'Copied');
+                      }}
+                      className="text-[10px] text-white/20 hover:text-white/50 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      Copy
+                    </button>
                   )}
                 </div>
-
-                {/* Supply Intro (to provider/connector) */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-[9px] uppercase tracking-wider text-white/30">
-                        Supply Intro
-                      </h3>
-                      <span className="text-[8px] text-white/20">(to provider)</span>
+                <div className={isGeneratingDemandIntro ? 'shimmer rounded-lg p-4' : ''}>
+                  {isGeneratingDemandIntro ? (
+                    <div className="space-y-2">
+                      <div className="h-3 w-full bg-white/[0.04] rounded" />
+                      <div className="h-3 w-4/5 bg-white/[0.04] rounded" />
                     </div>
-                    <div className="flex items-center gap-2">
-                      {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
-                        <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[8px] text-blue-400">
-                          Ready
-                        </span>
-                      )}
-                      {isGeneratingSupplyIntro && (
-                        <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[8px] text-amber-400">
-                          <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" />
-                          Generating
-                        </span>
-                      )}
-                      {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
-                        <>
-                          <button
-                            onClick={() => regenerateSupplyIntro(activeResult.domain)}
-                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
-                          >
-                            Regenerate
-                          </button>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(supplyIntroByDomain[activeResult.domain]);
-                              showToast('success', 'Copied');
-                            }}
-                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors"
-                          >
-                            Copy
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded border border-white/5 bg-black/40 px-3 py-2.5 min-h-[50px]">
-                    {isRefreshing ? (
-                      <div className="space-y-1.5">
-                        <div className="h-2.5 w-full bg-zinc-800/50 rounded animate-pulse" />
-                        <div className="h-2.5 w-4/5 bg-zinc-800/40 rounded animate-pulse" />
-                      </div>
-                    ) : activeResult && supplyIntroByDomain[activeResult.domain] ? (
-                      <p className="text-[11px] leading-relaxed text-white/80 whitespace-pre-wrap">
-                        {supplyIntroByDomain[activeResult.domain]}
-                      </p>
-                    ) : (
-                      <p className="text-[10px] text-white/30">
-                        {isGeneratingSupplyIntro ? 'Generating...' : 'Select a company to see intro'}
-                      </p>
-                    )}
-                  </div>
-                  {activeResult && supplyIntroByDomain[activeResult.domain] && (
-                    <div className="text-[9px] text-white/30 text-right mt-1">
-                      {supplyIntroByDomain[activeResult.domain].length} chars
-                    </div>
+                  ) : activeResult && demandIntroByDomain[activeResult.domain] ? (
+                    <p className="text-[13px] leading-[1.7] text-white/60">
+                      {demandIntroByDomain[activeResult.domain]}
+                    </p>
+                  ) : (
+                    <p className="text-[12px] text-white/20">–</p>
                   )}
                 </div>
-
-                {/* Regenerate button */}
-                {activeResult && aiConfig && isAIConfigured(aiConfig) && !conversationStartedByDomain[activeResult.domain] && (
-                  <button
-                    onClick={() => handleRegenerateIntro(activeResult.domain)}
-                    disabled={isGeneratingDemandIntro || isGeneratingSupplyIntro}
-                    className="flex items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] text-white/60 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                  >
-                    {(isGeneratingDemandIntro || isGeneratingSupplyIntro) ? (
-                      <>
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Writing...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-3 h-3" />
-                        Regenerate Both
-                      </>
-                    )}
-                  </button>
-                )}
               </div>
+
+              {/* TO PROVIDER */}
+              <div className="group">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] text-white/25">To {selectedSupplyByDomain[activeResult?.domain || '']?.name || 'provider'}</span>
+                  {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(supplyIntroByDomain[activeResult.domain]);
+                        showToast('success', 'Copied');
+                      }}
+                      className="text-[10px] text-white/20 hover:text-white/50 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      Copy
+                    </button>
+                  )}
+                </div>
+                <div className={isGeneratingSupplyIntro ? 'shimmer rounded-lg p-4' : ''}>
+                  {isGeneratingSupplyIntro ? (
+                    <div className="space-y-2">
+                      <div className="h-3 w-full bg-white/[0.04] rounded" />
+                      <div className="h-3 w-4/5 bg-white/[0.04] rounded" />
+                    </div>
+                  ) : activeResult && supplyIntroByDomain[activeResult.domain] ? (
+                    <p className="text-[13px] leading-[1.7] text-white/60">
+                      {supplyIntroByDomain[activeResult.domain]}
+                    </p>
+                  ) : (
+                    <p className="text-[12px] text-white/20">–</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Regenerate */}
+              {activeResult && aiConfig && isAIConfigured(aiConfig) && !conversationStartedByDomain[activeResult.domain] && (
+                <button
+                  onClick={() => handleRegenerateIntro(activeResult.domain)}
+                  disabled={isGeneratingDemandIntro || isGeneratingSupplyIntro}
+                  className="text-[10px] text-white/15 hover:text-white/40 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                >
+                  {(isGeneratingDemandIntro || isGeneratingSupplyIntro) ? 'Generating...' : 'Regenerate'}
+                </button>
+              )}
             </div>
 
           </div>
@@ -3200,8 +2995,8 @@ function MatchingEngineV3() {
           <div>
             <div className="flex gap-4">
               <div className="w-56 flex-shrink-0">
-              <div className="bg-[#111] rounded-lg p-3 border border-white/5 sticky top-4">
-                <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/5">
+              <div className="bg-[#0a0a0a] rounded-2xl p-3 border border-white/[0.04] sticky top-4">
+                <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/[0.04]">
                   <h3 className="text-[9px] uppercase tracking-wider text-white/30">
                     {isRefreshing ? (
                       <span className="flex items-center gap-1.5">
@@ -3215,15 +3010,15 @@ function MatchingEngineV3() {
                     )}
                   </h3>
                 </div>
-                <div className="space-y-0 max-h-[400px] overflow-y-auto">
+                <div className="max-h-[400px] overflow-y-auto no-scrollbar scroll-fade snap-list">
                   {isRefreshing ? (
                     <>
                       {[1, 2, 3, 4, 5, 6].map((i) => (
                         <div
                           key={i}
-                          className="w-full px-2 py-2 border-b border-white/5"
+                          className="w-full px-3 py-2.5 snap-item"
                         >
-                          <div className="h-3 w-24 bg-white/5 rounded animate-pulse mb-1" />
+                          <div className="h-3 w-24 bg-white/5 rounded animate-pulse mb-1.5" />
                           <div className="h-2 w-16 bg-white/[0.03] rounded animate-pulse" />
                         </div>
                       ))}
@@ -3233,19 +3028,26 @@ function MatchingEngineV3() {
                       <button
                         key={result.id}
                         onClick={() => setActiveResultIndex(idx)}
-                        className={`w-full text-left px-2 py-2 border-b border-white/5 transition-all duration-150 ${
+                        className={`snap-item w-full text-left px-3 py-2.5 ${
                           idx === activeResultIndex
-                            ? 'bg-emerald-500/10 border-l-2 border-l-emerald-400'
-                            : 'hover:bg-white/[0.02] border-l-2 border-l-transparent'
+                            ? 'signal-row-active'
+                            : 'signal-row'
                         }`}
                       >
-                        <div className={`text-[11px] font-semibold truncate ${
-                          idx === activeResultIndex ? 'text-white' : 'text-white/80'
-                        }`}>
-                          {result.companyName}
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-1 h-1 rounded-full flex-shrink-0 ${
+                              idx === activeResultIndex ? 'bg-white/60' : 'bg-white/30'
+                            }`}
+                          />
+                          <span className={`text-xs truncate ${
+                            idx === activeResultIndex ? 'text-white/90' : 'text-white/60'
+                          }`}>
+                            {result.companyName}
+                          </span>
                         </div>
-                        <div className="text-[9px] text-white/40 mt-0.5">
-                          Score {result.signalStrength} • {result.jobCount} {result.jobCount === 1 ? 'role' : 'roles'}
+                        <div className="text-[10px] text-white/25 mt-0.5 pl-3">
+                          {result.jobCount} {result.jobCount === 1 ? 'role' : 'roles'}
                         </div>
                       </button>
                     ))
@@ -3256,7 +3058,7 @@ function MatchingEngineV3() {
 
             <div className="flex-1">
               {matchingResults.length === 0 && connectorProfile && !isRefreshing && (
-                <div className="rounded-lg border border-dashed border-white/10 bg-[#111] p-4 text-center">
+                <div className="rounded-2xl border border-dashed border-white/[0.06] bg-[#0a0a0a] p-4 text-center">
                   <div className="text-[11px] text-white/60 mb-2">
                     No matches found.
                   </div>
@@ -3269,9 +3071,9 @@ function MatchingEngineV3() {
               <div className="relative">
                 {/* Skeleton placeholder during refresh */}
                 {isRefreshing && matchingResults.length === 0 && (
-                  <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+                  <div className="bg-[#0a0a0a] rounded-2xl p-4 border border-white/[0.04]">
                     {/* Skeleton header */}
-                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/5">
+                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/[0.04]">
                       <div className="flex items-center gap-2">
                         <div className="h-3.5 w-28 bg-white/5 rounded animate-pulse" />
                         <div className="h-2.5 w-16 bg-white/[0.03] rounded animate-pulse" />
@@ -3281,7 +3083,7 @@ function MatchingEngineV3() {
 
                     {/* Skeleton person card */}
                     <div className="space-y-3">
-                      <div className="p-3 rounded bg-white/[0.02] border border-white/5">
+                      <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
                         <div className="flex items-center gap-3 mb-2">
                           <div className="h-8 w-8 bg-white/5 rounded-full animate-pulse" />
                           <div className="flex-1 space-y-1.5">
@@ -3313,14 +3115,12 @@ function MatchingEngineV3() {
                 const finalIntro = finalIntroByDomain[result.domain];
                 const isSendingInstantly = isSendingInstantlyByDomain[result.domain];
                 const outboundReadiness = calculateOutboundReadiness(personData);
-                const canPushToInstantly = result && personData && personData.email && outboundReadiness === 'ready' && instantlyConfig?.apiKey;
 
-                const matchBadge = getMatchBadge(result.matchScore);
                 return (
                   <div key={result.id}>
-                    <div className="bg-[#111] rounded-lg p-4 border border-white/5">
+                    <div className="bg-[#0a0a0a] rounded-2xl p-4 border border-white/[0.04]">
                       {/* Company Header */}
-                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/5">
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/[0.04]">
                         <div className="flex items-center gap-2 min-w-0">
                           <h3 className="text-[11px] font-medium text-white/90 truncate">
                             {result.companyName}
@@ -3331,98 +3131,12 @@ function MatchingEngineV3() {
                             </span>
                           )}
                         </div>
-                        <span className={`px-1.5 py-0.5 rounded text-[8px] flex-shrink-0 ${
-                          matchBadge.color === 'emerald'
-                            ? 'bg-emerald-500/10 text-emerald-400'
-                            : matchBadge.color === 'blue'
-                            ? 'bg-blue-500/10 text-blue-400'
-                            : 'bg-white/5 text-white/40'
-                        }`}>
-                          {matchBadge.text}
+                        <span className="text-[9px] text-white/30">
+                          {result.jobCount} {result.jobCount === 1 ? 'role' : 'roles'}
                         </span>
                       </div>
 
                       <div className="space-y-3">
-                        {/* Available Providers Panel */}
-                        {discoveredSupplyCompanies.length > 0 && (
-                          <div className="bg-purple-500/5 rounded-lg p-2.5 border border-purple-500/10">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-[9px] uppercase tracking-wider text-purple-400/70">Available Providers</span>
-                              <span className="text-[8px] text-purple-300/50">
-                                {result.hireCategory || 'unknown'} staffing
-                              </span>
-                            </div>
-                            <div className="space-y-1 max-h-32 overflow-y-auto">
-                              {(() => {
-                                // Get matched providers for this company's hire category
-                                const currentSupply = selectedSupplyByDomain[result.domain];
-                                const alternatives = alternativeSupplyByDomain[result.domain] || [];
-                                const allMatched = currentSupply ? [currentSupply, ...alternatives] : alternatives;
-
-                                // Filter to only show category matches (strict)
-                                const categoryMatched = allMatched.filter(s => s.hireCategory !== 'unknown');
-
-                                if (categoryMatched.length === 0) {
-                                  return (
-                                    <div className="text-[10px] text-orange-400/80 py-2 text-center">
-                                      No {result.hireCategory || ''} staffing providers found.
-                                      <br />
-                                      <span className="text-[9px] text-white/40">
-                                        Add a specialized staffing Apify URL in Settings.
-                                      </span>
-                                    </div>
-                                  );
-                                }
-
-                                return categoryMatched.map((supply) => {
-                                  const isSelected = currentSupply?.domain === supply.domain;
-                                  return (
-                                    <button
-                                      key={supply.domain}
-                                      onClick={() => handleSwitchSupply(result.domain, supply)}
-                                      className={`w-full text-left px-2 py-1.5 rounded transition-colors flex items-center justify-between ${
-                                        isSelected
-                                          ? 'bg-purple-500/20 border border-purple-500/30'
-                                          : 'bg-white/5 hover:bg-white/10 border border-transparent'
-                                      }`}
-                                    >
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5">
-                                          {isSelected && <span className="text-purple-400 text-[10px]">✓</span>}
-                                          <span className={`text-[10px] truncate ${isSelected ? 'text-purple-300' : 'text-white/70'}`}>
-                                            {supply.name}
-                                          </span>
-                                        </div>
-                                        <div className="text-[8px] text-white/40 truncate flex items-center gap-1">
-                                          <span className={`px-1 py-0.5 rounded text-[7px] ${
-                                            supply.hireCategory === 'engineering' ? 'bg-blue-500/20 text-blue-300' :
-                                            supply.hireCategory === 'sales' ? 'bg-orange-500/20 text-orange-300' :
-                                            supply.hireCategory === 'marketing' ? 'bg-pink-500/20 text-pink-300' :
-                                            supply.hireCategory === 'finance' ? 'bg-green-500/20 text-green-300' :
-                                            'bg-gray-500/20 text-gray-300'
-                                          }`}>
-                                            {supply.hireCategory}
-                                          </span>
-                                          <span className="truncate">{supply.specialty?.slice(0, 25) || ''}</span>
-                                        </div>
-                                      </div>
-                                      <span className={`text-[8px] px-1.5 py-0.5 rounded ${
-                                        supply.classification.confidence === 'high'
-                                          ? 'bg-emerald-500/20 text-emerald-400'
-                                          : supply.classification.confidence === 'medium'
-                                          ? 'bg-yellow-500/20 text-yellow-400'
-                                          : 'bg-white/10 text-white/40'
-                                      }`}>
-                                        {supply.classification.confidence}
-                                      </span>
-                                    </button>
-                                  );
-                                });
-                              })()}
-                            </div>
-                          </div>
-                        )}
-
                         {/* Person Contact Card */}
                         <PersonContactCard
                           personData={personData}
@@ -3452,13 +3166,6 @@ function MatchingEngineV3() {
                           supplyIntro={supplyIntroByDomain[result.domain]}
                         />
 
-                        {/* Why Now - hide during refresh */}
-                        {!isRefreshing && (aiWhyNowByDomain[result.domain] || personPressureProfile) && (
-                          <div className="text-[10px] text-white/50 leading-snug line-clamp-2">
-                            <span className="text-white/30 uppercase text-[8px] tracking-wider mr-1.5">Why now</span>
-                            {aiWhyNowByDomain[result.domain] || personPressureProfile}
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -3478,7 +3185,7 @@ function MatchingEngineV3() {
 
               {/* Operator Summary */}
               {!isRefreshing && matchingResults.length > 0 && (
-                <div className="mt-3 p-2 rounded bg-white/[0.02] border border-white/5">
+                <div className="mt-3 p-2 rounded-xl bg-white/[0.02] border border-white/[0.04]">
                   <p className="text-[10px] text-white/40">{getOperatorCue()}</p>
                 </div>
               )}
@@ -3488,15 +3195,6 @@ function MatchingEngineV3() {
 
         </div>
 
-        <div className="mt-6 text-center">
-          <div className="text-[11px] text-white text-opacity-40 italic">
-            V3.6 with predictive engine and background sync.
-          </div>
-        </div>
-      </div>
-
-      <div className="fixed bottom-6 right-6 text-[11px] text-white opacity-60 font-light">
-        Matching Engine V3 • Connector OS
       </div>
 
       <AppHeader />

@@ -99,7 +99,7 @@ function ApifySignalCard({
         </div>
         <div className={`text-[8px] px-1.5 py-0.5 rounded ${
           isLive
-            ? 'bg-emerald-500/10 text-emerald-400'
+            ? 'bg-white/[0.08] text-white/70'
             : 'bg-white/5 text-white/30'
         }`}>
           {isLive ? 'Ready' : 'Not Configured'}
@@ -151,9 +151,9 @@ function SignalCard({
         </div>
         <div className={`text-[8px] px-1.5 py-0.5 rounded ${
           isLive
-            ? 'bg-emerald-500/10 text-emerald-400'
+            ? 'bg-white/[0.08] text-white/70'
             : needsUrl
-            ? 'bg-amber-500/10 text-amber-400'
+            ? 'bg-white/[0.06] text-white/50'
             : 'bg-white/5 text-white/30'
         }`}>
           {isLive ? 'Live' : needsUrl ? 'URL Required' : 'Not Configured'}
@@ -371,20 +371,20 @@ function Settings() {
               <ArrowLeft size={16} />
             </button>
             <div>
-              <h1 className="text-[14px] font-medium text-white">API Console</h1>
-              <p className="text-[10px] text-white/40">Paste full query URLs • No defaults</p>
+              <h1 className="text-[14px] font-medium text-white">Connect Your APIs</h1>
+              <p className="text-[10px] text-white/40">Connector OS is free. Bring your own API access.</p>
             </div>
           </div>
 
           {/* Status Summary */}
           <div className="flex items-center gap-4 text-[9px]">
             <span className="text-white/30">{liveCount}/5 signals</span>
-            <div className={`flex items-center gap-1 ${contactsReady ? 'text-emerald-400' : 'text-white/30'}`}>
-              <div className={`w-1 h-1 rounded-full ${contactsReady ? 'bg-emerald-400' : 'bg-white/20'}`} />
+            <div className={`flex items-center gap-1 ${contactsReady ? 'text-white/70' : 'text-white/30'}`}>
+              <div className={`w-1 h-1 rounded-full ${contactsReady ? 'bg-white/70' : 'bg-white/20'}`} />
               Apollo
             </div>
-            <div className={`flex items-center gap-1 ${deliveryReady ? 'text-emerald-400' : 'text-white/30'}`}>
-              <div className={`w-1 h-1 rounded-full ${deliveryReady ? 'bg-emerald-400' : 'bg-white/20'}`} />
+            <div className={`flex items-center gap-1 ${deliveryReady ? 'text-white/70' : 'text-white/30'}`}>
+              <div className={`w-1 h-1 rounded-full ${deliveryReady ? 'bg-white/70' : 'bg-white/20'}`} />
               Instantly
             </div>
           </div>
@@ -458,7 +458,7 @@ function Settings() {
                     <h2 className="text-[11px] font-medium text-white/90">Contact Enrichment</h2>
                     <div className="text-[8px] text-white/30 mt-0.5">Apollo for finding contacts</div>
                   </div>
-                  <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.enrichmentApiKey ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.enrichmentApiKey ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
                     {settings.enrichmentApiKey ? 'Ready' : 'Not Configured'}
                   </div>
                 </div>
@@ -478,7 +478,7 @@ function Settings() {
                     <h2 className="text-[11px] font-medium text-white/90">AI Provider</h2>
                     <div className="text-[8px] text-white/30 mt-0.5">For intro generation</div>
                   </div>
-                  <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.aiProvider !== 'none' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                  <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.aiProvider !== 'none' ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
                     {settings.aiProvider !== 'none' ? settings.aiProvider.toUpperCase() : 'Not Configured'}
                   </div>
                 </div>
@@ -493,7 +493,7 @@ function Settings() {
                           onClick={() => setSettings({ ...settings, aiProvider: provider })}
                           className={`px-2.5 py-1 text-[10px] rounded border transition-all ${
                             settings.aiProvider === provider
-                              ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                              ? 'border-white/30 bg-white/[0.08] text-white/80'
                               : 'border-white/10 bg-white/5 text-white/50 hover:bg-white/10'
                           }`}
                         >
@@ -606,7 +606,7 @@ function Settings() {
                   <h2 className="text-[11px] font-medium text-white/90">Instantly.ai</h2>
                   <div className="text-[8px] text-white/30 mt-0.5">Signal → Demand → Interest → Supply</div>
                 </div>
-                <div className={`text-[8px] px-1.5 py-0.5 rounded ${deliveryReady ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-white/30'}`}>
+                <div className={`text-[8px] px-1.5 py-0.5 rounded ${deliveryReady ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
                   {deliveryReady ? 'Ready' : 'Setup Required'}
                 </div>
               </div>
@@ -640,14 +640,14 @@ function Settings() {
       <div className="px-6 py-3 border-t border-white/5 flex-shrink-0">
         <div className="max-w-[1400px] mx-auto flex items-center justify-between">
           <div className="text-[9px] text-white/30">
-            {error && <span className="text-red-400">{error}</span>}
+            {error && <span className="text-white/50">{error}</span>}
             {!error && 'URLs used verbatim • No query modification'}
           </div>
           <button
             onClick={saveSettings}
             className={`px-4 py-1.5 rounded-md text-[11px] font-medium transition-all ${
               saveSuccess
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                ? 'bg-white/20 text-white/80 border border-white/30'
                 : 'bg-white text-black hover:bg-white/90'
             }`}
           >

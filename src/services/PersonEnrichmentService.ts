@@ -113,6 +113,62 @@ export function roleCategoryFromJobTitle(jobTitle?: string): string {
   return "unknown";
 }
 
+/**
+ * STRICT CATEGORY FILTERING FOR DEMAND CONTACTS
+ * These patterns EXCLUDE wrong-category contacts (e.g., Marketing Head for engineering hire)
+ */
+const CATEGORY_EXCLUSIONS: Record<string, RegExp> = {
+  engineering: /\b(marketing|growth|brand|content|seo|sales|account exec|sdr|bdr|revenue|hr\b|people|talent|recruiter|recruiting|customer success|support|legal|admin)\b/i,
+  sales: /\b(engineering|developer|software|cto|marketing|growth|hr\b|people|talent|recruiter|recruiting|finance|accounting|legal|admin)\b/i,
+  marketing: /\b(engineering|developer|software|cto|sales|account exec|sdr|bdr|hr\b|people|talent|recruiter|recruiting|finance|accounting|legal|admin)\b/i,
+  operations: /\b(engineering|developer|software|cto|sales|marketing|growth|hr\b|people|talent|recruiter|recruiting)\b/i,
+  people: /\b(engineering|developer|software|cto|sales|marketing|growth|finance|accounting)\b/i,
+  finance: /\b(engineering|developer|software|cto|sales|marketing|growth|hr\b|people|talent|recruiter|recruiting)\b/i,
+  unknown: /^$/, // No exclusions for unknown
+};
+
+/**
+ * REQUIRED TITLE PATTERNS BY CATEGORY
+ * Contact MUST match one of these patterns to be valid for the category
+ */
+const CATEGORY_REQUIRED_PATTERNS: Record<string, RegExp> = {
+  engineering: /\b(cto|chief technology|chief technical|vp engineer|vp of engineer|head of engineer|director.*engineer|engineering manager|engineering lead|tech lead|platform lead|software.*manager|development.*manager|architect)\b/i,
+  sales: /\b(cro|chief revenue|vp sales|vp of sales|head of sales|director.*sales|sales manager|sales lead|revenue)\b/i,
+  marketing: /\b(cmo|chief marketing|vp marketing|vp of marketing|head of marketing|director.*marketing|marketing manager|growth lead|head of growth)\b/i,
+  operations: /\b(coo|chief operating|vp operations|vp of operations|head of operations|director.*operations|operations manager|head of ops)\b/i,
+  people: /\b(chro|chief people|vp people|vp of people|head of people|hr director|director.*hr|director.*people|talent lead|head of talent)\b/i,
+  finance: /\b(cfo|chief financial|vp finance|vp of finance|head of finance|director.*finance|controller|finance manager)\b/i,
+  unknown: /\b(cto|ceo|cfo|coo|cmo|vp|head of|director|manager)\b/i, // Broad for unknown
+};
+
+/**
+ * Check if a person's title is VALID for the given job category
+ * Returns { valid: boolean, reason: string }
+ */
+function isTitleValidForJobCategory(title: string | undefined, jobCategory: string): { valid: boolean; reason: string } {
+  if (!title) return { valid: false, reason: 'No title provided' };
+  const titleLower = title.toLowerCase();
+
+  // If category is unknown, accept any senior title
+  if (jobCategory === 'unknown' || !CATEGORY_EXCLUSIONS[jobCategory]) {
+    return { valid: true, reason: 'Unknown category - accepting any' };
+  }
+
+  // Check exclusions first
+  const exclusionPattern = CATEGORY_EXCLUSIONS[jobCategory];
+  if (exclusionPattern && exclusionPattern.test(titleLower)) {
+    return { valid: false, reason: `Title "${title}" contains excluded word for ${jobCategory} category` };
+  }
+
+  // Check required patterns
+  const requiredPattern = CATEGORY_REQUIRED_PATTERNS[jobCategory];
+  if (requiredPattern && !requiredPattern.test(titleLower)) {
+    return { valid: false, reason: `Title "${title}" doesn't match required pattern for ${jobCategory} category` };
+  }
+
+  return { valid: true, reason: 'Passed category validation' };
+}
+
 function getPreferredTitles(signalType: string, jobCategory: string): string[] {
   // Match the *signal/job* category, not the person's current title
   if (signalType === "jobs" || signalType === "hiring") {
@@ -272,6 +328,7 @@ export interface SelectionResult {
  * Select the best person from Apollo results based on:
  * - Organization match (email domain, org domain, or org name)
  * - Signal type and job category
+ * - STRICT category filtering (engineering hire = engineering leaders ONLY)
  * - Company size (penalize founders at enterprise)
  * - Title match with preferred titles
  */
@@ -349,14 +406,41 @@ export function selectBestPerson(
     };
   }
 
-  // Step 3: HARD RULE - if company is big (200+), filter out founders
+  // Step 3: STRICT CATEGORY FILTERING - NON-NEGOTIABLE
+  // For engineering hires, ONLY engineering leaders. Marketing/Sales/HR are EXCLUDED.
+  const categoryFiltered = withEmail.filter(x => {
+    const validation = isTitleValidForJobCategory(x.person.title, jobCategory);
+    if (!validation.valid) {
+      console.log(`[Apollo Pick] CATEGORY FILTERED: ${x.person.name || x.person.first_name} (${x.person.title}) - ${validation.reason}`);
+    }
+    return validation.valid;
+  });
+
+  console.log(`[Apollo Pick] Category filter (${jobCategory}):`, {
+    before: withEmail.length,
+    after: categoryFiltered.length,
+    filtered: withEmail.length - categoryFiltered.length,
+  });
+
+  // If ALL candidates were filtered out by category, return specific error
+  if (categoryFiltered.length === 0) {
+    const categoryLabel = jobCategory === 'engineering' ? 'technical' : jobCategory;
+    return {
+      status: 'not_found',
+      reason: `No ${categoryLabel} decision-maker found. All ${withEmail.length} contacts were wrong department.`,
+      candidateCount: candidates.length,
+      filteredCount: 0,
+    };
+  }
+
+  // Step 4: HARD RULE - if company is big (200+), filter out founders
   const isBigCompany = companySize >= 200;
-  let finalCandidates = withEmail;
+  let finalCandidates = categoryFiltered;
 
   if (isBigCompany) {
-    const nonFounders = withEmail.filter(x => !isFounderTitle(x.person.title));
+    const nonFounders = categoryFiltered.filter(x => !isFounderTitle(x.person.title));
     console.log("[Apollo Pick] Enterprise filter (size >= 200):", {
-      before: withEmail.length,
+      before: categoryFiltered.length,
       afterRemovingFounders: nonFounders.length,
     });
 
@@ -367,7 +451,7 @@ export function selectBestPerson(
     }
   }
 
-  // Step 4: Score and rank remaining candidates
+  // Step 5: Score and rank remaining candidates
   const scored = finalCandidates.map(x => ({
     ...x,
     score: scorePerson(x.person, preferredTitles, companySize),
@@ -386,11 +470,12 @@ export function selectBestPerson(
 
   if (!best || best.score < -50) {
     // Score too low means we only have bad matches (e.g., founders at enterprise)
+    const categoryLabel = jobCategory === 'engineering' ? 'technical' : jobCategory;
     return {
       status: 'not_found',
       reason: isBigCompany
-        ? 'Only found founders/co-founders at enterprise company - need functional leader'
-        : 'No suitable decision maker found for this signal type',
+        ? `Only found founders/co-founders at enterprise company - need ${categoryLabel} leader`
+        : `No suitable ${categoryLabel} decision maker found for this signal type`,
       candidateCount: candidates.length,
       filteredCount: finalCandidates.length,
     };
@@ -403,6 +488,7 @@ export function selectBestPerson(
     org: best.person.organization?.name,
     score: best.score,
     matchType: best.orgMatch.matchType,
+    category: jobCategory,
   });
 
   return {

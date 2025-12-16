@@ -1071,6 +1071,7 @@ export async function generateDemandIntro(
     signalDetail: string;
     roleLabel?: string;  // Job title from signal (e.g., "Software Engineer")
     roleCount?: number;  // Number of roles
+    jobTitles?: string[];  // All job titles being hired (for more context)
   },
   connector: {
     name: string;
@@ -1083,92 +1084,130 @@ export async function generateDemandIntro(
   const firstName = capitalizeFirstLetter(context?.firstName || 'there');
   const companyName = cleanCompanyName(context?.companyName || 'the company');
   const roleCount = context?.roleCount || 1;
+  const jobTitles = context?.jobTitles || [];
 
-  // Detect role category from job title or signal
-  const detectRoleCategory = (text: string): string => {
-    const t = text.toLowerCase();
-    if (t.includes('backend')) return 'backend';
-    if (t.includes('frontend') || t.includes('front-end')) return 'frontend';
-    if (t.includes('fullstack') || t.includes('full stack') || t.includes('full-stack')) return 'fullstack';
-    if (t.includes('devops') || t.includes('sre') || t.includes('infrastructure')) return 'devops';
-    if (t.includes('data scientist') || t.includes('data engineer') || t.includes('ml ') || t.includes('machine learning')) return 'data';
-    if (t.includes('sales') || t.includes('account executive') || t.includes(' ae ') || t.includes('sdr') || t.includes('bdr')) return 'sales';
-    if (t.includes('marketing') || t.includes('growth')) return 'marketing';
-    if (t.includes('product manager') || t.includes('product owner')) return 'product';
-    if (t.includes('design') || t.includes('ux') || t.includes('ui ')) return 'design';
-    if (t.includes('engineer') || t.includes('developer') || t.includes('software')) return 'engineering';
-    return '';
+  // Build a detailed role description from job titles
+  // e.g., "3 roles (Backend Engineer, Frontend Developer, DevOps)"
+  const buildRoleDescription = (): string => {
+    if (jobTitles.length === 0 && !context?.roleLabel) {
+      return roleCount === 1 ? 'a new role' : `${roleCount} open roles`;
+    }
+
+    // Clean and shorten job titles for the intro - NEVER use "..."
+    const shortenJobTitle = (title: string): string => {
+      if (!title) return 'Role';
+      let t = title.trim();
+
+      // Remove common prefixes/seniority
+      t = t.replace(/^(senior|sr\.?|junior|jr\.?|lead|staff|principal|head of|vp of|director of)\s+/i, '');
+
+      // Remove anything after dash, comma, or parenthesis (team/department info)
+      t = t.replace(/\s*[-–—,\(].*$/, '');
+
+      // Direct replacements for common titles
+      const replacements: [RegExp, string][] = [
+        [/^software engineer.*$/i, 'Software Eng'],
+        [/^software developer.*$/i, 'Software Dev'],
+        [/^backend engineer.*$/i, 'Backend Eng'],
+        [/^frontend engineer.*$/i, 'Frontend Eng'],
+        [/^front.?end (engineer|developer).*$/i, 'Frontend Eng'],
+        [/^back.?end (engineer|developer).*$/i, 'Backend Eng'],
+        [/^full.?stack (engineer|developer).*$/i, 'Fullstack Eng'],
+        [/^data engineer.*$/i, 'Data Eng'],
+        [/^data scientist.*$/i, 'Data Scientist'],
+        [/^data analyst.*$/i, 'Data Analyst'],
+        [/^analytics engineer.*$/i, 'Analytics Eng'],
+        [/^machine learning.*$/i, 'ML Engineer'],
+        [/^ml engineer.*$/i, 'ML Engineer'],
+        [/^devops engineer.*$/i, 'DevOps Eng'],
+        [/^sre.*$/i, 'SRE'],
+        [/^site reliability.*$/i, 'SRE'],
+        [/^platform engineer.*$/i, 'Platform Eng'],
+        [/^infrastructure engineer.*$/i, 'Infra Eng'],
+        [/^cloud engineer.*$/i, 'Cloud Eng'],
+        [/^security engineer.*$/i, 'Security Eng'],
+        [/^product manager.*$/i, 'PM'],
+        [/^product owner.*$/i, 'Product Owner'],
+        [/^project manager.*$/i, 'Project Mgr'],
+        [/^engineering manager.*$/i, 'Eng Manager'],
+        [/^account executive.*$/i, 'AE'],
+        [/^account manager.*$/i, 'Account Mgr'],
+        [/^sales development.*$/i, 'SDR'],
+        [/^business development.*$/i, 'BD'],
+        [/^customer success.*$/i, 'CS'],
+        [/^ux designer.*$/i, 'UX Designer'],
+        [/^ui designer.*$/i, 'UI Designer'],
+        [/^product designer.*$/i, 'Designer'],
+        [/^graphic designer.*$/i, 'Designer'],
+        [/^marketing manager.*$/i, 'Marketing Mgr'],
+        [/^content (writer|manager|strategist).*$/i, 'Content'],
+        [/^qa engineer.*$/i, 'QA Eng'],
+        [/^quality assurance.*$/i, 'QA'],
+        [/^mobile (developer|engineer).*$/i, 'Mobile Dev'],
+        [/^ios (developer|engineer).*$/i, 'iOS Dev'],
+        [/^android (developer|engineer).*$/i, 'Android Dev'],
+        [/^react (developer|engineer).*$/i, 'React Dev'],
+        [/^node\.?js (developer|engineer).*$/i, 'Node Dev'],
+        [/^python (developer|engineer).*$/i, 'Python Dev'],
+        [/^java (developer|engineer).*$/i, 'Java Dev'],
+        [/^golang (developer|engineer).*$/i, 'Go Dev'],
+        [/^go (developer|engineer).*$/i, 'Go Dev'],
+      ];
+
+      for (const [pattern, replacement] of replacements) {
+        if (pattern.test(t)) {
+          return replacement;
+        }
+      }
+
+      // If no match, extract first meaningful word(s) - max 15 chars, no "..."
+      const words = t.split(/\s+/).filter(w => w.length > 1 && !/^(and|the|of|for|at|in|a|an)$/i.test(w));
+      if (words.length >= 2) {
+        const twoWords = words.slice(0, 2).join(' ');
+        if (twoWords.length <= 15) return twoWords;
+        return words[0].substring(0, 12); // Single word, capped
+      }
+      if (words.length === 1) {
+        return words[0].length <= 15 ? words[0] : words[0].substring(0, 12);
+      }
+
+      return 'Role';
+    };
+
+    // Get unique shortened titles
+    const allTitles = jobTitles.length > 0 ? jobTitles : (context?.roleLabel ? [context.roleLabel] : []);
+    const uniqueTitles = [...new Set(allTitles.map(t => shortenJobTitle(t)))];
+
+    if (uniqueTitles.length === 0) {
+      return roleCount === 1 ? 'a new role' : `${roleCount} open roles`;
+    }
+
+    if (uniqueTitles.length === 1) {
+      const title = uniqueTitles[0];
+      return roleCount === 1 ? `a ${title} role` : `${roleCount} ${title} roles`;
+    }
+
+    // Multiple distinct roles - show count + top titles
+    const displayTitles = uniqueTitles.slice(0, 3).join(', ');
+    if (uniqueTitles.length > 3) {
+      return `${roleCount} roles (${displayTitles}, +${uniqueTitles.length - 3} more)`;
+    }
+    return `${roleCount} roles (${displayTitles})`;
   };
 
-  // Try roleLabel first, then signalDetail
-  let roleCategory = '';
-  if (context?.roleLabel) {
-    roleCategory = detectRoleCategory(context.roleLabel);
-  }
-  if (!roleCategory && context?.signalDetail) {
-    roleCategory = detectRoleCategory(context.signalDetail);
-  }
-
-  // Build role snippet with count and category
-  // Use "an" before vowel sounds (engineering, operations)
-  const needsAn = (word: string) => /^[aeiou]/i.test(word);
-  let roleSnippet: string;
-  if (roleCategory) {
-    const article = needsAn(roleCategory) ? 'an' : 'a';
-    roleSnippet = roleCount === 1 ? `${article} ${roleCategory} role` : `${roleCount} ${roleCategory} roles`;
-  } else {
-    // Default to engineering (most common)
-    roleSnippet = roleCount === 1 ? 'an engineering role' : `${roleCount} engineering roles`;
-  }
-
+  const roleDescription = buildRoleDescription();
   const providerName = connector?.name || 'a recruiting partner';
   const providerSpecialty = connector?.specialty || 'fills these roles fast';
 
-  // Build fallback intro (no AI) - exactly one sentence, ~140 chars
-  // Mentions the PROVIDER company that can help fill the role
-  const fallbackIntro = `hey ${firstName} — saw ${companyName} hiring for ${roleSnippet} — I know someone at ${providerName} who ${providerSpecialty}, want an intro?`;
+  // CANONICAL TEMPLATE - no AI modification
+  // Includes: count, specific roles, provider info
+  const canonicalIntro = `hey ${firstName} — saw ${companyName} hiring for ${roleDescription} — I know someone at ${providerName} who ${providerSpecialty}, want an intro?`;
 
-  if (provider === 'none' || !apiKey) {
-    return fallbackIntro.length <= 140 ? fallbackIntro : fallbackIntro.substring(0, 137) + '...';
-  }
+  console.log(`[AIService] generateDemandIntro - ${roleCount} roles, titles: ${jobTitles.join(', ')}`);
 
-  const prompt = `
-Write exactly ONE sentence. HARD LIMIT: 140 characters.
-
-This is a message TO a hiring manager/decision maker. You're offering to connect them with a recruiter.
-
-PATTERN:
-hey {firstName} — saw {companyName} hiring for {roleLabel} — I know someone at {providerName} who {specialty}, want an intro?
-
-INPUTS:
-- firstName: ${firstName}
-- companyName: ${companyName}
-- roleLabel: ${roleSnippet}
-- providerName: ${providerName}
-- specialty: ${providerSpecialty}
-
-RULES:
-- Exactly one sentence ending with "want an intro?"
-- Use em-dash "—" to separate clauses
-- Use EXACTLY this role label: "${roleSnippet}" - do NOT change or make more specific
-- If role is "a new role", keep it as "a new role" - do NOT assume engineering or other types
-- Mention the provider name (${providerName}) and what they do
-- End with ", want an intro?"
-
-OUTPUT: Only the message. No quotes. Max 140 chars.
-`;
-
-  try {
-    const result = await callAI(config, prompt);
-    if (!result || result.trim() === '') {
-      return fallbackIntro.length <= 140 ? fallbackIntro : fallbackIntro.substring(0, 137) + '...';
-    }
-    const cleaned = result.trim();
-    return cleaned.length <= 140 ? cleaned : cleaned.substring(0, 137) + '...';
-  } catch (error) {
-    console.error('[AIService] generateDemandIntro failed:', error);
-    return fallbackIntro.length <= 140 ? fallbackIntro : fallbackIntro.substring(0, 137) + '...';
-  }
+  // Return canonical template directly - no AI needed
+  // This ensures consistent, predictable output with real job details
+  return canonicalIntro;
 }
 
 export async function generateSupplyIntro(
@@ -1213,18 +1252,19 @@ export async function generateSupplyIntro(
     else roleCategory = 'engineering'; // default
   }
 
-  // CANONICAL SUPPLY INTRO TEMPLATE - USE EXACTLY, NO AI MODIFICATION
-  // This template is proven and should not be changed by AI
+  // CANONICAL SUPPLY INTRO TEMPLATE
   const shortTitle = shortenTitle(demandTitle);
   const contactRef = `${demandFullName} (${shortTitle})`;
 
-  // EXACT canonical template - do not modify
-  const canonicalIntro = `hey ${supplyFirstName} — ${companyName} is actively hiring for ${roleCategory} roles. ${contactRef} is the hiring owner. Thought this could be a strong fit based on what you place — want me to connect you?`;
+  // Use provider company name if available
+  const providerName = providerInfo?.name || '';
+  const providerMention = providerName ? ` at ${providerName}` : '';
 
-  console.log(`[AIService] generateSupplyIntro - Supply: ${supplyFirstName}, Demand: ${demandFullName}, Category: ${roleCategory}`);
+  // Template includes provider name for personalization
+  const canonicalIntro = `hey ${supplyFirstName} — ${companyName} is actively hiring for ${roleCategory} roles. ${contactRef} is the hiring owner. Thought your team${providerMention} could be a strong fit — want me to connect you?`;
 
-  // Return canonical template directly - no AI modification needed
-  // The template is already optimized for recruiter outreach
+  console.log(`[AIService] generateSupplyIntro - Supply: ${supplyFirstName}${providerMention}, Demand: ${demandFullName}, Category: ${roleCategory}`);
+
   return canonicalIntro;
 }
 
