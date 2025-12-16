@@ -2037,15 +2037,13 @@ function MatchingEngineV3() {
     if (foundContact && successfulSupply) {
       setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: foundContact }));
       setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: successfulSupply }));
-      // Update alternatives: use ALL discovered companies minus the selected one
-      // This allows user to manually pick ANY provider, not just matching categories
+      // Show all discovered providers as alternatives so user can switch
       const remainingAlternatives = discoveredSupplyCompanies.filter(s => s.domain !== successfulSupply!.domain);
       setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
       console.log(`[SupplyEnrich] === SUCCESS: ${foundContact.name} @ ${successfulSupply.name} (${remainingAlternatives.length} alternatives) ===`);
     } else {
       console.log(`[SupplyEnrich] === FAILED: No supply contact found at any discovered company ===`);
-      // Keep alternatives based on ALL discovered supplies minus current selection
-      // User should be able to try any provider manually
+      // Show all providers as alternatives so user can try others
       const remainingAlternatives = selectedSupply
         ? discoveredSupplyCompanies.filter(s => s.domain !== selectedSupply.domain)
         : discoveredSupplyCompanies;
@@ -2319,9 +2317,14 @@ function MatchingEngineV3() {
           console.log('[MatchingEngine] Found via fallback - closest decision maker');
         }
 
-        const title = person.title || 'contact';
-        const sourceLabel = searchSource === 'work_owner' ? ' (work owner)' : '';
-        showToast('success', `Found ${person.name} - ${title}${sourceLabel}`);
+        // Only show success toast if we have actual useful data
+        if (person.name || person.email) {
+          const personName = person.name || person.email?.split('@')[0] || 'Contact';
+          const title = person.title || '';
+          const sourceLabel = searchSource === 'work_owner' ? ' (work owner)' : '';
+          const titlePart = title ? ` - ${title}` : '';
+          showToast('success', `Found ${personName}${titlePart}${sourceLabel}`);
+        }
 
         if (person.title) {
           const pressureProfile = getContextualPressureProfile({

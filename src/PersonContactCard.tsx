@@ -254,19 +254,18 @@ export function PersonContactCard({
                   onClick={() => alternativeSupply.length > 0 && setShowProviderPicker(!showProviderPicker)}
                   className={`text-[9px] text-white/50 truncate block text-left ${alternativeSupply.length > 0 ? 'hover:text-white/70 cursor-pointer' : ''}`}
                 >
-                  {selectedSupply.name} {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
+                  {supplyContact?.company || selectedSupply.name} {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
                 </button>
 
-                {/* Provider dropdown - compact, max 5 visible */}
+                {/* Provider dropdown */}
                 {showProviderPicker && alternativeSupply.length > 0 && (
                   <>
-                    {/* Backdrop to close */}
                     <div
                       className="fixed inset-0 z-40"
                       onClick={() => setShowProviderPicker(false)}
                     />
-                    <div className="absolute left-0 top-full mt-1 w-52 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[100px] overflow-y-auto custom-scroll">
-                      {alternativeSupply.slice(0, 10).map((supply) => (
+                    <div className="absolute left-0 top-full mt-1 w-52 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[160px] overflow-y-auto custom-scroll">
+                      {alternativeSupply.map((supply) => (
                         <button
                           key={supply.domain}
                           onClick={() => {
@@ -276,14 +275,9 @@ export function PersonContactCard({
                           className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
                         >
                           <div className="text-[10px] text-white/70 truncate">{supply.name}</div>
-                          <div className="text-[8px] text-white/30 truncate">{supply.hireCategory} · {supply.specialty?.slice(0, 25)}</div>
+                          <div className="text-[8px] text-white/30 truncate">{supply.specialty?.slice(0, 30)}</div>
                         </button>
                       ))}
-                      {alternativeSupply.length > 10 && (
-                        <div className="px-3 py-2 text-[8px] text-white/20 text-center">
-                          +{alternativeSupply.length - 10} more
-                        </div>
-                      )}
                     </div>
                   </>
                 )}
@@ -302,10 +296,15 @@ export function PersonContactCard({
                 <div className="text-[9px] text-white/50 truncate">{supplyContact.email}</div>
               </div>
             ) : selectedSupply && !isEnrichingSupply ? (
-              // Enrichment done but no contact found
-              <div className="text-[10px] text-white/50">No supply decision-maker found</div>
+              // Enrichment done but no contact found - show helpful message
+              <div className="space-y-1">
+                <div className="text-[10px] text-white/40">No contact found</div>
+                {alternativeSupply.length > 0 && (
+                  <div className="text-[9px] text-white/30">Try another provider ▴</div>
+                )}
+              </div>
             ) : (
-              <div className="text-[10px] text-white/40">Select signal first</div>
+              <div className="text-[10px] text-white/40">Enrich to find contact</div>
             )}
           </div>
         </div>
