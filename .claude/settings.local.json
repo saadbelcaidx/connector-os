@@ -18,7 +18,10 @@
       "Bash(npx vercel --prod --yes)",
       "Bash(timeout 10 npm run dev)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npx vercel:*)",
+      "WebFetch(domain:anymailfinder.com)"
     ]
   }
 }

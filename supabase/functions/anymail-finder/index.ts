@@ -51,7 +51,7 @@ Deno.serve(async (req: Request) => {
         // Find decision maker by category
         anymailUrl = `${ANYMAIL_BASE_URL}/find-email/decision-maker`;
         anymailPayload = {
-          categories: params.categories || ['ceo'],
+          decision_maker_category: params.categories || ['ceo'],
         };
         // Prefer domain, fall back to company name
         if (params.domain) {
@@ -62,11 +62,11 @@ Deno.serve(async (req: Request) => {
         break;
 
       case 'search_domain':
-        // Search all emails at a domain
-        anymailUrl = `${ANYMAIL_BASE_URL}/search/domain`;
+        // Search all emails at a domain/company
+        anymailUrl = `${ANYMAIL_BASE_URL}/find-email/company`;
         anymailPayload = {
           domain: params.domain,
-          limit: params.limit || 10,
+          email_type: 'personal', // Prefer personal emails over generic
         };
         break;
 
