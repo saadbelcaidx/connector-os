@@ -2,13 +2,9 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Check, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
 import type { ConnectorProfile } from './types';
 import { analyzeDataset, DatasetAnalysis } from './services/DatasetValidator';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 interface OperatorSettings {
   // Signal APIs - Demand

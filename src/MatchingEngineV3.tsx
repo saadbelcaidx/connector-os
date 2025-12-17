@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
 import { PredictionService, SignalTrend } from './PredictionService';
 import { JobTrendChart } from './JobTrendChart';
-import { createClient } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
 import { useAuth } from './AuthContext';
 import AppHeader from './AppHeader';
 import { useOnboarding } from './OnboardingContext';
@@ -43,10 +43,6 @@ import { HireCategory, extractHireCategory } from './services/CompanyRoleClassif
 import { findSupplyContact, SupplyContact } from './services/ApolloSupplyEnrichmentService';
 import { findEmailWithFallback, mapHireCategoryToAnymail } from './services/AnymailFinderService';
 import type { ConnectorProfile } from './types';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const WINDOW_STATUS_LABELS = {
   EARLY: 'Early',

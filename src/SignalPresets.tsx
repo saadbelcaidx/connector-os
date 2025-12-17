@@ -3,11 +3,7 @@ import { ArrowLeft, Copy, Check, Sparkles, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
 import { PRESET_PACKS, SignalPresetConfig, NichePreset } from './services/PresetsService';
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { supabase } from './lib/supabase';
 
 interface PresetCardProps {
   title: string;
