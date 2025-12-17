@@ -1194,6 +1194,15 @@ function MatchingEngineV3() {
   };
 
   const calculateMatching = (): MatchingResult[] => {
+    // GUARD: Don't build companies until jobs data is actually ready
+    const rawPayload = signals.jobs.rawPayload;
+    const jobItems = rawPayload?.data ?? [];
+
+    if (!signals.jobs.isLive || !Array.isArray(jobItems) || jobItems.length === 0) {
+      console.log('[MatchingEngine] Jobs data not ready yet, skipping company build');
+      return [];
+    }
+
     const momentum = predictionResult.momentumDirection || 'Flat';
     const windowStatus = determineWindowStatus(signalStrength, momentum);
 
@@ -1212,10 +1221,6 @@ function MatchingEngineV3() {
     }
 
     const companies: { name: string; domain: string; jobCount: number; sampleJob?: any; industry?: string; companySize?: number; geography?: string; jobTitles: string[] }[] = [];
-
-    // DEFENSIVE: Use universal normalizer to get items from ANY payload shape
-    const rawPayload = signals.jobs.rawPayload;
-    const jobItems = normalizeToItems(rawPayload?.data ?? rawPayload);
 
     // DEFENSIVE: Ensure we have an array before iterating
     const safeJobItems = Array.isArray(jobItems) ? jobItems : [];
@@ -2391,10 +2396,9 @@ function MatchingEngineV3() {
         // Only show success toast if we have actual useful data
         if (person.name || person.email) {
           const personName = person.name || person.email?.split('@')[0] || 'Contact';
-          const title = person.title || '';
+          const companyPart = result.companyName ? ` at ${result.companyName}` : '';
           const sourceLabel = searchSource === 'work_owner' ? ' (work owner)' : '';
-          const titlePart = title ? ` - ${title}` : '';
-          showToast('success', `Found ${personName}${titlePart}${sourceLabel}`);
+          showToast('success', `Found ${personName}${companyPart}${sourceLabel}`);
         }
 
         if (person.title) {
