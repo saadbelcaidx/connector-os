@@ -40,6 +40,12 @@ Deno.serve(async (req: Request) => {
     switch (type) {
       case 'find_person':
         // Find email by person name + domain
+        if (!params.domain || !params.full_name) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'find_person requires domain and full_name' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         anymailUrl = `${ANYMAIL_BASE_URL}/find-email/person`;
         anymailPayload = {
           domain: params.domain,
@@ -49,24 +55,34 @@ Deno.serve(async (req: Request) => {
 
       case 'find_decision_maker':
         // Find decision maker by category
+        if (!params.domain && !params.company_name) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'find_decision_maker requires domain or company_name' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         anymailUrl = `${ANYMAIL_BASE_URL}/find-email/decision-maker`;
         anymailPayload = {
           decision_maker_category: params.categories || ['ceo'],
         };
-        // Prefer domain, fall back to company name
         if (params.domain) {
           anymailPayload.domain = params.domain;
-        } else if (params.company_name) {
+        } else {
           anymailPayload.company_name = params.company_name;
         }
         break;
 
       case 'search_domain':
         // Search all emails at a domain/company
+        if (!params.domain) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'search_domain requires domain' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         anymailUrl = `${ANYMAIL_BASE_URL}/find-email/company`;
         anymailPayload = {
           domain: params.domain,
-          email_type: 'personal', // Prefer personal emails over generic
         };
         break;
 

@@ -21,7 +21,9 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "Bash(npx vercel:*)",
-      "WebFetch(domain:anymailfinder.com)"
+      "WebFetch(domain:anymailfinder.com)",
+      "Bash(curl:*)",
+      "WebFetch(domain:api.anymailfinder.com)"
     ]
   }
 }
