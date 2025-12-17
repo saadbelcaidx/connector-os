@@ -39,7 +39,8 @@ const CATEGORY_EXCLUSIONS: Record<WorkOwnerHireCategory, RegExp> = {
  * At least one of these patterns MUST match for a valid work owner contact.
  */
 const CATEGORY_REQUIRED_PATTERNS: Record<WorkOwnerHireCategory, RegExp> = {
-  engineering: /\b(cto|chief technology|vp engineer|vp of engineer|head of engineer|director.*engineer|engineering manager|engineering lead|tech lead|platform lead|software.*manager|development.*manager|architect)\b/i,
+  // EXPANDED: Include Lead Engineer, DevOps, ML, Data, Infrastructure, Principal, Staff, SRE titles
+  engineering: /\b(cto|chief technology|vp engineer|vp of engineer|vp engineering|head of engineer|head of engineering|director.*engineer|engineering manager|engineering lead|engineering leader|tech lead|platform lead|software.*manager|development.*manager|architect|lead.*engineer|lead ai|lead software|lead platform|devops|ml lead|ml manager|data engineer|infrastructure lead|infrastructure manager|principal engineer|staff engineer|site reliability|sre lead|sre manager)\b/i,
   sales: /\b(cro|chief revenue|vp sales|vp of sales|head of sales|director.*sales|sales manager|sales lead|revenue)\b/i,
   marketing: /\b(cmo|chief marketing|vp marketing|vp of marketing|head of marketing|director.*marketing|marketing manager|growth lead)\b/i,
   operations: /\b(coo|chief operating|vp operations|vp of operations|head of operations|director.*operations|operations manager)\b/i,

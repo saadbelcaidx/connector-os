@@ -6,6 +6,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "content-type, authorization, x-client-info, apikey, x-api-key",
 };
 
+/**
+ * Sanitize domain - remove protocol, www, paths, and clean up
+ */
+function cleanDomain(input: string | undefined | null): string {
+  if (!input) return '';
+  return input
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .replace(/\/.*$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Ensure array is valid - never undefined/null
+ */
+function safeArray<T>(arr: T[] | undefined | null): T[] {
+  return Array.isArray(arr) ? arr : [];
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -59,7 +79,14 @@ Deno.serve(async (req: Request) => {
         apolloUrl = 'https://api.apollo.io/v1/mixed_people/search';
         apolloMethod = 'POST';
 
-        const { domain, organization_name, titles, seniorities, departments, keywords } = params;
+        // Clean and validate inputs
+        const cleanedDomain = cleanDomain(params.domain);
+        const organization_name = params.organization_name;
+        const titles = safeArray(params.titles);
+        const seniorities = safeArray(params.seniorities);
+        const departments = safeArray(params.departments);
+        const keywords = safeArray(params.keywords);
+
         apolloPayload = {
           page: 1,
           per_page: 25
@@ -71,10 +98,10 @@ Deno.serve(async (req: Request) => {
           // Search by company name (useful when no valid domain exists)
           apolloPayload.q_organization_name = organization_name;
           console.log('[Apollo Proxy] Searching by organization name:', organization_name);
-        } else if (domain) {
+        } else if (cleanedDomain) {
           // Search by domain (preferred when domain is real)
-          apolloPayload.q_organization_domains_list = [domain];
-          console.log('[Apollo Proxy] Searching by domain:', domain);
+          apolloPayload.q_organization_domains_list = [cleanedDomain];
+          console.log('[Apollo Proxy] Searching by domain:', cleanedDomain);
         } else {
           return new Response(
             JSON.stringify({ error: 'people_search requires either domain or organization_name' }),
@@ -89,28 +116,28 @@ Deno.serve(async (req: Request) => {
         }
 
         // Use departments for functional targeting (e.g., engineering, sales, marketing)
-        if (departments && departments.length > 0) {
+        if (departments.length > 0) {
           apolloPayload.person_departments = departments;
         }
 
         // Use person_titles for specific role targeting
-        if (titles && titles.length > 0) {
+        if (titles.length > 0) {
           apolloPayload.person_titles = titles;
           apolloPayload.include_similar_titles = true;
         }
 
         // Use seniorities as a filter layer
-        if (seniorities && seniorities.length > 0) {
+        if (seniorities.length > 0) {
           apolloPayload.person_seniorities = seniorities;
         }
 
         // Free-text keyword search for additional precision
-        if (keywords) {
-          apolloPayload.q_keywords = keywords;
+        if (keywords.length > 0) {
+          apolloPayload.q_keywords = keywords.join(' ');
         }
 
         // Default: if nothing specified, target decision makers
-        if (!titles?.length && !seniorities?.length && !departments?.length) {
+        if (titles.length === 0 && seniorities.length === 0 && departments.length === 0) {
           apolloPayload.person_seniorities = ['c_suite', 'vp', 'director', 'manager'];
         }
         break;
@@ -120,13 +147,14 @@ Deno.serve(async (req: Request) => {
         apolloUrl = 'https://api.apollo.io/v1/mixed_people/search';
         apolloMethod = 'POST';
 
+        const workOwnerDomain = cleanDomain(params.domain);
         apolloPayload = {
           page: 1,
           per_page: 10,
           person_titles: [],
           include_similar_titles: false,
           q_keywords: params.keywords || '',
-          q_organization_domains_list: [params.domain],
+          q_organization_domains_list: workOwnerDomain ? [workOwnerDomain] : [],
         };
 
         console.log('[Apollo Proxy] Work Owner Search payload:', JSON.stringify(apolloPayload, null, 2));

@@ -1683,10 +1683,13 @@ function MatchingEngineV3() {
     if (!result) return;
 
     const personData = personDataByDomain[domain];
-    if (!personData?.name || !personData?.email) {
-      console.log('[DualIntros] No contact data, skipping intro generation');
+    // Only require email - name can be extracted from email if missing
+    if (!personData?.email) {
+      console.log('[DualIntros] No email found, skipping intro generation');
       return;
     }
+    // Ensure we have a name - use email prefix as fallback
+    const contactName = personData.name || personData.email.split('@')[0];
 
     console.log('[DualIntros] Generating demand and supply intros for', domain);
 
@@ -1701,7 +1704,7 @@ function MatchingEngineV3() {
       specialty: selectedProvider?.specialty || 'fills these roles fast'
     };
 
-    const firstName = personData.name.split(' ')[0];
+    const firstName = contactName.split(' ')[0];
     const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
 
     // Generate Demand Intro (to the hiring company)
@@ -2415,19 +2418,19 @@ function MatchingEngineV3() {
           console.log('[Pressure Profile] FRESH - Skipped (no title)');
         }
 
+        // Update the most recent signal_history record for this domain
+        // Note: Supabase update doesn't support order/limit, so we update all matching records
         await supabase
           .from('signal_history')
           .update({
-            person_name: person.name,
-            person_title: person.title,
-            person_email: person.email,
-            person_linkedin: person.linkedin,
-            target_titles: result.targetTitles,
+            person_name: person.name || null,
+            person_title: person.title || null,
+            person_email: person.email || null,
+            person_linkedin: person.linkedin || null,
+            target_titles: Array.isArray(result.targetTitles) ? result.targetTitles : [],
             enriched_at: new Date().toISOString()
           })
-          .eq('company_domain', cleanDomain)
-          .order('created_at', { ascending: false })
-          .limit(1);
+          .eq('company_domain', cleanDomain);
 
         console.log('[MatchingEngine] Saved enriched person data to database');
 
@@ -2437,14 +2440,13 @@ function MatchingEngineV3() {
         setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: true }));
         showToast('warning', 'No contact found for this company');
 
+        // Mark as enriched even when no contact found (prevents re-attempts)
         await supabase
           .from('signal_history')
           .update({
             enriched_at: new Date().toISOString()
           })
-          .eq('company_domain', cleanDomain)
-          .order('created_at', { ascending: false })
-          .limit(1);
+          .eq('company_domain', cleanDomain);
       }
     } catch (error) {
       console.error('[MatchingEngine] Error enriching person:', error);
