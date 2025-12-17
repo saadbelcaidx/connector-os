@@ -140,13 +140,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Normalize response format
+    // Normalize response format - Anymail API uses person_full_name, person_job_title, etc.
     const normalizedResponse = {
       success: true,
-      email: anymailData.email || anymailData.result?.email || null,
+      email: anymailData.email || anymailData.valid_email || anymailData.result?.email || null,
       emails: anymailData.emails || anymailData.results?.map((r: any) => r.email) || [],
-      name: anymailData.name || anymailData.result?.name || null,
-      title: anymailData.title || anymailData.result?.title || null,
+      name: anymailData.person_full_name || anymailData.name || anymailData.result?.name || null,
+      title: anymailData.person_job_title || anymailData.title || anymailData.result?.title || null,
+      linkedin: anymailData.person_linkedin_url || anymailData.linkedin || null,
       confidence: anymailData.confidence || anymailData.result?.confidence || null,
       credits_used: anymailData.credits_used || 1,
       raw: anymailData,

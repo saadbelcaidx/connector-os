@@ -57,6 +57,9 @@ export interface AnymailResponse {
   success: boolean;
   email?: string;
   emails?: string[];
+  name?: string;
+  title?: string;
+  linkedin?: string;
   error?: string;
   credits_used?: number;
 }
@@ -156,10 +159,12 @@ export async function findDecisionMaker(
     const data: AnymailResponse = await response.json();
 
     if (data.success && data.email) {
-      console.log(`[AnymailFinder] Found decision maker: ${data.email}`);
+      console.log(`[AnymailFinder] Found decision maker: ${data.name || 'Unknown'} (${data.title || categories[0]}) - ${data.email}`);
       return {
         email: data.email,
-        title: categories[0], // Use first category as title hint
+        name: data.name,
+        title: data.title || categories[0], // Use API title or fallback to category
+        linkedin: data.linkedin,
         source: 'anymail_decision_maker',
         confidence: 80,
       };
