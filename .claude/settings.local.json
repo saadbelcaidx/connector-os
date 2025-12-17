@@ -12,7 +12,13 @@
       "Bash(npx tsc:*)",
       "WebFetch(domain:api.apify.com)",
       "Bash(tasklist:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npx vercel --version)",
+      "Bash(npx vercel --prod)",
+      "Bash(npx vercel --prod --yes)",
+      "Bash(timeout 10 npm run dev)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

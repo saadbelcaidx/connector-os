@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Check } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
 import { createClient } from '@supabase/supabase-js';
 import type { ConnectorProfile } from './types';
+import { analyzeDataset, DatasetAnalysis } from './services/DatasetValidator';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -30,7 +31,8 @@ interface OperatorSettings {
   aiAzureApiKey: string;
   aiAzureEndpoint: string;
   aiAnthropicApiKey: string;
-  enrichmentApiKey: string;
+  enrichmentApiKey: string;  // Apollo
+  anymailFinderApiKey: string;  // Anymail Finder (fallback)
   // Work Owner Search
   workOwnerDepartments: string;
   workOwnerKeywords: string;
@@ -72,7 +74,7 @@ function Input({
   );
 }
 
-// Apify Signal Card - URL only, no API key needed
+// Apify Signal Card - URL only, no API key needed, with dataset validation
 function ApifySignalCard({
   title,
   subtitle,
@@ -88,6 +90,38 @@ function ApifySignalCard({
   urlPlaceholder: string;
   helpText?: string;
 }) {
+  const [isValidating, setIsValidating] = useState(false);
+  const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
+
+  const handleValidate = async () => {
+    if (!datasetUrl) return;
+    setIsValidating(true);
+    setAnalysis(null);
+    try {
+      const result = await analyzeDataset(datasetUrl);
+      setAnalysis(result);
+    } catch (error) {
+      setAnalysis({
+        isValid: false,
+        error: 'Failed to validate dataset',
+        totalRecords: 0,
+        sampleRecords: [],
+        detectedFields: [],
+        fieldMapping: { email: null, name: null, firstName: null, lastName: null, company: null, domain: null, title: null, linkedin: null },
+        coverage: { withEmail: 0, withName: 0, withCompany: 0, withDomain: 0, withTitle: 0, withLinkedin: 0 },
+        percentages: { email: 0, name: 0, company: 0, domain: 0 },
+        dataType: 'unknown',
+        nestedObjects: [],
+      });
+    }
+    setIsValidating(false);
+  };
+
+  // Clear analysis when URL changes
+  useEffect(() => {
+    setAnalysis(null);
+  }, [datasetUrl]);
+
   const isLive = !!datasetUrl;
 
   return (
@@ -98,25 +132,122 @@ function ApifySignalCard({
           <div className="text-[8px] text-white/30 mt-0.5">{subtitle || 'Apify Dataset'}</div>
         </div>
         <div className={`text-[8px] px-1.5 py-0.5 rounded ${
-          isLive
-            ? 'bg-white/[0.08] text-white/70'
-            : 'bg-white/5 text-white/30'
+          analysis?.isValid
+            ? 'bg-emerald-500/20 text-emerald-400'
+            : analysis?.error
+              ? 'bg-red-500/20 text-red-400'
+              : isLive
+                ? 'bg-white/[0.08] text-white/70'
+                : 'bg-white/5 text-white/30'
         }`}>
-          {isLive ? 'Ready' : 'Not Configured'}
+          {analysis?.isValid ? `${analysis.totalRecords} records` : analysis?.error ? 'Error' : isLive ? 'Ready' : 'Not Configured'}
         </div>
       </div>
       <div className="space-y-2">
-        <Input
-          label="Apify Dataset URL"
-          value={datasetUrl}
-          onChange={onUrlChange}
-          placeholder={urlPlaceholder}
-          mono
-        />
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <Input
+              label="Apify Dataset URL"
+              value={datasetUrl}
+              onChange={onUrlChange}
+              placeholder={urlPlaceholder}
+              mono
+            />
+          </div>
+          <button
+            onClick={handleValidate}
+            disabled={!datasetUrl || isValidating}
+            className="mt-5 px-3 py-1.5 text-[9px] font-medium rounded bg-white/10 hover:bg-white/15 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
+          >
+            {isValidating ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Checking...
+              </>
+            ) : (
+              'Validate'
+            )}
+          </button>
+        </div>
+
+        {/* Validation Results */}
+        {analysis && (
+          <div className={`mt-3 p-3 rounded-lg border ${
+            analysis.isValid
+              ? 'bg-emerald-500/5 border-emerald-500/20'
+              : 'bg-red-500/5 border-red-500/20'
+          }`}>
+            {analysis.isValid ? (
+              <div className="space-y-2">
+                {/* Header */}
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px] font-medium text-emerald-400">
+                    Valid Dataset - {analysis.totalRecords} records ({analysis.dataType})
+                  </span>
+                </div>
+
+                {/* Coverage Stats */}
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  <CoverageStat label="Email" count={analysis.coverage.withEmail} total={analysis.totalRecords} percent={analysis.percentages.email} />
+                  <CoverageStat label="Name" count={analysis.coverage.withName} total={analysis.totalRecords} percent={analysis.percentages.name} />
+                  <CoverageStat label="Company" count={analysis.coverage.withCompany} total={analysis.totalRecords} percent={analysis.percentages.company} />
+                  <CoverageStat label="Domain" count={analysis.coverage.withDomain} total={analysis.totalRecords} percent={analysis.percentages.domain} />
+                </div>
+
+                {/* Enrichment Note */}
+                {analysis.percentages.email < 100 && analysis.percentages.email > 0 && (
+                  <div className="text-[8px] text-white/40 mt-2">
+                    {analysis.totalRecords - analysis.coverage.withEmail} records need Apollo enrichment
+                  </div>
+                )}
+                {analysis.percentages.email === 0 && (
+                  <div className="text-[8px] text-amber-400/70 mt-2">
+                    No emails found - will use Apollo to find contacts
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                <span className="text-[10px] text-red-400">{analysis.error}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="text-[8px] text-white/30 mt-1">
           {helpText || 'Works with any Apify scraper'}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Coverage stat component
+function CoverageStat({ label, count, total, percent }: { label: string; count: number; total: number; percent: number }) {
+  const getColor = () => {
+    if (percent >= 80) return 'text-emerald-400';
+    if (percent >= 50) return 'text-amber-400';
+    return 'text-red-400';
+  };
+
+  return (
+    <div className="text-center">
+      <div className={`text-[11px] font-medium ${getColor()}`}>{percent}%</div>
+      <div className="text-[8px] text-white/40">{label}</div>
+      <div className="text-[7px] text-white/20">{count}/{total}</div>
+    </div>
+  );
+}
+
+// Field badge component
+function FieldBadge({ field, value }: { field: string; value: string }) {
+  return (
+    <div className="px-1.5 py-0.5 bg-white/5 rounded text-[7px] text-white/50">
+      <span className="text-white/70">{field}</span>
+      <span className="text-white/30 mx-1">→</span>
+      <span className="font-mono">{value}</span>
     </div>
   );
 }
@@ -199,6 +330,7 @@ function Settings() {
     aiAzureEndpoint: '',
     aiAnthropicApiKey: '',
     enrichmentApiKey: '',
+    anymailFinderApiKey: '',
     workOwnerDepartments: '',
     workOwnerKeywords: '',
     instantlyApiKey: '',
@@ -253,6 +385,7 @@ function Settings() {
           aiAzureEndpoint: data.ai_azure_endpoint || '',
           aiAnthropicApiKey: data.ai_anthropic_api_key || '',
           enrichmentApiKey: data.enrichment_api_key || '',
+          anymailFinderApiKey: data.anymail_finder_api_key || '',
           workOwnerDepartments: data.work_owner_departments || '',
           workOwnerKeywords: data.work_owner_keywords || '',
           instantlyApiKey: data.instantly_api_key || '',
@@ -315,6 +448,7 @@ function Settings() {
             // Enrichment
             enrichment_api_key: settings.enrichmentApiKey,
             enrichment_provider: 'apollo',
+            anymail_finder_api_key: settings.anymailFinderApiKey,
             // Work Owner Search
             work_owner_departments: settings.workOwnerDepartments,
             work_owner_keywords: settings.workOwnerKeywords,
@@ -456,19 +590,33 @@ function Settings() {
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <h2 className="text-[11px] font-medium text-white/90">Contact Enrichment</h2>
-                    <div className="text-[8px] text-white/30 mt-0.5">Apollo for finding contacts</div>
+                    <div className="text-[8px] text-white/30 mt-0.5">Apollo + Anymail Finder fallback</div>
                   </div>
                   <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.enrichmentApiKey ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
                     {settings.enrichmentApiKey ? 'Ready' : 'Not Configured'}
                   </div>
                 </div>
-                <Input
-                  label="Apollo API Key"
-                  value={settings.enrichmentApiKey}
-                  onChange={(val) => setSettings({ ...settings, enrichmentApiKey: val })}
-                  placeholder="Your Apollo key"
-                  type="password"
-                />
+                <div className="space-y-3">
+                  <Input
+                    label="Apollo API Key (Primary)"
+                    value={settings.enrichmentApiKey}
+                    onChange={(val) => setSettings({ ...settings, enrichmentApiKey: val })}
+                    placeholder="Your Apollo key"
+                    type="password"
+                  />
+                  <Input
+                    label="Anymail Finder API Key (Fallback)"
+                    value={settings.anymailFinderApiKey}
+                    onChange={(val) => setSettings({ ...settings, anymailFinderApiKey: val })}
+                    placeholder="Optional - used when Apollo fails"
+                    type="password"
+                  />
+                  {settings.anymailFinderApiKey && (
+                    <div className="text-[8px] text-emerald-400/70">
+                      Fallback enabled: If Apollo fails, will try Anymail Finder
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* AI Provider */}

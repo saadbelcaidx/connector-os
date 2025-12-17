@@ -1,3 +1,9 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
 interface InstantlyLeadPayload {
   campaign: string;  // Note: "campaign" not "campaign_id"
   email: string;
@@ -105,11 +111,6 @@ export async function sendToInstantly(
 
 async function recordSend(params: DualSendParams, introText: string): Promise<void> {
   try {
-    const { createClient } = await import('@supabase/supabase-js');
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
     const { error } = await supabase
       .from('connector_sends')
       .insert({
@@ -235,11 +236,6 @@ export async function sendToDemand(
     const result = await sendToInstantly(apiKey, params);
 
     if (result.success) {
-      const { createClient } = await import('@supabase/supabase-js');
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
       await supabase
         .from('signal_history')
         .update({
@@ -314,11 +310,6 @@ export async function sendToSupply(
     const result = await sendToInstantly(apiKey, params);
 
     if (result.success) {
-      const { createClient } = await import('@supabase/supabase-js');
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
       await supabase
         .from('signal_history')
         .update({

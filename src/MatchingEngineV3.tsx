@@ -22,7 +22,6 @@ import {
   safeLower,
   safeText,
 } from './services/SignalsClient';
-// Notifications removed - using toast only
 import { generateJobInsights, JobInsights } from './services/JobInsightsEngine';
 import { rewriteIntro, isAIConfigured, rewriteInsight, cleanApiResponse, generateWhyNow, generateWhyYou, generateDemandIntro, generateSupplyIntro } from './services/AIService';
 import { createRichFundingSignal, createRichJobsSignal, createRichLayoffsSignal, RichSignal } from './services/SignalFormatters';
@@ -42,6 +41,7 @@ import { createInstantlyLead, sendToInstantly, DualSendParams } from './services
 import { fetchSupplySignals, findMatchingSupply, SupplyCompany, getSupplyEnrichmentTitles } from './services/SupplySignalsClient';
 import { HireCategory, extractHireCategory } from './services/CompanyRoleClassifier';
 import { findSupplyContact, SupplyContact } from './services/ApolloSupplyEnrichmentService';
+import { findEmailWithFallback, mapHireCategoryToAnymail } from './services/AnymailFinderService';
 import type { ConnectorProfile } from './types';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -744,7 +744,8 @@ function MatchingEngineV3() {
         setEnrichmentConfig({
           provider: (data.enrichment_provider as any) || 'none',
           apiKey: data.enrichment_api_key || undefined,
-          endpointUrl: data.enrichment_endpoint_url || undefined
+          endpointUrl: data.enrichment_endpoint_url || undefined,
+          anymailFinderApiKey: data.anymail_finder_api_key || undefined,
         });
 
         setInstantlyConfig({
@@ -2013,13 +2014,40 @@ function MatchingEngineV3() {
         // Get appropriate titles for this supply company's category
         const searchTitles = getSupplyEnrichmentTitles(supply.hireCategory);
 
-        const supplyContact = await findSupplyContact(
+        let supplyContact = await findSupplyContact(
           apolloKey,
           supply.domain,
           supply.name,
           searchTitles,
           supply.existingContact // Pass Apify contact if available
         );
+
+        // If Apollo failed and we have Anymail Finder configured, try fallback
+        if (!supplyContact?.email && enrichmentConfig.anymailFinderApiKey) {
+          console.log(`[SupplyEnrich] Apollo failed, trying Anymail Finder fallback for ${supply.name}...`);
+          const anymailResult = await findEmailWithFallback(
+            enrichmentConfig.anymailFinderApiKey,
+            {
+              domain: supply.domain,
+              companyName: supply.name,
+              fullName: supply.existingContact?.name,
+              hireCategory: supply.hireCategory,
+            }
+          );
+
+          if (anymailResult) {
+            console.log(`[SupplyEnrich] ✓ Anymail Finder found: ${anymailResult.email}`);
+            supplyContact = {
+              name: anymailResult.name || supply.existingContact?.name || 'Contact',
+              email: anymailResult.email,
+              title: anymailResult.title || supply.existingContact?.title || 'Contact',
+              linkedin: anymailResult.linkedin,
+              company: supply.name,
+              domain: supply.domain,
+              confidence: anymailResult.confidence || 75,
+            };
+          }
+        }
 
         if (supplyContact && supplyContact.email) {
           foundContact = supplyContact;
@@ -2298,6 +2326,52 @@ function MatchingEngineV3() {
         person = await enrichPerson(companyDomain, result.targetTitles || [], enrichmentConfig, result.whoHasPressureRoles || [], enrichmentContext);
       }
 
+      // === ANYMAIL FINDER FALLBACK FOR DEMAND CONTACTS ===
+      // If Apollo failed to find email and we have Anymail Finder configured, try fallback
+      if ((!person || !person.email) && enrichmentConfig.anymailFinderApiKey) {
+        console.log(`[DemandEnrich] Apollo ${person ? 'found contact but no email' : 'failed'}, trying Anymail Finder fallback for ${companyDomain}...`);
+
+        try {
+          const anymailResult = await findEmailWithFallback(
+            enrichmentConfig.anymailFinderApiKey,
+            {
+              domain: companyDomain,
+              companyName: result.companyName,
+              fullName: person?.name, // Use existing name if we found one
+              hireCategory: hireCategory, // Pass the hire category for decision maker search
+            }
+          );
+
+          if (anymailResult) {
+            console.log(`[DemandEnrich] ✓ Anymail Finder found: ${anymailResult.email}`);
+
+            if (person) {
+              // We had a person but no email - add the email
+              person.email = anymailResult.email;
+              person.status = 'ready';
+              if (!person.name && anymailResult.name) person.name = anymailResult.name;
+              if (!person.title && anymailResult.title) person.title = anymailResult.title;
+              if (!person.linkedin && anymailResult.linkedin) person.linkedin = anymailResult.linkedin;
+            } else {
+              // No person at all - create from Anymail result
+              person = {
+                name: anymailResult.name || 'Contact',
+                title: anymailResult.title || '',
+                email: anymailResult.email,
+                linkedin: anymailResult.linkedin,
+                confidence: anymailResult.confidence || 70,
+                status: 'ready',
+              };
+            }
+            searchSource = 'anymail_finder';
+          } else {
+            console.log(`[DemandEnrich] ✗ Anymail Finder also failed for ${companyDomain}`);
+          }
+        } catch (anymailError) {
+          console.error(`[DemandEnrich] Anymail Finder error:`, anymailError);
+        }
+      }
+
       if (person) {
         console.log('[MatchingEngine] Enrichment complete via:', searchSource);
         console.log('[MatchingEngine] Person:', {
@@ -2528,6 +2602,33 @@ function MatchingEngineV3() {
             selectedProvider.defaultTitles,
             selectedProvider.existingContact // Pass Apify contact if available
           );
+
+          // If Apollo failed and we have Anymail Finder configured, try fallback
+          if (!supplyContact?.email && enrichmentConfig.anymailFinderApiKey) {
+            console.log(`[DualSend] Apollo failed, trying Anymail Finder fallback...`);
+            const anymailResult = await findEmailWithFallback(
+              enrichmentConfig.anymailFinderApiKey,
+              {
+                domain: selectedProvider.domain,
+                companyName: selectedProvider.name,
+                fullName: selectedProvider.existingContact?.name,
+                hireCategory: selectedProvider.hireCategory,
+              }
+            );
+
+            if (anymailResult) {
+              console.log(`[DualSend] ✓ Anymail Finder found: ${anymailResult.email}`);
+              supplyContact = {
+                name: anymailResult.name || selectedProvider.existingContact?.name || 'Contact',
+                email: anymailResult.email,
+                title: anymailResult.title || selectedProvider.existingContact?.title || 'Contact',
+                linkedin: anymailResult.linkedin,
+                company: selectedProvider.name,
+                domain: selectedProvider.domain,
+                confidence: anymailResult.confidence || 75,
+              };
+            }
+          }
 
           if (supplyContact) {
             setSupplyContactByDomain(prev => ({ ...prev, [domain]: supplyContact }));

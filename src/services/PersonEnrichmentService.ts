@@ -17,6 +17,7 @@ export interface EnrichmentConfig {
   provider: 'apollo' | 'pdl' | 'ssm' | 'none';
   apiKey?: string;
   endpointUrl?: string;
+  anymailFinderApiKey?: string;  // Fallback enrichment when primary fails
 }
 
 // === NEW SELECTION LOGIC TYPES AND HELPERS ===

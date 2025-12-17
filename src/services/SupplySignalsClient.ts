@@ -65,26 +65,56 @@ function extractCompanyFields(item: any): {
   }
 
   // Company name candidates
+  // Note: item.title is used as fallback BUT only if no first_name/last_name (to avoid using person's job title)
+  const hasPersonData = !!(item.first_name || item.firstName || item.last_name || item.lastName);
   const name = safeText(
     item.name ??
     item.companyName ??
     item.company_name ??
-    item.title ??
+    item.organization_name ??  // Apollo scraper company name
+    item.organizationName ??
     item.organization ??
     item.agency_name ??
     item.agencyName ??
+    (hasPersonData ? '' : item.title) ??  // Only use title if no person data
     ''
   );
 
-  // Domain/URL candidates
+  // Domain/URL candidates - expanded to handle many Apify scraper formats
+  // Also check nested objects (company.website, companyInfo.domain, etc.)
   let domain = safeText(
     item.domain ??
     item.website ??
+    item.website_url ??
+    item.websiteUrl ??
+    item.company_website ??
+    item.companyWebsite ??
+    item.company_domain ??
+    item.companyDomain ??
     item.url ??
     item.company_url ??
     item.companyUrl ??
     item.homepage ??
+    item.homepage_url ??
+    item.homepageUrl ??
     item.site ??
+    item.site_url ??
+    item.siteUrl ??
+    item.web ??
+    item.web_url ??
+    item.webUrl ??
+    item.primaryDomain ??
+    item.primary_domain ??
+    item.main_website ??
+    item.mainWebsite ??
+    // Nested structures
+    item.company?.website ??
+    item.company?.domain ??
+    item.company?.url ??
+    item.companyInfo?.website ??
+    item.companyInfo?.domain ??
+    item.organization?.website ??
+    item.organization?.domain ??
     ''
   );
 
@@ -254,6 +284,29 @@ export async function fetchSupplySignals(
     // Normalize to array of items
     const items = normalizeToItems(rawData);
     console.log('[Supply][Apify] Normalized items:', items.length);
+
+    // Debug: Log available fields from first item to help with field mapping
+    if (items.length > 0) {
+      const sampleItem = items[0];
+      const allKeys = Object.keys(sampleItem || {}).filter(k => sampleItem[k] != null);
+      console.log('[Supply][Apify] Sample item keys:', allKeys.join(', '));
+
+      // Check if website-like fields exist
+      const websiteFields = allKeys.filter(k =>
+        k.toLowerCase().includes('url') ||
+        k.toLowerCase().includes('website') ||
+        k.toLowerCase().includes('domain') ||
+        k.toLowerCase().includes('site') ||
+        k.toLowerCase().includes('web') ||
+        k.toLowerCase().includes('homepage')
+      );
+      if (websiteFields.length > 0) {
+        console.log('[Supply][Apify] Detected website-like fields:', websiteFields.join(', '));
+      } else {
+        console.warn('[Supply][Apify] ⚠️ No website/domain fields detected! Domains will be auto-generated from company names.');
+        console.warn('[Supply][Apify] Available fields:', allKeys.join(', '));
+      }
+    }
 
     if (items.length === 0) {
       return {
