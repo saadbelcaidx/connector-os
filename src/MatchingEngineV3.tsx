@@ -2280,6 +2280,10 @@ function MatchingEngineV3() {
           };
           setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: cachedPerson }));
 
+          // Show "We know this person" indicator
+          const personName = cachedRecord.person_name || cachedRecord.person_email?.split('@')[0] || 'Contact';
+          showToast('success', `We know ${personName} — using cached contact`);
+
           console.log('[Pressure Profile] CACHED - Person:', {
             name: cachedPerson.name,
             title: cachedPerson.title,
