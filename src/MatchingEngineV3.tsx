@@ -3549,11 +3549,11 @@ function MatchingEngineV3() {
                               narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} specializes in ${readableCategory(supplyCategory)}`;
                             } else {
                               // RELATED MATCH - both known but different
-                              narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} supports similar hiring needs`;
+                              narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} has placed teams adjacent to this role`;
                             }
                           } else {
                             // UNKNOWN - one or both categories missing
-                            narration = `Hiring activity detected → ${cleanCompanyName(selectedSupply.name)} identified as relevant provider`;
+                            narration = `Hiring activity detected → ${cleanCompanyName(selectedSupply.name)} identified based on active placement patterns`;
                           }
 
                           return (
