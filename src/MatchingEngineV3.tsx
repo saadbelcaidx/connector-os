@@ -3238,10 +3238,17 @@ function MatchingEngineV3() {
                       </div>
                       <p className="text-xs text-white/30 leading-relaxed pl-3">
                         {supplyDiscoveryStatus === 'loading'
-                          ? 'Discovering...'
-                          : discoveredSupplyCompanies.length > 0
-                          ? `${discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown').length} providers`
-                          : '–'}
+                          ? 'Finding best matches...'
+                          : (() => {
+                              const highConfidence = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high');
+                              const categorized = discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown');
+                              if (highConfidence.length > 0) {
+                                return `${highConfidence.length} perfect provider${highConfidence.length !== 1 ? 's' : ''}`;
+                              } else if (categorized.length > 0) {
+                                return `${categorized.length} provider${categorized.length !== 1 ? 's' : ''} found`;
+                              }
+                              return '–';
+                            })()}
                       </p>
                     </div>
                   </div>

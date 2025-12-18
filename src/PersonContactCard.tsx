@@ -276,29 +276,70 @@ export function PersonContactCard({
                   }
                 </div>
 
-                {/* Provider dropdown */}
+                {/* Provider dropdown - separated by match quality */}
                 {showProviderPicker && alternativeSupply.length > 0 && (
                   <>
                     <div
                       className="fixed inset-0 z-40"
                       onClick={() => setShowProviderPicker(false)}
                     />
-                    <div className="absolute left-0 top-full mt-1 w-52 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[160px] overflow-y-auto custom-scroll">
-                      {alternativeSupply.map((supply) => (
-                        <button
-                          key={supply.domain}
-                          onClick={() => {
-                            onSwitchSupply?.(supply);
-                            setShowProviderPicker(false);
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
-                        >
-                          <div className="text-[10px] text-white/70 truncate">{supply.name}</div>
-                          {supply.specialty && (
-                            <div className="text-[8px] text-white/30 truncate">{supply.specialty.slice(0, 30)}</div>
-                          )}
-                        </button>
-                      ))}
+                    <div className="absolute left-0 top-full mt-1 w-56 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[220px] overflow-y-auto custom-scroll">
+                      {/* Best matches (high confidence) */}
+                      {(() => {
+                        const bestMatches = alternativeSupply.filter(s => s.classification?.confidence === 'high');
+                        const otherOptions = alternativeSupply.filter(s => s.classification?.confidence !== 'high');
+
+                        return (
+                          <>
+                            {bestMatches.length > 0 && (
+                              <>
+                                <div className="px-3 py-1.5 text-[8px] uppercase tracking-wider text-white/30 bg-white/[0.02] border-b border-white/[0.04]">
+                                  Best matches
+                                </div>
+                                {bestMatches.map((supply) => (
+                                  <button
+                                    key={supply.domain}
+                                    onClick={() => {
+                                      onSwitchSupply?.(supply);
+                                      setShowProviderPicker(false);
+                                    }}
+                                    className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
+                                  >
+                                    <div className="text-[10px] text-white/70 truncate">{supply.name}</div>
+                                    {supply.specialty && (
+                                      <div className="text-[8px] text-white/30 truncate">{supply.specialty.slice(0, 35)}</div>
+                                    )}
+                                  </button>
+                                ))}
+                              </>
+                            )}
+
+                            {/* Other options (medium/low confidence) */}
+                            {otherOptions.length > 0 && (
+                              <>
+                                <div className="px-3 py-1.5 text-[8px] uppercase tracking-wider text-white/25 bg-white/[0.01] border-b border-white/[0.04] border-t border-white/[0.04]">
+                                  {bestMatches.length > 0 ? 'Worth a try' : 'Available providers'}
+                                </div>
+                                {otherOptions.map((supply) => (
+                                  <button
+                                    key={supply.domain}
+                                    onClick={() => {
+                                      onSwitchSupply?.(supply);
+                                      setShowProviderPicker(false);
+                                    }}
+                                    className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
+                                  >
+                                    <div className="text-[10px] text-white/50 truncate">{supply.name}</div>
+                                    {supply.specialty && (
+                                      <div className="text-[8px] text-white/25 truncate">{supply.specialty.slice(0, 35)}</div>
+                                    )}
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </>
                 )}
