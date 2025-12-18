@@ -42,6 +42,7 @@ import { fetchSupplySignals, findMatchingSupply, SupplyCompany, getSupplyEnrichm
 import { HireCategory, extractHireCategory } from './services/CompanyRoleClassifier';
 import { findSupplyContact, SupplyContact } from './services/ApolloSupplyEnrichmentService';
 import { findEmailWithFallback, mapHireCategoryToAnymail } from './services/AnymailFinderService';
+import { cleanCompanyName } from './services/IntroBuilder';
 import type { ConnectorProfile } from './types';
 
 const WINDOW_STATUS_LABELS = {
@@ -3259,17 +3260,23 @@ function MatchingEngineV3() {
                         {supplyDiscoveryStatus === 'loading'
                           ? 'Finding best matches...'
                           : (() => {
-                              // Count actual high-confidence providers from entire dataset
-                              const perfectProviders = discoveredSupplyCompanies.filter(
-                                s => s.classification?.confidence === 'high' && s.hireCategory !== 'unknown'
+                              // Use alternatives for active result if available, otherwise global count
+                              const alternatives = activeResult ? (alternativeSupplyByDomain[activeResult.domain] || []) : discoveredSupplyCompanies;
+                              const perfectProviders = alternatives.filter(
+                                s => s.classification?.confidence === 'high'
                               );
-                              const otherProviders = discoveredSupplyCompanies.filter(
-                                s => s.classification?.confidence !== 'high' && s.hireCategory !== 'unknown'
+                              const otherProviders = alternatives.filter(
+                                s => s.classification?.confidence !== 'high'
                               );
 
-                              if (perfectProviders.length === 0 && otherProviders.length === 0) return '–';
+                              if (perfectProviders.length === 0 && otherProviders.length === 0) {
+                                // Fallback to global count if no alternatives yet
+                                const globalPerfect = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high').length;
+                                if (globalPerfect > 0) return `${globalPerfect} providers ready`;
+                                return discoveredSupplyCompanies.length > 0 ? `${discoveredSupplyCompanies.length} providers` : '–';
+                              }
                               if (perfectProviders.length > 0) {
-                                return `${perfectProviders.length} perfect provider${perfectProviders.length !== 1 ? 's' : ''}`;
+                                return `${perfectProviders.length} perfect match${perfectProviders.length !== 1 ? 'es' : ''}`;
                               }
                               return `${otherProviders.length} provider${otherProviders.length !== 1 ? 's' : ''} found`;
                             })()}
@@ -3320,7 +3327,7 @@ function MatchingEngineV3() {
               {/* TO PROVIDER */}
               <div className="group">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-white/25">To {selectedSupplyByDomain[activeResult?.domain || '']?.name || 'provider'}</span>
+                  <span className="text-[10px] text-white/25">To {cleanCompanyName(selectedSupplyByDomain[activeResult?.domain || '']?.name || '') || 'provider'}</span>
                   {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
                     <button
                       onClick={() => {

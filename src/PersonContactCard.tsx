@@ -286,9 +286,9 @@ export function PersonContactCard({
                     />
                     <div className="absolute left-0 top-full mt-1 w-60 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[300px] overflow-hidden flex flex-col">
                       {(() => {
-                        // Separate by confidence
-                        const bestMatches = alternativeSupply.filter(s => s.classification?.confidence === 'high').slice(0, 10);
-                        const otherOptions = alternativeSupply.filter(s => s.classification?.confidence !== 'high').slice(0, 15);
+                        // Separate by confidence - no artificial limits, show all available
+                        const bestMatches = alternativeSupply.filter(s => s.classification?.confidence === 'high');
+                        const otherOptions = alternativeSupply.filter(s => s.classification?.confidence !== 'high');
 
                         return (
                           <>
