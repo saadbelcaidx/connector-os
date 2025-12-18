@@ -3262,20 +3262,21 @@ function MatchingEngineV3() {
                           : (() => {
                               // Use alternatives for active result if available, otherwise global count
                               const alternatives = activeResult ? (alternativeSupplyByDomain[activeResult.domain] || []) : discoveredSupplyCompanies;
+                              const bestMatches = alternatives.filter(s => s.classification?.confidence === 'high');
+                              const worthATry = alternatives.filter(s => s.classification?.confidence !== 'high');
 
-                              if (alternatives.length === 0) {
-                                return discoveredSupplyCompanies.length > 0
-                                  ? `${Math.min(5, discoveredSupplyCompanies.length)} Best + ${Math.max(0, discoveredSupplyCompanies.length - 5)} more`
-                                  : '–';
+                              if (bestMatches.length === 0 && worthATry.length === 0) {
+                                const globalBest = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high').length;
+                                if (globalBest > 0) return `${globalBest} Best Matches`;
+                                return discoveredSupplyCompanies.length > 0 ? `${discoveredSupplyCompanies.length} providers` : '–';
                               }
-                              // Top 5 = Best, rest = Worth a Try (matches dropdown)
-                              const bestCount = Math.min(5, alternatives.length);
-                              const othersCount = Math.max(0, alternatives.length - 5);
-
-                              if (othersCount > 0) {
-                                return `${bestCount} Best + ${othersCount} more`;
+                              if (bestMatches.length > 0 && worthATry.length > 0) {
+                                return `${bestMatches.length} Best + ${worthATry.length} more`;
                               }
-                              return `${bestCount} Best Match${bestCount !== 1 ? 'es' : ''}`;
+                              if (bestMatches.length > 0) {
+                                return `${bestMatches.length} Best Match${bestMatches.length !== 1 ? 'es' : ''}`;
+                              }
+                              return `${worthATry.length} Worth a Try`;
                             })()}
                       </p>
                     </div>
