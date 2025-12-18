@@ -2091,19 +2091,56 @@ function MatchingEngineV3() {
       setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: supply }));
 
       try {
-        // Get appropriate titles for this supply company's category
-        const searchTitles = getSupplyEnrichmentTitles(supply.hireCategory);
+        // =====================================================================
+        // STEP A: CHECK IF APIFY ALREADY HAS A COMPLETE CONTACT (NO ENRICHMENT)
+        // =====================================================================
+        const apifyContact = supply.existingContact;
+        const hasUsableApifyContact = apifyContact &&
+          typeof apifyContact.email === 'string' &&
+          apifyContact.email.includes('@') &&
+          typeof apifyContact.name === 'string' &&
+          apifyContact.name.length > 0;
 
-        let supplyContact = await findSupplyContact(
-          apolloKey,
-          supply.domain,
-          supply.name,
-          searchTitles,
-          supply.existingContact // Pass Apify contact if available
-        );
+        let supplyContact: SupplyContact | null = null;
 
-        // If Apollo failed and we have Anymail Finder configured, try fallback
-        if (!supplyContact?.email && enrichmentConfig.anymailFinderApiKey) {
+        if (hasUsableApifyContact) {
+          // USE APIFY CONTACT DIRECTLY - NO ENRICHMENT NEEDED
+          console.log(`[SupplyEnrich] ✓ Using Apify contact directly: ${apifyContact.name} (${apifyContact.email})`);
+          supplyContact = {
+            name: apifyContact.name,
+            email: apifyContact.email,
+            title: apifyContact.title || 'Contact',
+            linkedin: apifyContact.linkedin,
+            company: supply.name,
+            domain: supply.domain,
+            confidence: 95, // High confidence - direct from dataset
+          };
+        } else {
+          // =====================================================================
+          // STEP B: CONDITIONAL ENRICHMENT (ONLY IF APIFY DATA INCOMPLETE)
+          // =====================================================================
+          console.log(`[SupplyEnrich] Apify contact incomplete, enriching ${supply.name}...`);
+
+          // Get appropriate titles for this supply company's category
+          const searchTitles = getSupplyEnrichmentTitles(supply.hireCategory);
+
+          supplyContact = await findSupplyContact(
+            apolloKey,
+            supply.domain,
+            supply.name,
+            searchTitles,
+            supply.existingContact // Pass Apify contact if available
+          );
+
+          // DOMAIN MATCH GUARD: Discard if enriched contact is from different company
+          if (supplyContact && supplyContact.domain && supplyContact.domain !== supply.domain) {
+            console.warn(`[SupplyEnrich] ⚠️ Domain mismatch! Expected ${supply.domain}, got ${supplyContact.domain}. Discarding.`);
+            supplyContact = null;
+          }
+        }
+
+        // If still no email and we have Anymail Finder configured, try fallback
+        if (!supplyContact?.email && enrichmentConfig.anymailFinderApiKey && !hasUsableApifyContact) {
           console.log(`[SupplyEnrich] Apollo failed, trying Anymail Finder fallback for ${supply.name}...`);
           const anymailResult = await findEmailWithFallback(
             enrichmentConfig.anymailFinderApiKey,
