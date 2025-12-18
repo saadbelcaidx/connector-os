@@ -43,6 +43,10 @@ interface PersonContactCardProps {
   isEnrichingSupply?: boolean;
   supplyIntro?: string;
   demandIntro?: string;
+  // Supply confirmation (Option B)
+  onConfirmAsSupplier?: () => void;
+  companyName?: string;
+  companyDomain?: string;
 }
 
 function getStatusBadge(status: EnrichmentStatus) {
@@ -103,7 +107,10 @@ export function PersonContactCard({
   onSwitchSupply,
   isEnrichingSupply = false,
   supplyIntro,
-  demandIntro
+  demandIntro,
+  onConfirmAsSupplier,
+  companyName,
+  companyDomain
 }: PersonContactCardProps) {
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<OutboundChannel>('email');
@@ -349,6 +356,16 @@ export function PersonContactCard({
             >
               LinkedIn →
             </a>
+          )}
+
+          {/* Option B: Confirm as Supplier - shown when contact has email and callback provided */}
+          {onConfirmAsSupplier && personData.email && (
+            <button
+              onClick={onConfirmAsSupplier}
+              className="mt-2 text-[10px] text-white/50 hover:text-white/70 bg-white/[0.04] hover:bg-white/[0.08] px-2 py-1 rounded transition-colors"
+            >
+              + Confirm as Supplier
+            </button>
           )}
 
           {isGettingStale && !isTooStale && (

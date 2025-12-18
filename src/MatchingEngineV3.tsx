@@ -604,6 +604,16 @@ function MatchingEngineV3() {
   const [discoveredSupplyCompanies, setDiscoveredSupplyCompanies] = useState<SupplyCompany[]>([]);
   const [supplyDiscoveryStatus, setSupplyDiscoveryStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 
+  // Supply confirmation flow - for Option B (user-confirmed supply creation)
+  const [pendingSupplyConfirmation, setPendingSupplyConfirmation] = useState<{
+    domain: string;
+    companyName: string;
+    contactName: string;
+    contactEmail: string;
+    contactTitle: string;
+    hireCategory: HireCategory;
+  } | null>(null);
+
   // Global refresh state - true while fetching signals + processing results
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -1943,6 +1953,65 @@ function MatchingEngineV3() {
     }
   };
 
+  // =========================================================================
+  // SUPPLY CONFIRMATION FLOW (Option B)
+  // =========================================================================
+
+  /**
+   * Check if a person looks like a decision-maker who could be a supplier contact
+   */
+  const looksLikeSupplierContact = (title: string): boolean => {
+    const supplierTitles = /\b(ceo|coo|cfo|founder|owner|partner|director|head|vp|vice president|president|managing|principal|recruiter|talent|staffing|hr |human resources)\b/i;
+    return supplierTitles.test(title || '');
+  };
+
+  /**
+   * Confirm a person as a supplier and create SupplyCompany
+   */
+  const confirmAsSupplier = () => {
+    if (!pendingSupplyConfirmation) return;
+
+    const { domain, companyName, contactName, contactEmail, contactTitle, hireCategory } = pendingSupplyConfirmation;
+
+    // Create new SupplyCompany from confirmed contact
+    const newSupplyCompany: SupplyCompany = {
+      name: companyName,
+      domain: domain,
+      description: `Confirmed supplier - ${contactTitle}`,
+      hireCategory: hireCategory,
+      classification: {
+        role: 'supply',
+        confidence: 'high',
+        hireCategory: hireCategory,
+        signals: ['user_confirmed_inference'],
+      },
+      raw: { source: 'user_confirmed_inference', confirmedAt: new Date().toISOString() },
+      existingContact: {
+        name: contactName,
+        email: contactEmail,
+        title: contactTitle,
+      },
+    };
+
+    // Add to discovered supply companies
+    setDiscoveredSupplyCompanies(prev => {
+      // Don't add duplicates
+      if (prev.some(s => s.domain === domain)) return prev;
+      return [...prev, newSupplyCompany];
+    });
+
+    showToast('success', `${companyName} confirmed as supplier`);
+    setPendingSupplyConfirmation(null);
+    console.log(`[Supply] User confirmed ${companyName} as supplier (source: user_confirmed_inference)`);
+  };
+
+  /**
+   * Dismiss the supply confirmation prompt
+   */
+  const dismissSupplyConfirmation = () => {
+    setPendingSupplyConfirmation(null);
+  };
+
   // Enrich supply contact (person at dynamically discovered supply company)
   const enrichSupplyContact = async (companyDomain: string, result: MatchingResult, specificSupply?: SupplyCompany): Promise<{ contact: SupplyContact | null; supply: SupplyCompany | null }> => {
     // Determine hire category from job titles being hired
@@ -1965,7 +2034,12 @@ function MatchingEngineV3() {
 
       if (matches.length === 0) {
         console.log('[SupplyEnrich] No supply companies discovered for category:', hireCategory);
-        console.log('[SupplyEnrich] Configure Supply Apify URL in Settings to enable two-sided matching');
+        // Show user-friendly message about empty supply
+        if (discoveredSupplyCompanies.length === 0) {
+          showToast('info', 'No supply entities. Upload Supply dataset or confirm a supplier manually.');
+        } else {
+          showToast('info', `No ${hireCategory} suppliers found. Try a different category or add suppliers.`);
+        }
         return { contact: null, supply: null };
       }
 
@@ -2933,6 +3007,38 @@ function MatchingEngineV3() {
         </div>
       )}
 
+      {/* Supply Confirmation Modal */}
+      {pendingSupplyConfirmation && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <h3 className="text-lg font-medium text-white mb-2">Confirm as Supplier?</h3>
+            <p className="text-sm text-white/60 mb-4">
+              This contact looks like a supplier. Create a Supply entity from <span className="text-white font-medium">{pendingSupplyConfirmation.companyName}</span>?
+            </p>
+            <div className="bg-white/5 rounded-lg p-3 mb-4">
+              <div className="text-xs text-white/40 mb-1">Contact</div>
+              <div className="text-sm text-white">{pendingSupplyConfirmation.contactName}</div>
+              <div className="text-xs text-white/50">{pendingSupplyConfirmation.contactTitle}</div>
+              <div className="text-xs text-white/40 mt-1">{pendingSupplyConfirmation.contactEmail}</div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={dismissSupplyConfirmation}
+                className="flex-1 px-4 py-2 text-sm text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
+              >
+                Skip
+              </button>
+              <button
+                onClick={confirmAsSupplier}
+                className="flex-1 px-4 py-2 text-sm text-black bg-white hover:bg-white/90 rounded-lg font-medium transition-colors"
+              >
+                Confirm Supplier
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-[1400px] mx-auto">
         <button
           onClick={() => navigate('/launcher')}
@@ -3307,6 +3413,21 @@ function MatchingEngineV3() {
                           isEnrichingSupply={isEnrichingSupplyByDomain[result.domain] || false}
                           demandIntro={demandIntroByDomain[result.domain]}
                           supplyIntro={supplyIntroByDomain[result.domain]}
+                          companyName={result.companyName}
+                          companyDomain={result.domain}
+                          onConfirmAsSupplier={
+                            // Only show if: contact has email, no supply exists, and title looks like decision-maker
+                            personData?.email && discoveredSupplyCompanies.length === 0 && looksLikeSupplierContact(personData?.title || '')
+                              ? () => setPendingSupplyConfirmation({
+                                  domain: result.domain,
+                                  companyName: result.companyName,
+                                  contactName: personData?.name || '',
+                                  contactEmail: personData?.email || '',
+                                  contactTitle: personData?.title || '',
+                                  hireCategory: extractHireCategory(result.jobTitlesBeingHired?.map(t => ({ title: t })), result.signalSummary),
+                                })
+                              : undefined
+                          }
                         />
 
                       </div>
