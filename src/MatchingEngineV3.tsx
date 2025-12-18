@@ -980,6 +980,8 @@ function MatchingEngineV3() {
             setDiscoveredSupplyCompanies(supplyResult.companies);
             setSupplyDiscoveryStatus('loaded');
             console.log(`[Supply] Discovered ${supplyResult.companies.length} supply companies from ${supplyResult.totalDiscovered} total`);
+            // Debug: Log first 5 supply companies to trace where they come from
+            console.log('[Supply] First 5 companies:', supplyResult.companies.slice(0, 5).map(c => `${c.name} (${c.domain})`));
           } else {
             setSupplyDiscoveryStatus('error');
           }
