@@ -2297,9 +2297,9 @@ function MatchingEngineV3() {
           };
           setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: cachedPerson }));
 
-          // Show "We know this person" indicator (only if we have real data)
+          // Show cost-saving message (better UX than "using cache")
           const personName = cachedRecord.person_name || cachedRecord.person_email?.split('@')[0];
-          showToast('success', `We know ${personName} — using cached contact`);
+          showToast('success', `${personName} — no API cost (saved contact)`);
 
           console.log('[Pressure Profile] CACHED - Person:', {
             name: cachedPerson.name,
@@ -2320,6 +2320,9 @@ function MatchingEngineV3() {
           } else {
             console.log('[Pressure Profile] CACHED - Skipped (no title)');
           }
+
+          // STILL trigger supply matching even when using cached demand contact
+          await enrichSupplyContact(cleanDomain, result);
 
           setIsEnrichingDomain(null);
           return;
