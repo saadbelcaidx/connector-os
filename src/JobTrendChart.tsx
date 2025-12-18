@@ -204,13 +204,8 @@ export function JobTrendChart({ userId = 'default', onTrendChange }: JobTrendCha
               <span className="text-[9px] text-white/60">Rising</span>
             </>
           )}
-          {trendDirection === 'down' && (
-            <>
-              <TrendingDown size={10} className="text-white/35" />
-              <span className="text-[9px] text-white/35">Falling</span>
-            </>
-          )}
-          {trendDirection === 'flat' && (
+          {/* Hide "Falling" - not actionable. Show stable instead */}
+          {(trendDirection === 'down' || trendDirection === 'flat') && (
             <>
               <Minus size={10} className="text-white/30" />
               <span className="text-[9px] text-white/30">Stable</span>

@@ -23,7 +23,9 @@
       "Bash(npx vercel:*)",
       "WebFetch(domain:anymailfinder.com)",
       "Bash(curl:*)",
-      "WebFetch(domain:api.anymailfinder.com)"
+      "WebFetch(domain:api.anymailfinder.com)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)"
     ]
   }
 }

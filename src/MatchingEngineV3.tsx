@@ -571,7 +571,7 @@ function MatchingEngineV3() {
   const [personDataByDomain, setPersonDataByDomain] = useState<Record<string, PersonData | null>>({});
   const [isEnrichingDomain, setIsEnrichingDomain] = useState<string | null>(null);
   const [noContactsFoundByDomain, setNoContactsFoundByDomain] = useState<Record<string, boolean>>({});
-  const [toastNotification, setToastNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
+  const [toastNotification, setToastNotification] = useState<{ type: 'success' | 'error' | 'warning' | 'cache'; message: string } | null>(null);
   const [personPressureProfileByDomain, setPersonPressureProfileByDomain] = useState<Record<string, string>>({});
   const [enrichmentConfig, setEnrichmentConfig] = useState<EnrichmentConfig>({ provider: 'none' });
   const [conversationStartedByDomain, setConversationStartedByDomain] = useState<Record<string, boolean>>({});
@@ -666,7 +666,7 @@ function MatchingEngineV3() {
 
   const activeResult = matchingResults[activeResultIndex] || null;
 
-  const showToast = (type: 'success' | 'error' | 'warning', message: string) => {
+  const showToast = (type: 'success' | 'error' | 'warning' | 'cache', message: string) => {
     setToastNotification({ type, message });
     setTimeout(() => setToastNotification(null), 4000);
   };
@@ -2336,9 +2336,8 @@ function MatchingEngineV3() {
           };
           setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: cachedPerson }));
 
-          // Show cost-saving message (better UX than "using cache")
-          const personName = cachedRecord.person_name || cachedRecord.person_email?.split('@')[0];
-          showToast('success', `${personName} — no API cost (saved contact)`);
+          // Show rewarding cache hit message (green toast)
+          showToast('cache', 'We know this person already, no charge for you!');
 
           console.log('[Pressure Profile] CACHED - Person:', {
             name: cachedPerson.name,
@@ -3062,6 +3061,7 @@ function MatchingEngineV3() {
     <div className="min-h-screen bg-gradient-to-b from-[#0E0E0E] to-[#0A0A0A] text-white px-8 py-12">
       {toastNotification && (
         <div className={`fixed top-6 right-6 px-5 py-3 rounded-2xl shadow-2xl z-50 animate-slide-in-right flex items-center gap-2 ${
+          toastNotification.type === 'cache' ? 'bg-emerald-500/90 text-white' :
           toastNotification.type === 'success' ? 'bg-white/90 text-black' :
           toastNotification.type === 'warning' ? 'bg-white/70 text-black' :
           'bg-white/50 text-black'
