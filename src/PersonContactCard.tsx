@@ -264,14 +264,14 @@ export function PersonContactCard({
                   {supplyContact?.company || selectedSupply.name}
                   {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
                 </button>
-                {/* Show why matched - specialty, category, or inferred from name */}
+                {/* Show why matched - category label (clean, consistent) */}
                 <div className="text-[8px] text-white/40 truncate mt-0.5">
-                  {selectedSupply.specialty
-                    ? selectedSupply.specialty.slice(0, 40)
-                    : selectedSupply.hireCategory !== 'unknown'
-                      ? `${selectedSupply.hireCategory} staffing`
-                      : /recruit|staffing|talent|consult/i.test(selectedSupply.name)
-                        ? 'Staffing & Recruiting'
+                  {selectedSupply.hireCategory !== 'unknown'
+                    ? `${selectedSupply.hireCategory.charAt(0).toUpperCase() + selectedSupply.hireCategory.slice(1)} staffing`
+                    : /recruit|staffing|talent/i.test(selectedSupply.name)
+                      ? 'Staffing & Recruiting'
+                      : /consult/i.test(selectedSupply.name)
+                        ? 'Consulting'
                         : 'Service Provider'
                   }
                 </div>
@@ -306,9 +306,11 @@ export function PersonContactCard({
                                     className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
                                   >
                                     <div className="text-[10px] text-white/70 truncate">{supply.name}</div>
-                                    {supply.specialty && (
-                                      <div className="text-[8px] text-white/30 truncate">{supply.specialty.slice(0, 35)}</div>
-                                    )}
+                                    <div className="text-[8px] text-white/30 truncate">
+                                      {supply.hireCategory !== 'unknown'
+                                        ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
+                                        : 'Service Provider'}
+                                    </div>
                                   </button>
                                 ))}
                               </>
@@ -330,9 +332,11 @@ export function PersonContactCard({
                                     className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
                                   >
                                     <div className="text-[10px] text-white/50 truncate">{supply.name}</div>
-                                    {supply.specialty && (
-                                      <div className="text-[8px] text-white/25 truncate">{supply.specialty.slice(0, 35)}</div>
-                                    )}
+                                    <div className="text-[8px] text-white/25 truncate">
+                                      {supply.hireCategory !== 'unknown'
+                                        ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
+                                        : 'Service Provider'}
+                                    </div>
                                   </button>
                                 ))}
                               </>

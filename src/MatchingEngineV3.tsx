@@ -3240,12 +3240,21 @@ function MatchingEngineV3() {
                         {supplyDiscoveryStatus === 'loading'
                           ? 'Finding best matches...'
                           : (() => {
-                              const highConfidence = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high');
-                              const categorized = discoveredSupplyCompanies.filter(s => s.hireCategory !== 'unknown');
-                              if (highConfidence.length > 0) {
-                                return `${highConfidence.length} perfect provider${highConfidence.length !== 1 ? 's' : ''}`;
-                              } else if (categorized.length > 0) {
-                                return `${categorized.length} provider${categorized.length !== 1 ? 's' : ''} found`;
+                              // Show top 3-5 best matches, not total count
+                              const sortedByConfidence = [...discoveredSupplyCompanies]
+                                .filter(s => s.hireCategory !== 'unknown')
+                                .sort((a, b) => {
+                                  const order = { high: 3, medium: 2, low: 1 };
+                                  return (order[b.classification?.confidence || 'low'] || 0) - (order[a.classification?.confidence || 'low'] || 0);
+                                });
+                              const topMatches = sortedByConfidence.slice(0, 5);
+                              const perfectCount = topMatches.filter(s => s.classification?.confidence === 'high').length;
+
+                              if (topMatches.length === 0) return '–';
+                              if (perfectCount >= 3) {
+                                return `${perfectCount} perfect providers`;
+                              } else if (topMatches.length > 0) {
+                                return `${topMatches.length} providers ready`;
                               }
                               return '–';
                             })()}
