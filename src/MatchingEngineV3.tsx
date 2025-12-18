@@ -3529,7 +3529,7 @@ function MatchingEngineV3() {
                       </div>
 
                       <div className="space-y-3">
-                        {/* Match Narration - explains why demand ↔ supply match exists */}
+                        {/* Match Narration - three-tier explanation (exact / related / unknown) */}
                         {(() => {
                           const selectedSupply = selectedSupplyByDomain[result.domain];
                           if (!selectedSupply) return null;
@@ -3539,10 +3539,22 @@ function MatchingEngineV3() {
                             result.signalSummary
                           );
                           const supplyCategory = selectedSupply.hireCategory;
+                          const demandKnown = demandCategory && demandCategory !== 'unknown';
+                          const supplyKnown = supplyCategory && supplyCategory !== 'unknown';
 
-                          const narration = (demandCategory && supplyCategory && demandCategory !== 'unknown' && supplyCategory !== 'unknown' && demandCategory === supplyCategory)
-                            ? `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} specializes in ${readableCategory(supplyCategory)}`
-                            : `Hiring activity detected → ${cleanCompanyName(selectedSupply.name)} identified as relevant provider`;
+                          let narration: string;
+                          if (demandKnown && supplyKnown) {
+                            if (demandCategory === supplyCategory) {
+                              // EXACT MATCH - strongest explanation
+                              narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} specializes in ${readableCategory(supplyCategory)}`;
+                            } else {
+                              // RELATED MATCH - both known but different
+                              narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} supports similar hiring needs`;
+                            }
+                          } else {
+                            // UNKNOWN - one or both categories missing
+                            narration = `Hiring activity detected → ${cleanCompanyName(selectedSupply.name)} identified as relevant provider`;
+                          }
 
                           return (
                             <div className="px-2 py-1.5 bg-white/[0.02] rounded-lg border border-white/[0.04] mb-2">
