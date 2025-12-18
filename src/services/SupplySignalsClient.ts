@@ -323,6 +323,30 @@ export async function fetchSupplySignals(
     const supplyCompanies: SupplyCompany[] = [];
     const seen = new Set<string>();
 
+    // Detect if this is a person-level dataset (should NOT create SupplyCompany from person records)
+    const firstItem = items[0];
+    const isPersonDataset = firstItem && (
+      firstItem.first_name || firstItem.firstName ||
+      firstItem.last_name || firstItem.lastName ||
+      firstItem.full_name || firstItem.fullName ||
+      (firstItem.email && firstItem.job_title)
+    );
+
+    if (isPersonDataset) {
+      console.warn('[Supply][Apify] ⚠️ This appears to be a PERSON/LEADS dataset, not a COMPANY dataset.');
+      console.warn('[Supply][Apify] Person datasets should NOT be used for Supply discovery.');
+      console.warn('[Supply][Apify] Supply requires company-level data (staffing agencies, consultancies, etc.)');
+      console.warn('[Supply][Apify] Skipping supply creation from person records.');
+      return {
+        companies: [],
+        isLive: true,
+        lastUpdated: new Date().toISOString(),
+        totalDiscovered: items.length,
+        totalClassifiedAsSupply: 0,
+        rawPayload: rawData,
+      };
+    }
+
     for (const item of items) {
       const extracted = extractCompanyFields(item);
 
