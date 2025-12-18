@@ -10,6 +10,35 @@
 import { HireCategory, extractHireCategory } from './CompanyRoleClassifier';
 import type { SupplyCompany } from './SupplySignalsClient';
 
+/**
+ * Clean company name for professional appearance in intros
+ * Removes: LLC, Inc, Corp, Ltd, Co, Limited, Corporation, etc.
+ */
+export function cleanCompanyName(name: string): string {
+  if (!name) return name;
+
+  // Remove common business suffixes (case-insensitive)
+  const suffixes = [
+    /,?\s*(LLC|L\.L\.C\.|L\.L\.C)\.?$/i,
+    /,?\s*(Inc|INC|Incorporated)\.?$/i,
+    /,?\s*(Corp|Corporation|CORP)\.?$/i,
+    /,?\s*(Ltd|LTD|Limited)\.?$/i,
+    /,?\s*(Co|CO|Company)\.?$/i,
+    /,?\s*(LP|L\.P\.|LLP|L\.L\.P\.)\.?$/i,
+    /,?\s*(PLC|plc)\.?$/i,
+    /,?\s*(GmbH|AG|S\.A\.|SA)\.?$/i,
+    /,?\s*(Pty|PTY)\.?$/i,
+    /,?\s*(PLLC|P\.L\.L\.C\.)\.?$/i,
+  ];
+
+  let cleaned = name.trim();
+  for (const suffix of suffixes) {
+    cleaned = cleaned.replace(suffix, '');
+  }
+
+  return cleaned.trim();
+}
+
 interface Signal {
   type: string;
   details?: string;

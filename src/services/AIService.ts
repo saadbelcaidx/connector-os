@@ -1256,8 +1256,8 @@ export async function generateSupplyIntro(
   const shortTitle = shortenTitle(demandTitle);
   const contactRef = `${demandFullName} (${shortTitle})`;
 
-  // Use provider company name if available
-  const providerName = providerInfo?.name || '';
+  // Use provider company name if available (cleaned of LLC, Inc, etc.)
+  const providerName = cleanCompanyName(providerInfo?.name || '');
   const providerMention = providerName ? ` at ${providerName}` : '';
 
   // Template includes provider name for personalization
