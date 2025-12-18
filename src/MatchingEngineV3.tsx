@@ -2248,14 +2248,26 @@ function MatchingEngineV3() {
     setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: false }));
 
     try {
-      const { data: cachedRecord } = await supabase
-        .from('signal_history')
-        .select('enriched_at, person_name, person_title, person_email, person_linkedin, target_titles')
-        .eq('company_domain', cleanDomain)
-        .not('enriched_at', 'is', null)
-        .order('enriched_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // Check cache first (but don't block on errors - just skip cache if query fails)
+      let cachedRecord: any = null;
+      try {
+        const { data, error } = await supabase
+          .from('signal_history')
+          .select('enriched_at, person_name, person_title, person_email, person_linkedin, target_titles')
+          .eq('company_domain', cleanDomain)
+          .not('enriched_at', 'is', null)
+          .order('enriched_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!error) {
+          cachedRecord = data;
+        } else {
+          console.log('[MatchingEngine] Cache query failed (will proceed to enrichment):', error.message);
+        }
+      } catch (cacheError) {
+        console.log('[MatchingEngine] Cache check skipped:', cacheError);
+      }
 
       if (cachedRecord?.enriched_at) {
         const enrichedAt = new Date(cachedRecord.enriched_at);
