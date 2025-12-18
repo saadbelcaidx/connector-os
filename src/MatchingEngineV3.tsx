@@ -2269,7 +2269,12 @@ function MatchingEngineV3() {
         console.log('[MatchingEngine] Cache check skipped:', cacheError);
       }
 
-      if (cachedRecord?.enriched_at) {
+      // ONLY use cache if we have ACTUAL useful data (name OR email)
+      // Empty enriched_at records should NOT block enrichment
+      const hasUsefulCachedData = cachedRecord?.enriched_at &&
+        (cachedRecord.person_name || cachedRecord.person_email);
+
+      if (hasUsefulCachedData) {
         const enrichedAt = new Date(cachedRecord.enriched_at);
         const daysSince = (new Date().getTime() - enrichedAt.getTime()) / (1000 * 60 * 60 * 24);
 
@@ -2292,8 +2297,8 @@ function MatchingEngineV3() {
           };
           setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: cachedPerson }));
 
-          // Show "We know this person" indicator
-          const personName = cachedRecord.person_name || cachedRecord.person_email?.split('@')[0] || 'Contact';
+          // Show "We know this person" indicator (only if we have real data)
+          const personName = cachedRecord.person_name || cachedRecord.person_email?.split('@')[0];
           showToast('success', `We know ${personName} — using cached contact`);
 
           console.log('[Pressure Profile] CACHED - Person:', {
