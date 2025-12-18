@@ -3262,23 +3262,27 @@ function MatchingEngineV3() {
                           : (() => {
                               // Use alternatives for active result if available, otherwise global count
                               const alternatives = activeResult ? (alternativeSupplyByDomain[activeResult.domain] || []) : discoveredSupplyCompanies;
-                              const perfectProviders = alternatives.filter(
+                              const bestMatches = alternatives.filter(
                                 s => s.classification?.confidence === 'high'
                               );
-                              const otherProviders = alternatives.filter(
+                              const worthATry = alternatives.filter(
                                 s => s.classification?.confidence !== 'high'
                               );
 
-                              if (perfectProviders.length === 0 && otherProviders.length === 0) {
+                              if (bestMatches.length === 0 && worthATry.length === 0) {
                                 // Fallback to global count if no alternatives yet
-                                const globalPerfect = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high').length;
-                                if (globalPerfect > 0) return `${globalPerfect} providers ready`;
+                                const globalBest = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high').length;
+                                if (globalBest > 0) return `${globalBest} Best Matches`;
                                 return discoveredSupplyCompanies.length > 0 ? `${discoveredSupplyCompanies.length} providers` : '–';
                               }
-                              if (perfectProviders.length > 0) {
-                                return `${perfectProviders.length} perfect match${perfectProviders.length !== 1 ? 'es' : ''}`;
+                              // Show both counts to match dropdown
+                              if (bestMatches.length > 0 && worthATry.length > 0) {
+                                return `${bestMatches.length} Best + ${worthATry.length} more`;
                               }
-                              return `${otherProviders.length} provider${otherProviders.length !== 1 ? 's' : ''} found`;
+                              if (bestMatches.length > 0) {
+                                return `${bestMatches.length} Best Match${bestMatches.length !== 1 ? 'es' : ''}`;
+                              }
+                              return `${worthATry.length} Worth a Try`;
                             })()}
                       </p>
                     </div>

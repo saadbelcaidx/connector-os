@@ -320,13 +320,15 @@ export function PersonContactCard({
                               </div>
                             )}
 
-                            {/* SECTION 2: Worth a Try */}
+                            {/* SECTION 2: Worth a Try - Purple theme, clearly separated */}
                             {otherOptions.length > 0 && (
-                              <div className="flex-shrink-0 border-t border-white/[0.08]">
-                                <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-white/40 bg-white/[0.02] border-b border-white/[0.06] font-medium sticky top-0">
+                              <div className="flex-shrink-0">
+                                {/* Strong visual divider */}
+                                <div className="h-[2px] bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
+                                <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-purple-400/70 bg-purple-500/5 border-b border-purple-500/10 font-medium sticky top-0">
                                   Worth a Try ({otherOptions.length})
                                 </div>
-                                <div className="max-h-[120px] overflow-y-auto custom-scroll">
+                                <div className="max-h-[120px] overflow-y-auto custom-scroll bg-purple-500/[0.02]">
                                   {otherOptions.map((supply) => (
                                     <button
                                       key={supply.domain}
@@ -334,10 +336,10 @@ export function PersonContactCard({
                                         onSwitchSupply?.(supply);
                                         setShowProviderPicker(false);
                                       }}
-                                      className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors border-b border-white/[0.02]"
+                                      className="w-full text-left px-3 py-2 hover:bg-purple-500/[0.08] transition-colors border-b border-purple-500/[0.04]"
                                     >
-                                      <div className="text-[10px] text-white/50 truncate">{cleanCompanyName(supply.name)}</div>
-                                      <div className="text-[8px] text-white/25 truncate">
+                                      <div className="text-[10px] text-purple-200/60 truncate">{cleanCompanyName(supply.name)}</div>
+                                      <div className="text-[8px] text-purple-300/30 truncate">
                                         {supply.hireCategory !== 'unknown'
                                           ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
                                           : 'Service Provider'}
