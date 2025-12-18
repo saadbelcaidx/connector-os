@@ -1513,32 +1513,32 @@ function MatchingEngineV3() {
     if (!activeResult) return;
 
     const domain = activeResult.domain;
-
-    // GUARD: Only attempt once per domain (prevents infinite loops if supply intro fails)
-    if (introGenerationAttemptedRef.current.has(domain)) {
-      return;
-    }
-
     const personData = personDataByDomain[domain];
+    const supplyContact = supplyContactByDomain[domain];
     const hasDemandIntro = demandIntroByDomain[domain];
     const hasSupplyIntro = supplyIntroByDomain[domain];
-    const shouldAutoGenerate =
-      activeResult.whoHasPressureRoles.length > 0 &&
-      personData &&
-      signalStrength > 0 &&
-      (!hasDemandIntro || !hasSupplyIntro) &&
-      !isGeneratingDemandIntro &&
-      !isGeneratingSupplyIntro &&
-      aiConfig &&
-      isAIConfigured(aiConfig);
 
-    if (shouldAutoGenerate) {
-      // Mark as attempted BEFORE calling (prevents re-entry)
+    // Check if we should generate intros
+    const aiReady = aiConfig && isAIConfigured(aiConfig);
+    const hasBasicData = activeResult.whoHasPressureRoles.length > 0 && personData && signalStrength > 0;
+
+    if (!aiReady || !hasBasicData) return;
+
+    // CASE 1: Neither intro exists - generate both (if not already attempted)
+    if (!hasDemandIntro && !introGenerationAttemptedRef.current.has(domain)) {
       introGenerationAttemptedRef.current.add(domain);
       console.log('[MatchingEngine] Auto-generating dual intros for:', domain);
       generateDualIntros(domain);
+      return;
     }
-  }, [activeResult?.whoHasPressureRoles, activeResult?.domain, personDataByDomain, signalStrength, demandIntroByDomain, supplyIntroByDomain, aiConfig]);
+
+    // CASE 2: Demand exists but supply doesn't, AND we now have a supply contact
+    // This handles the case where supply contact was enriched after initial intro generation
+    if (hasDemandIntro && !hasSupplyIntro && supplyContact?.email && !isGeneratingSupplyIntro) {
+      console.log('[MatchingEngine] Supply contact now available - generating supply intro for:', domain);
+      generateDualIntros(domain); // Will skip demand (already exists), generate supply
+    }
+  }, [activeResult?.whoHasPressureRoles, activeResult?.domain, personDataByDomain, supplyContactByDomain, signalStrength, demandIntroByDomain, supplyIntroByDomain, aiConfig]);
 
   const getSignalStrengthColor = (strength: number) => {
     if (strength >= 70) return '#26F7C7';
@@ -1747,37 +1747,43 @@ function MatchingEngineV3() {
     const firstName = contactName.split(' ')[0];
     const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
 
-    // Generate Demand Intro (to the hiring company)
-    // This mentions the PROVIDER company (e.g., "I know someone at Toptal who...")
-    setIsGeneratingDemandIntro(true);
-    try {
-      // Run generation with minimum delay to prevent UI glitch
-      const [demandIntro] = await Promise.all([
-        generateDemandIntro(
-          aiConfig,
-          {
-            firstName,
-            companyName: result.companyName,
-            signalDetail,
-            roleLabel: result.jobTitlesBeingHired?.[0] || '',
-            roleCount: result.jobCount || 1,
-            jobTitles: result.jobTitlesBeingHired || []
-          },
-          {
-            name: provider.name,
-            company: provider.company,
-            specialty: provider.specialty
-          }
-        ),
-        new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
-      ]);
-      setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
-      setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
-      console.log('[DualIntros] Demand intro generated:', demandIntro);
-    } catch (error) {
-      console.error('[DualIntros] Demand intro failed:', error);
-    } finally {
-      setIsGeneratingDemandIntro(false);
+    // Check if demand intro already exists (don't regenerate unnecessarily)
+    const existingDemandIntro = demandIntroByDomain[domain];
+
+    // Generate Demand Intro (to the hiring company) - only if not already generated
+    if (!existingDemandIntro) {
+      setIsGeneratingDemandIntro(true);
+      try {
+        // Run generation with minimum delay to prevent UI glitch
+        const [demandIntro] = await Promise.all([
+          generateDemandIntro(
+            aiConfig,
+            {
+              firstName,
+              companyName: result.companyName,
+              signalDetail,
+              roleLabel: result.jobTitlesBeingHired?.[0] || '',
+              roleCount: result.jobCount || 1,
+              jobTitles: result.jobTitlesBeingHired || []
+            },
+            {
+              name: provider.name,
+              company: provider.company,
+              specialty: provider.specialty
+            }
+          ),
+          new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
+        ]);
+        setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+        setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+        console.log('[DualIntros] Demand intro generated:', demandIntro);
+      } catch (error) {
+        console.error('[DualIntros] Demand intro failed:', error);
+      } finally {
+        setIsGeneratingDemandIntro(false);
+      }
+    } else {
+      console.log('[DualIntros] Demand intro already exists, skipping');
     }
 
     // Generate Supply Intro (to the provider/recruiter)
