@@ -59,6 +59,20 @@ const WINDOW_STATUS_DESCRIPTIONS = {
   OPEN: 'Strong multi-company hiring window — act fast'
 };
 
+/**
+ * Convert hire category to readable text for narration
+ */
+function readableCategory(cat: HireCategory | undefined): string {
+  switch (cat) {
+    case 'engineering': return 'Software Engineering';
+    case 'sales': return 'Sales';
+    case 'marketing': return 'Marketing';
+    case 'operations': return 'Operations';
+    case 'finance': return 'Finance';
+    default: return 'talent';
+  }
+}
+
 interface ProviderInputs {
   servicesDelivered: string[];
   idealClient: string;
@@ -3515,6 +3529,31 @@ function MatchingEngineV3() {
                       </div>
 
                       <div className="space-y-3">
+                        {/* Match Narration - explains why demand ↔ supply match exists */}
+                        {(() => {
+                          const selectedSupply = selectedSupplyByDomain[result.domain];
+                          if (!selectedSupply) return null;
+
+                          const demandCategory = extractHireCategory(
+                            result.jobTitlesBeingHired?.map(t => ({ title: t })),
+                            result.signalSummary
+                          );
+                          const supplyCategory = selectedSupply.hireCategory;
+
+                          const narration = (demandCategory && supplyCategory && demandCategory !== 'unknown' && supplyCategory !== 'unknown' && demandCategory === supplyCategory)
+                            ? `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} specializes in ${readableCategory(supplyCategory)}`
+                            : `Hiring activity detected → ${cleanCompanyName(selectedSupply.name)} identified as relevant provider`;
+
+                          return (
+                            <div className="px-2 py-1.5 bg-white/[0.02] rounded-lg border border-white/[0.04] mb-2">
+                              <p className="text-[9px] text-white/40 leading-relaxed">
+                                <span className="text-white/25">Why this match:</span>{' '}
+                                {narration}
+                              </p>
+                            </div>
+                          );
+                        })()}
+
                         {/* Person Contact Card */}
                         <PersonContactCard
                           personData={personData}
