@@ -3349,8 +3349,10 @@ function MatchingEngineV3() {
                 </div>
               </div>
 
-              {/* Regenerate */}
-              {activeResult && aiConfig && isAIConfigured(aiConfig) && !conversationStartedByDomain[activeResult.domain] && (
+              {/* Regenerate - only show if at least one intro is missing */}
+              {activeResult && aiConfig && isAIConfigured(aiConfig) &&
+               !conversationStartedByDomain[activeResult.domain] &&
+               (!demandIntroByDomain[activeResult.domain] || !supplyIntroByDomain[activeResult.domain]) && (
                 <button
                   onClick={() => handleRegenerateIntro(activeResult.domain)}
                   disabled={isGeneratingDemandIntro || isGeneratingSupplyIntro}

@@ -277,70 +277,82 @@ export function PersonContactCard({
                   }
                 </div>
 
-                {/* Provider dropdown - separated by match quality */}
+                {/* Provider dropdown - TWO clear sections */}
                 {showProviderPicker && alternativeSupply.length > 0 && (
                   <>
                     <div
                       className="fixed inset-0 z-40"
                       onClick={() => setShowProviderPicker(false)}
                     />
-                    <div className="absolute left-0 top-full mt-1 w-56 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[220px] overflow-y-auto custom-scroll">
-                      {/* Best matches (high confidence) */}
+                    <div className="absolute left-0 top-full mt-1 w-60 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[300px] overflow-hidden flex flex-col">
                       {(() => {
-                        const bestMatches = alternativeSupply.filter(s => s.classification?.confidence === 'high');
-                        const otherOptions = alternativeSupply.filter(s => s.classification?.confidence !== 'high');
+                        // Separate by confidence
+                        const bestMatches = alternativeSupply.filter(s => s.classification?.confidence === 'high').slice(0, 10);
+                        const otherOptions = alternativeSupply.filter(s => s.classification?.confidence !== 'high').slice(0, 15);
 
                         return (
                           <>
+                            {/* SECTION 1: Best Matches */}
                             {bestMatches.length > 0 && (
-                              <>
-                                <div className="px-3 py-1.5 text-[8px] uppercase tracking-wider text-white/30 bg-white/[0.02] border-b border-white/[0.04]">
-                                  Best matches
+                              <div className="flex-shrink-0">
+                                <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-emerald-400/70 bg-emerald-500/5 border-b border-white/[0.06] font-medium sticky top-0">
+                                  Best Matches ({bestMatches.length})
                                 </div>
-                                {bestMatches.map((supply) => (
-                                  <button
-                                    key={supply.domain}
-                                    onClick={() => {
-                                      onSwitchSupply?.(supply);
-                                      setShowProviderPicker(false);
-                                    }}
-                                    className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
-                                  >
-                                    <div className="text-[10px] text-white/70 truncate">{cleanCompanyName(supply.name)}</div>
-                                    <div className="text-[8px] text-white/30 truncate">
-                                      {supply.hireCategory !== 'unknown'
-                                        ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
-                                        : 'Service Provider'}
-                                    </div>
-                                  </button>
-                                ))}
-                              </>
+                                <div className="max-h-[120px] overflow-y-auto custom-scroll">
+                                  {bestMatches.map((supply) => (
+                                    <button
+                                      key={supply.domain}
+                                      onClick={() => {
+                                        onSwitchSupply?.(supply);
+                                        setShowProviderPicker(false);
+                                      }}
+                                      className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors border-b border-white/[0.02]"
+                                    >
+                                      <div className="text-[10px] text-white/80 truncate">{cleanCompanyName(supply.name)}</div>
+                                      <div className="text-[8px] text-white/35 truncate">
+                                        {supply.hireCategory !== 'unknown'
+                                          ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
+                                          : 'Service Provider'}
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
-                            {/* Other options (medium/low confidence) */}
+                            {/* SECTION 2: Worth a Try */}
                             {otherOptions.length > 0 && (
-                              <>
-                                <div className="px-3 py-1.5 text-[8px] uppercase tracking-wider text-white/25 bg-white/[0.01] border-b border-white/[0.04] border-t border-white/[0.04]">
-                                  {bestMatches.length > 0 ? 'Worth a try' : 'Available providers'}
+                              <div className="flex-shrink-0 border-t border-white/[0.08]">
+                                <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-white/40 bg-white/[0.02] border-b border-white/[0.06] font-medium sticky top-0">
+                                  Worth a Try ({otherOptions.length})
                                 </div>
-                                {otherOptions.map((supply) => (
-                                  <button
-                                    key={supply.domain}
-                                    onClick={() => {
-                                      onSwitchSupply?.(supply);
-                                      setShowProviderPicker(false);
-                                    }}
-                                    className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
-                                  >
-                                    <div className="text-[10px] text-white/50 truncate">{cleanCompanyName(supply.name)}</div>
-                                    <div className="text-[8px] text-white/25 truncate">
-                                      {supply.hireCategory !== 'unknown'
-                                        ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
-                                        : 'Service Provider'}
-                                    </div>
-                                  </button>
-                                ))}
-                              </>
+                                <div className="max-h-[120px] overflow-y-auto custom-scroll">
+                                  {otherOptions.map((supply) => (
+                                    <button
+                                      key={supply.domain}
+                                      onClick={() => {
+                                        onSwitchSupply?.(supply);
+                                        setShowProviderPicker(false);
+                                      }}
+                                      className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors border-b border-white/[0.02]"
+                                    >
+                                      <div className="text-[10px] text-white/50 truncate">{cleanCompanyName(supply.name)}</div>
+                                      <div className="text-[8px] text-white/25 truncate">
+                                        {supply.hireCategory !== 'unknown'
+                                          ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
+                                          : 'Service Provider'}
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Edge case: No providers at all */}
+                            {bestMatches.length === 0 && otherOptions.length === 0 && (
+                              <div className="px-3 py-4 text-[10px] text-white/30 text-center">
+                                No alternative providers
+                              </div>
                             )}
                           </>
                         );

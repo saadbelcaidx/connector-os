@@ -13,9 +13,19 @@ import type { SupplyCompany } from './SupplySignalsClient';
 /**
  * Clean company name for professional appearance in intros
  * Removes: LLC, Inc, Corp, Ltd, Co, Limited, Corporation, etc.
+ * Also removes HTML tags, special characters, and malformed text
  */
 export function cleanCompanyName(name: string): string {
   if (!name) return name;
+
+  let cleaned = name.trim();
+
+  // Remove HTML-like tags (e.g., <it>, <i>, <b>, etc.)
+  cleaned = cleaned.replace(/<[^>]*>/g, '');
+
+  // Remove common garbage patterns from scraped data
+  cleaned = cleaned.replace(/Pro\/source/gi, '');
+  cleaned = cleaned.replace(/\s*\/\s*source/gi, '');
 
   // Remove common business suffixes (case-insensitive)
   const suffixes = [
@@ -31,12 +41,19 @@ export function cleanCompanyName(name: string): string {
     /,?\s*(PLLC|P\.L\.L\.C\.)\.?$/i,
   ];
 
-  let cleaned = name.trim();
   for (const suffix of suffixes) {
     cleaned = cleaned.replace(suffix, '');
   }
 
-  return cleaned.trim();
+  // Clean up multiple spaces and trim
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  // If name became empty or too short after cleaning, return original
+  if (cleaned.length < 2) {
+    return name.trim();
+  }
+
+  return cleaned;
 }
 
 interface Signal {

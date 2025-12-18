@@ -14,6 +14,7 @@
 
 import { safeLower, safeText, normalizeToItems } from './SignalsClient';
 import { classifyCompany, HireCategory, ClassificationResult, extractSupplyCategory } from './CompanyRoleClassifier';
+import { cleanCompanyName } from './IntroBuilder';
 
 export interface SupplyCompany {
   name: string;
@@ -361,7 +362,7 @@ export async function fetchSupplySignals(
         }
 
         supplyCompanies.push({
-          name: extracted.name,
+          name: cleanCompanyName(extracted.name),
           domain: extracted.domain,
           description: extracted.description,
           industry: extracted.industry,
