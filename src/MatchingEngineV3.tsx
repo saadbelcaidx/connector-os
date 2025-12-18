@@ -2208,19 +2208,32 @@ function MatchingEngineV3() {
     }
 
     // Update final state
+    // Sort alternatives by confidence: high first, then medium, then low
+    const sortByConfidence = (companies: SupplyCompany[]) => {
+      const order = { high: 3, medium: 2, low: 1 };
+      return [...companies].sort((a, b) =>
+        (order[b.classification?.confidence || 'low'] || 0) - (order[a.classification?.confidence || 'low'] || 0)
+      );
+    };
+
     if (foundContact && successfulSupply) {
       setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: foundContact }));
       setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: successfulSupply }));
-      // Show all discovered providers as alternatives so user can switch
-      const remainingAlternatives = discoveredSupplyCompanies.filter(s => s.domain !== successfulSupply!.domain);
+      // Show providers sorted by confidence (best matches first)
+      const remainingAlternatives = sortByConfidence(
+        discoveredSupplyCompanies.filter(s => s.domain !== successfulSupply!.domain)
+      );
       setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
-      console.log(`[SupplyEnrich] === SUCCESS: ${foundContact.name} @ ${successfulSupply.name} (${remainingAlternatives.length} alternatives) ===`);
+      const highConfCount = remainingAlternatives.filter(s => s.classification?.confidence === 'high').length;
+      console.log(`[SupplyEnrich] === SUCCESS: ${foundContact.name} @ ${successfulSupply.name} (${highConfCount} perfect + ${remainingAlternatives.length - highConfCount} others) ===`);
     } else {
       console.log(`[SupplyEnrich] === FAILED: No supply contact found at any discovered company ===`);
-      // Show all providers as alternatives so user can try others
-      const remainingAlternatives = selectedSupply
-        ? discoveredSupplyCompanies.filter(s => s.domain !== selectedSupply.domain)
-        : discoveredSupplyCompanies;
+      // Show providers sorted by confidence so user can try best matches first
+      const remainingAlternatives = sortByConfidence(
+        selectedSupply
+          ? discoveredSupplyCompanies.filter(s => s.domain !== selectedSupply.domain)
+          : discoveredSupplyCompanies
+      );
       setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
     }
 
@@ -3240,23 +3253,19 @@ function MatchingEngineV3() {
                         {supplyDiscoveryStatus === 'loading'
                           ? 'Finding best matches...'
                           : (() => {
-                              // Show top 3-5 best matches, not total count
-                              const sortedByConfidence = [...discoveredSupplyCompanies]
-                                .filter(s => s.hireCategory !== 'unknown')
-                                .sort((a, b) => {
-                                  const order = { high: 3, medium: 2, low: 1 };
-                                  return (order[b.classification?.confidence || 'low'] || 0) - (order[a.classification?.confidence || 'low'] || 0);
-                                });
-                              const topMatches = sortedByConfidence.slice(0, 5);
-                              const perfectCount = topMatches.filter(s => s.classification?.confidence === 'high').length;
+                              // Count actual high-confidence providers from entire dataset
+                              const perfectProviders = discoveredSupplyCompanies.filter(
+                                s => s.classification?.confidence === 'high' && s.hireCategory !== 'unknown'
+                              );
+                              const otherProviders = discoveredSupplyCompanies.filter(
+                                s => s.classification?.confidence !== 'high' && s.hireCategory !== 'unknown'
+                              );
 
-                              if (topMatches.length === 0) return '–';
-                              if (perfectCount >= 3) {
-                                return `${perfectCount} perfect providers`;
-                              } else if (topMatches.length > 0) {
-                                return `${topMatches.length} providers ready`;
+                              if (perfectProviders.length === 0 && otherProviders.length === 0) return '–';
+                              if (perfectProviders.length > 0) {
+                                return `${perfectProviders.length} perfect provider${perfectProviders.length !== 1 ? 's' : ''}`;
                               }
-                              return '–';
+                              return `${otherProviders.length} provider${otherProviders.length !== 1 ? 's' : ''} found`;
                             })()}
                       </p>
                     </div>

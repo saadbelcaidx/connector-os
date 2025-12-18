@@ -10,6 +10,7 @@ import {
 } from './services/PersonEnrichmentService';
 import type { SupplyContact } from './services/ApolloSupplyEnrichmentService';
 import type { SupplyCompany } from './services/SupplySignalsClient';
+import { cleanCompanyName } from './services/IntroBuilder';
 
 type OutboundChannel = 'email' | 'linkedin' | 'manual';
 type SendState = 'not_sent' | 'sent' | 'replied';
@@ -261,7 +262,7 @@ export function PersonContactCard({
                   onClick={() => alternativeSupply.length > 0 && setShowProviderPicker(!showProviderPicker)}
                   className={`text-[9px] text-white/60 truncate block text-left ${alternativeSupply.length > 0 ? 'hover:text-white/80 cursor-pointer' : ''}`}
                 >
-                  {supplyContact?.company || selectedSupply.name}
+                  {cleanCompanyName(supplyContact?.company || selectedSupply.name)}
                   {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
                 </button>
                 {/* Show why matched - category label (clean, consistent) */}
@@ -305,7 +306,7 @@ export function PersonContactCard({
                                     }}
                                     className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
                                   >
-                                    <div className="text-[10px] text-white/70 truncate">{supply.name}</div>
+                                    <div className="text-[10px] text-white/70 truncate">{cleanCompanyName(supply.name)}</div>
                                     <div className="text-[8px] text-white/30 truncate">
                                       {supply.hireCategory !== 'unknown'
                                         ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
@@ -331,7 +332,7 @@ export function PersonContactCard({
                                     }}
                                     className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors"
                                   >
-                                    <div className="text-[10px] text-white/50 truncate">{supply.name}</div>
+                                    <div className="text-[10px] text-white/50 truncate">{cleanCompanyName(supply.name)}</div>
                                     <div className="text-[8px] text-white/25 truncate">
                                       {supply.hireCategory !== 'unknown'
                                         ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
