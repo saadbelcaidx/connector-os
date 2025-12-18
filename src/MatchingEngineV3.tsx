@@ -584,6 +584,9 @@ function MatchingEngineV3() {
   const [supplyIntroByDomain, setSupplyIntroByDomain] = useState<Record<string, string>>({});
   const [isGeneratingDemandIntro, setIsGeneratingDemandIntro] = useState(false);
   const [isGeneratingSupplyIntro, setIsGeneratingSupplyIntro] = useState(false);
+
+  // Track domains where intro generation has been ATTEMPTED (prevents infinite loops)
+  const introGenerationAttemptedRef = useRef<Set<string>>(new Set());
   const [aiWhyNowByDomain, setAiWhyNowByDomain] = useState<Record<string, string>>({});
   const [aiWhyYouByDomain, setAiWhyYouByDomain] = useState<Record<string, string>>({});
   const [activeResultIndex, setActiveResultIndex] = useState(0);
@@ -1441,6 +1444,16 @@ function MatchingEngineV3() {
     try {
       const results = calculateMatching();
       setMatchingResults(results);
+
+      // Reset intro generation tracking for new results
+      // Only clear domains that are no longer in results
+      const newDomains = new Set(results.map(r => r.domain));
+      introGenerationAttemptedRef.current.forEach(domain => {
+        if (!newDomains.has(domain)) {
+          introGenerationAttemptedRef.current.delete(domain);
+        }
+      });
+
       if (results.length > 0 && activeResultIndex >= results.length) {
         setActiveResultIndex(0);
       }
@@ -1498,9 +1511,17 @@ function MatchingEngineV3() {
 
   useEffect(() => {
     if (!activeResult) return;
-    const personData = personDataByDomain[activeResult.domain];
-    const hasDemandIntro = demandIntroByDomain[activeResult.domain];
-    const hasSupplyIntro = supplyIntroByDomain[activeResult.domain];
+
+    const domain = activeResult.domain;
+
+    // GUARD: Only attempt once per domain (prevents infinite loops if supply intro fails)
+    if (introGenerationAttemptedRef.current.has(domain)) {
+      return;
+    }
+
+    const personData = personDataByDomain[domain];
+    const hasDemandIntro = demandIntroByDomain[domain];
+    const hasSupplyIntro = supplyIntroByDomain[domain];
     const shouldAutoGenerate =
       activeResult.whoHasPressureRoles.length > 0 &&
       personData &&
@@ -1512,8 +1533,10 @@ function MatchingEngineV3() {
       isAIConfigured(aiConfig);
 
     if (shouldAutoGenerate) {
-      console.log('[MatchingEngine] Auto-generating dual intros...');
-      generateDualIntros(activeResult.domain);
+      // Mark as attempted BEFORE calling (prevents re-entry)
+      introGenerationAttemptedRef.current.add(domain);
+      console.log('[MatchingEngine] Auto-generating dual intros for:', domain);
+      generateDualIntros(domain);
     }
   }, [activeResult?.whoHasPressureRoles, activeResult?.domain, personDataByDomain, signalStrength, demandIntroByDomain, supplyIntroByDomain, aiConfig]);
 
@@ -1682,9 +1705,14 @@ function MatchingEngineV3() {
     setDemandIntroByDomain(prev => ({ ...prev, [domain]: '' }));
     setSupplyIntroByDomain(prev => ({ ...prev, [domain]: '' }));
     setIntroUnlockedByDomain(prev => ({ ...prev, [domain]: true }));
+
+    // Clear the attempted guard so regeneration is allowed
+    introGenerationAttemptedRef.current.delete(domain);
     console.log('[MatchingEngine] Clearing intro and cache for regeneration');
 
     setTimeout(() => {
+      // Re-add to attempted set before calling
+      introGenerationAttemptedRef.current.add(domain);
       generateDualIntros(domain);
     }, 100);
   };
