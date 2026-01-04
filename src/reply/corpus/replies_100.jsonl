@@ -1,0 +1,96 @@
+{"outbound":"Hello — Noticed Argent Light helps founders and owners at established private companies — I know a few who can't find good exit options and worry about the future of their business once they sell. Worth intro'ing you?","inbound":"Yes, I would be interested!","expectedStage":"INTEREST","notes":"Golden test: explicit interest"}
+{"outbound":"Hello — Noticed Argent Light helps founders and owners at established private companies — I know a few who can't find good exit options. Worth intro'ing you?","inbound":"i'm interested","expectedStage":"INTEREST","notes":"Golden test: casual interest"}
+{"outbound":"Hi there — saw your firm works with CFOs at mid-market companies. Worth a quick chat?","inbound":"how do you work","expectedStage":"IDENTITY","notes":"Golden test: process question"}
+{"outbound":"Noticed your firm helps business owners — worth connecting you to a few?","inbound":"what's the catch","expectedStage":"IDENTITY","notes":"Golden test: skepticism"}
+{"outbound":"I know a few companies who struggle with tax planning timing. Worth intro'ing you?","inbound":"what is in it for you","expectedStage":"PRICING","notes":"Golden test: compensation question"}
+{"outbound":"Noticed your agency places engineers. Worth intro?","inbound":"who are these people","expectedStage":"PROOF","notes":"Golden test: asking for names"}
+{"outbound":"Hi — saw your work. Worth a quick intro?","inbound":"remove me","expectedStage":"NEGATIVE","notes":"Golden test: opt-out"}
+{"outbound":"Quick ping — worth connecting?","inbound":"fuck off","expectedStage":"HOSTILE","notes":"Golden test: hostile"}
+{"outbound":"Worth a quick chat about intros?","inbound":"send calendar","expectedStage":"SCHEDULING","notes":"Golden test: scheduling"}
+{"outbound":"I can route you to a few relevant leads. Worth exploring?","inbound":"is this paid","expectedStage":"PRICING","notes":"Golden test: paid question"}
+{"outbound":"Hi — saw your work with startups. Worth a quick chat?","inbound":"i don't think i'm open to this","expectedStage":"NEGATIVE","notes":"Case E: negated interest must be NEGATIVE"}
+{"outbound":"Worth intro'ing you to some relevant firms?","inbound":"not ok with this approach","expectedStage":"NEGATIVE","notes":"OK trap: negated ok"}
+{"outbound":"Worth a quick call?","inbound":"not interested, thanks","expectedStage":"NEGATIVE","notes":"Explicit not interested"}
+{"outbound":"Can I intro you to a few?","inbound":"no thanks","expectedStage":"NEGATIVE","notes":"Polite decline"}
+{"outbound":"Worth connecting?","inbound":"please stop emailing me","expectedStage":"NEGATIVE","notes":"Stop request"}
+{"outbound":"I know a few who need your help. Worth intro?","inbound":"unsubscribe","expectedStage":"NEGATIVE","notes":"Unsubscribe"}
+{"outbound":"Quick question about intros.","inbound":"This is spam","expectedStage":"HOSTILE","notes":"Spam accusation"}
+{"outbound":"Worth a quick call?","inbound":"stop spamming me","expectedStage":"HOSTILE","notes":"Spam accusation v2"}
+{"outbound":"Hi there.","inbound":"I reported this email","expectedStage":"HOSTILE","notes":"Reported"}
+{"outbound":"Worth connecting?","inbound":"this looks like a scam","expectedStage":"HOSTILE","notes":"Scam accusation"}
+{"outbound":"Quick intro worth it?","inbound":"I am out of office until Monday","expectedStage":"OOO","notes":"OOO"}
+{"outbound":"Worth a chat?","inbound":"On vacation until next week","expectedStage":"OOO","notes":"Vacation"}
+{"outbound":"Hi there.","inbound":"This is an automatic reply","expectedStage":"OOO","notes":"Auto-reply"}
+{"outbound":"Worth connecting?","inbound":"I'm away from the office","expectedStage":"OOO","notes":"Away"}
+{"outbound":"Quick ping.","inbound":"address not found in system","expectedStage":"BOUNCE","notes":"Bounce"}
+{"outbound":"Hi there.","inbound":"This email was undeliverable","expectedStage":"BOUNCE","notes":"Undeliverable"}
+{"outbound":"Worth intro?","inbound":"mailbox not found on server","expectedStage":"BOUNCE","notes":"Mailbox not found"}
+{"outbound":"Can I connect you?","inbound":"550 5.1.1 user unknown","expectedStage":"BOUNCE","notes":"550 error"}
+{"outbound":"Worth a quick chat?","inbound":"let's book a time","expectedStage":"SCHEDULING","notes":"Book time"}
+{"outbound":"Worth connecting?","inbound":"what times work for you?","expectedStage":"SCHEDULING","notes":"Times question"}
+{"outbound":"Quick intro?","inbound":"I'm available Thursday afternoon","expectedStage":"SCHEDULING","notes":"Availability"}
+{"outbound":"Worth a call?","inbound":"can we schedule a call?","expectedStage":"SCHEDULING","notes":"Schedule request"}
+{"outbound":"Hi — I can route intros to relevant firms.","inbound":"how much do you charge?","expectedStage":"PRICING","notes":"Pricing question"}
+{"outbound":"Worth intro'ing you?","inbound":"do you take commission?","expectedStage":"PRICING","notes":"Commission question"}
+{"outbound":"Quick chat worth it?","inbound":"what's your fee?","expectedStage":"PRICING","notes":"Fee question"}
+{"outbound":"Can I connect you to a few?","inbound":"how are you compensated?","expectedStage":"PRICING","notes":"Compensation question"}
+{"outbound":"I know a few who need your help.","inbound":"which companies are you referring to?","expectedStage":"PROOF","notes":"Proof - which companies"}
+{"outbound":"Worth intro'ing you?","inbound":"can you name them?","expectedStage":"PROOF","notes":"Proof - name them"}
+{"outbound":"Quick connection worth it?","inbound":"where did you get my email?","expectedStage":"PROOF","notes":"Proof - where from"}
+{"outbound":"Worth a chat?","inbound":"who exactly are you talking about?","expectedStage":"PROOF","notes":"Proof - who exactly"}
+{"outbound":"I can route you to relevant leads.","inbound":"are you an agency?","expectedStage":"IDENTITY","notes":"Identity - agency question"}
+{"outbound":"Worth connecting?","inbound":"how does this work?","expectedStage":"IDENTITY","notes":"Identity - how it works"}
+{"outbound":"Quick intro?","inbound":"what's your process?","expectedStage":"IDENTITY","notes":"Identity - process"}
+{"outbound":"Worth a call?","inbound":"explain how this works","expectedStage":"IDENTITY","notes":"Identity - explain"}
+{"outbound":"Hi — Noticed your firm helps CFOs at mid-market. I know a few who struggle with tax timing.","inbound":"What industries do you focus on?","expectedStage":"SCOPE","notes":"Scope - industries"}
+{"outbound":"Worth intro'ing you to mid-sized companies?","inbound":"what deal size range?","expectedStage":"SCOPE","notes":"Scope - deal size"}
+{"outbound":"Can I connect you to relevant firms?","inbound":"what are the requirements?","expectedStage":"SCOPE","notes":"Scope - requirements"}
+{"outbound":"Worth a quick chat about intros?","inbound":"what type of companies?","expectedStage":"SCOPE","notes":"Scope - type"}
+{"outbound":"I can route you to a few relevant leads.","inbound":"sounds good, let me know","expectedStage":"INTEREST","notes":"Interest - sounds good"}
+{"outbound":"Worth intro'ing you?","inbound":"definitely interested","expectedStage":"INTEREST","notes":"Interest - definitely"}
+{"outbound":"Quick intro worth it?","inbound":"let's do it","expectedStage":"INTEREST","notes":"Interest - let's do it"}
+{"outbound":"Worth a call?","inbound":"sure, happy to chat","expectedStage":"INTEREST","notes":"Interest - sure"}
+{"outbound":"Hi — worth connecting?","inbound":"I don't understand what you're offering","expectedStage":"CONFUSION","notes":"Confusion - don't understand"}
+{"outbound":"Worth a quick chat?","inbound":"not sure what you mean","expectedStage":"CONFUSION","notes":"Confusion - not sure"}
+{"outbound":"Can I intro you?","inbound":"can you explain again?","expectedStage":"CONFUSION","notes":"Confusion - explain"}
+{"outbound":"Worth connecting?","inbound":"what was this about again?","expectedStage":"CONFUSION","notes":"Confusion - what was this"}
+{"outbound":"Quick ping.","inbound":"Thanks for reaching out","expectedStage":"UNKNOWN","notes":"Unknown - thanks"}
+{"outbound":"Worth a chat?","inbound":"Got it","expectedStage":"UNKNOWN","notes":"Unknown - got it"}
+{"outbound":"Hi there.","inbound":"Hmm","expectedStage":"UNKNOWN","notes":"Unknown - hmm"}
+{"outbound":"Worth connecting?","inbound":"I see","expectedStage":"UNKNOWN","notes":"Unknown - I see"}
+{"outbound":"Hi — Noticed your firm helps business owners. I know a few who struggle with exit planning. Worth intro'ing you?","inbound":"Is what you are proposing to introduce us to mid-sized companies that want to sell? What is in it for you?","expectedStage":"PRICING","notes":"Multi-intent: PRICING + SCOPE"}
+{"outbound":"Worth a quick chat?","inbound":"How do you work and what's your fee?","expectedStage":"PRICING","notes":"Multi-intent: IDENTITY + PRICING"}
+{"outbound":"Can I connect you to relevant firms?","inbound":"Yes, interested. What industries do you focus on?","expectedStage":"SCOPE","notes":"Multi-intent: SCOPE + INTEREST"}
+{"outbound":"I know a few who need your help.","inbound":"who are these people and how are you paid?","expectedStage":"PRICING","notes":"Multi-intent: PRICING + PROOF (PRICING has precedence)"}
+{"outbound":"Hi — I know some firms who waste months on bad hires.","inbound":"YES I AM INTERESTED","expectedStage":"INTEREST","notes":"Interest - all caps"}
+{"outbound":"Worth intro?","inbound":"   not interested   ","expectedStage":"NEGATIVE","notes":"Negative - whitespace"}
+{"outbound":"Quick chat?","inbound":"What's the catch???","expectedStage":"IDENTITY","notes":"Identity - special chars"}
+{"outbound":"Worth connecting?","inbound":"sounds interesting, tell me more","expectedStage":"INTEREST","notes":"Interest - tell me more"}
+{"outbound":"Can I intro you?","inbound":"curious about this","expectedStage":"INTEREST","notes":"Interest - curious"}
+{"outbound":"Worth a call?","inbound":"i'd like to learn more","expectedStage":"INTEREST","notes":"Interest - learn more"}
+{"outbound":"Quick ping about intros.","inbound":"not for us right now","expectedStage":"NEGATIVE","notes":"Negative - not for us"}
+{"outbound":"Worth connecting?","inbound":"we're not looking at this time","expectedStage":"NEGATIVE","notes":"Negative - not looking"}
+{"outbound":"Can I connect you?","inbound":"not a fit for us","expectedStage":"NEGATIVE","notes":"Negative - not a fit"}
+{"outbound":"Worth intro?","inbound":"I'm good, thanks","expectedStage":"NEGATIVE","notes":"Negative - I'm good"}
+{"outbound":"Hi — saw your work.","inbound":"is this about what I think it's about?","expectedStage":"CONFUSION","notes":"Confusion - is this about"}
+{"outbound":"Worth a chat?","inbound":"thought you meant something else","expectedStage":"CONFUSION","notes":"Confusion - thought you meant"}
+{"outbound":"Quick question.","inbound":"i don't follow what you're saying","expectedStage":"CONFUSION","notes":"Confusion - don't follow"}
+{"outbound":"Worth connecting?","inbound":"lost me there","expectedStage":"CONFUSION","notes":"Confusion - lost me"}
+{"outbound":"Hi there.","inbound":"ok sounds good","expectedStage":"INTEREST","notes":"Interest - ok sounds good (not negated)"}
+{"outbound":"Worth a quick call?","inbound":"ok","expectedStage":"UNKNOWN","notes":"Unknown - bare ok (ambiguous)"}
+{"outbound":"Can I intro you?","inbound":"maybe","expectedStage":"CONFUSION","notes":"Confusion - maybe"}
+{"outbound":"Worth connecting?","inbound":"not sure about this","expectedStage":"NEGATIVE","notes":"Negative - not sure (triggers negated ok trap)"}
+{"outbound":"Hi — I can route relevant leads your way.","inbound":"Morning Jesse. Is what you are proposing to introduce us to mid-sized companies that want to sell? What is in it for you?","expectedStage":"PRICING","notes":"Real world: multi-intent with greeting"}
+{"outbound":"Hello Rono— Noticed Argent Light helps founders and owners at established private companies — I know a few who can't find good exit options and worry about the future of their business once they sell. Worth intro'ing you?","inbound":"Hi Jesse, Yes, that would be great if you could introduce me to discuss my operator approach to the business owners. What industries are they in?","expectedStage":"SCOPE","notes":"Real world: interest with scope question"}
+{"outbound":"Hi — noticed your firm helps CFOs. Worth connecting you to a few relevant situations?","inbound":"Thanks for reaching out. How exactly does this work? Is there a cost involved?","expectedStage":"IDENTITY","notes":"Real world: identity + pricing"}
+{"outbound":"Saw your agency places engineers — I know a few startups struggling to hire. Worth a quick intro?","inbound":"Interesting. Who are the companies you're referring to? And what's your angle here?","expectedStage":"PROOF","notes":"Real world: proof + identity"}
+{"outbound":"Worth connecting you to some companies looking for your services?","inbound":"Sure, I'd be open to learning more. What does the process look like?","expectedStage":"INTEREST","notes":"Real world: interest + process question"}
+{"outbound":"Hi — I route intros when timing aligns. Worth a quick call?","inbound":"Let me check my calendar. What days work for you this week?","expectedStage":"SCHEDULING","notes":"Real world: scheduling"}
+{"outbound":"Quick ping — saw your work with startups. Worth connecting you to a few?","inbound":"Appreciate the outreach but we're all set for now. Best of luck!","expectedStage":"NEGATIVE","notes":"Real world: polite decline"}
+{"outbound":"Hi — noticed your firm. Worth a quick intro to some relevant leads?","inbound":"Please remove me from your list. Not interested in any offers.","expectedStage":"NEGATIVE","notes":"Real world: firm decline with opt-out"}
+{"outbound":"Saw your profile — worth a quick call about intros?","inbound":"Stop. I didn't ask for this.","expectedStage":"NEGATIVE","notes":"Real world: negative (stop)"}
+{"outbound":"Worth intro'ing you to some relevant situations?","inbound":"I'm not sure I understand the value prop here. Can you explain more?","expectedStage":"CONFUSION","notes":"Real world: confusion + identity"}
+{"outbound":"Hi — I know a few who could use your help.","inbound":"This is an automated response. I am currently out of the office with limited access to email. I will return on January 2nd.","expectedStage":"OOO","notes":"Real world: OOO auto-reply"}
+{"outbound":"Worth a quick chat?","inbound":"Delivery to this address has failed permanently. The recipient's mailbox is full.","expectedStage":"BOUNCE","notes":"Real world: bounce - mailbox full"}
+{"outbound":"Hi — saw your work with enterprise clients.","inbound":"Go away. This is harassment.","expectedStage":"HOSTILE","notes":"Real world: hostile + harassment claim"}
+{"outbound":"Worth connecting?","inbound":"Reported as spam. Don't contact me again.","expectedStage":"HOSTILE","notes":"Real world: hostile + reported"}
