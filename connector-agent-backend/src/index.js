@@ -1510,7 +1510,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
   `).get(emailLower);
   if (foundEmail) {
     console.log(`[Verify] CACHE HIT from email_cache: ${emailLower}`);
-    return res.json({ email: emailToVerify });
+    return res.json({ email: emailToVerify, status: 'valid' });
   }
 
   // Check quota first (don't deduct yet)
@@ -1536,8 +1536,12 @@ app.post('/api/email/v2/verify', async (req, res) => {
     deductTokens(effectiveUserId, effectiveKeyId, 1);
   }
 
-  // VALID = return email, anything else = null
-  res.json({ email: result.verdict === 'VALID' ? emailToVerify : null });
+  // VALID = return email + status, anything else = null + invalid
+  if (result.verdict === 'VALID') {
+    res.json({ email: emailToVerify, status: 'valid' });
+  } else {
+    res.json({ email: null, status: 'invalid' });
+  }
 });
 
 // ============================================================
