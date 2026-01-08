@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, Lock, Workflow, Fingerprint } from 'lucide-react';
+import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, Lock, Workflow, Eye } from 'lucide-react';
 import { FEATURES } from './config/features';
 
 // Chess King Icon — Strategic moves, the operator makes the play
@@ -26,6 +26,7 @@ function KingIcon({ size = 24, style }: { size?: number; style?: React.CSSProper
     </svg>
   );
 }
+
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -121,8 +122,8 @@ const apps: AppCard[] = [
   {
     id: 'connector-agent',
     title: 'Connector Agent',
-    description: 'Find & verify emails (deliverability-safe)',
-    icon: Fingerprint,
+    description: 'Locate & confirm contacts',
+    icon: Eye,
     route: '/connector-agent',
     ssmOnly: true,
     comingSoon: !FEATURES.CONNECTOR_AGENT_ENABLED,

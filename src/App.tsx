@@ -275,7 +275,7 @@ function AppRoutes() {
           ) : (
             <ComingSoon
               title="Connector Agent"
-              description="Find & verify emails with deliverability-safe lookups. Coming soon."
+              description="Locate & confirm contacts. Coming soon."
             />
           )
         }

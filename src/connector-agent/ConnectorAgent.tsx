@@ -5,7 +5,7 @@
  * Linear-style UI, consistent with Connector OS design system.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
@@ -13,7 +13,6 @@ import { supabase } from '../lib/supabase';
 import { FEATURES } from '../config/features';
 import ComingSoon from '../components/ComingSoon';
 import {
-  Fingerprint,
   Copy,
   Check,
   Search,
@@ -23,13 +22,13 @@ import {
   ArrowLeft,
   Loader2,
   Trash2,
-  Zap,
   Code2,
   ExternalLink,
   Sparkles,
   Globe,
   Mail,
-  Activity
+  Activity,
+  Eye
 } from 'lucide-react';
 
 // ============================================================
@@ -53,18 +52,11 @@ interface ApiKeyData {
 }
 
 interface FindResult {
-  success: boolean;
-  email?: string;
-  verdict?: string;
-  tokens_used?: number;
-  reason?: string;
+  email: string | null;
 }
 
 interface VerifyResult {
-  success: boolean;
-  email?: string;
-  verdict?: string;
-  tokens_used?: number;
+  email: string | null;
 }
 
 // ============================================================
@@ -241,7 +233,7 @@ class ConnectorAgentAPI {
   constructor(userId: string, userEmail: string) {
     this.userId = userId;
     this.userEmail = userEmail;
-    this.apiKey = localStorage.getItem(`connector_agent_key_${userId}`);
+    this.apiKey = localStorage.getItem(`connector_api_key`);
   }
 
   private async fetchWithAuth(endpoint: string, options: RequestInit = {}) {
@@ -267,12 +259,12 @@ class ConnectorAgentAPI {
 
   setApiKey(key: string) {
     this.apiKey = key;
-    localStorage.setItem(`connector_agent_key_${this.userId}`, key);
+    localStorage.setItem(`connector_api_key`, key);
   }
 
   clearApiKey() {
     this.apiKey = null;
-    localStorage.removeItem(`connector_agent_key_${this.userId}`);
+    localStorage.removeItem(`connector_api_key`);
   }
 
   hasApiKey() { return !!this.apiKey; }
@@ -283,12 +275,12 @@ class ConnectorAgentAPI {
   async revokeKey(keyId: string) { return this.fetchWithAuth(`/api/keys/${keyId}`, { method: 'DELETE' }); }
 
   async getQuota() {
-    if (!this.apiKey) return { success: false };
+    // Quota works with user headers even without API key
     return this.fetchWithAuth('/api/email/v2/quota');
   }
 
   async findEmail(firstName: string, lastName: string, domain: string): Promise<FindResult> {
-    if (!this.apiKey) return { success: false, reason: 'No API key' };
+    // API key optional - backend accepts x-user-id header
     return this.fetchWithAuth('/api/email/v2/find', {
       method: 'POST',
       body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), domain: domain.trim().toLowerCase() }),
@@ -296,7 +288,7 @@ class ConnectorAgentAPI {
   }
 
   async verifyEmail(email: string): Promise<VerifyResult> {
-    if (!this.apiKey) return { success: false };
+    // Quota works with user headers even without API key
     return this.fetchWithAuth('/api/email/v2/verify', {
       method: 'POST',
       body: JSON.stringify({ email }),
@@ -377,7 +369,8 @@ function ConnectorAgentInner() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const [api] = useState(() => new ConnectorAgentAPI(user!.id, user!.email!));
+  // useMemo ensures API is recreated if user changes (fixes race condition)
+  const api = useMemo(() => new ConnectorAgentAPI(user!.id, user!.email!), [user?.id, user?.email]);
   const [activeKey, setActiveKey] = useState<ApiKeyData | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [quota, setQuota] = useState<QuotaData | null>(null);
@@ -398,10 +391,9 @@ function ConnectorAgentInner() {
       try {
         const keyResult = await api.getActiveKey();
         if (keyResult.success && keyResult.key) setActiveKey(keyResult.key);
-        if (api.hasApiKey()) {
-          const quotaResult = await api.getQuota();
-          if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
-        }
+        // Always fetch quota (works with user headers)
+        const quotaResult = await api.getQuota();
+        if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
       } catch (err) {
         console.error('[ConnectorAgent] Load error:', err);
       } finally {
@@ -542,30 +534,30 @@ function ConnectorAgentInner() {
             </button>
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 flex items-center justify-center border border-white/[0.08]">
-                  <Zap className="w-5 h-5 text-white/80" />
+                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center border border-white/[0.08]">
+                  <Eye className="w-5 h-5 text-white/80" />
                 </div>
                 <motion.div
                   animate={{ scale: [1, 1.2, 1] }}
                   transition={{ duration: 2, repeat: Infinity }}
-                  className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-emerald-500 rounded-full border-2 border-black"
+                  className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-violet-500 rounded-full border-2 border-black"
                 />
               </div>
               <div>
                 <h1 className="text-[15px] font-semibold text-white/90 tracking-tight">Connector Agent</h1>
-                <p className="text-[11px] text-white/40">Find & verify emails</p>
+                <p className="text-[11px] text-white/40">Locate & confirm contacts</p>
               </div>
             </div>
           </div>
 
-          {/* Live indicator */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/[0.1] border border-emerald-500/[0.2]">
+          {/* Active indicator */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-500/[0.1] border border-violet-500/[0.2]">
             <motion.div
               animate={{ opacity: [0.5, 1, 0.5] }}
               transition={{ duration: 1.5, repeat: Infinity }}
-              className="w-1.5 h-1.5 rounded-full bg-emerald-500"
+              className="w-1.5 h-1.5 rounded-full bg-violet-500"
             />
-            <span className="text-[10px] font-medium text-emerald-400 uppercase tracking-wider">Live</span>
+            <span className="text-[10px] font-medium text-violet-400 uppercase tracking-wider">Active</span>
           </div>
         </motion.div>
 
@@ -671,6 +663,7 @@ function ConnectorAgentInner() {
                 </div>
               </motion.div>
             )}
+
           </AnimatePresence>
         </motion.div>
 
@@ -877,48 +870,33 @@ function ConnectorAgentInner() {
                     exit={{ opacity: 0, y: -20, scale: 0.95 }}
                     transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                     className={`mt-5 p-4 rounded-xl border ${
-                      result.success && result.email
+                      result.email
                         ? 'bg-emerald-500/[0.04] border-emerald-500/[0.1]'
                         : 'bg-white/[0.02] border-white/[0.06]'
                     }`}
                   >
-                    {result.success && result.email ? (
+                    {result.email ? (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <motion.div
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
                             transition={{ type: 'spring', stiffness: 500, damping: 25, delay: 0.1 }}
-                            className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                              getVerdictDisplay(result.verdict || 'VALID').color === 'emerald'
-                                ? 'bg-emerald-500/[0.15]'
-                                : 'bg-amber-500/[0.15]'
-                            }`}
+                            className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-500/[0.15]"
                           >
-                            <Mail className={`w-5 h-5 ${
-                              getVerdictDisplay(result.verdict || 'VALID').color === 'emerald'
-                                ? 'text-emerald-400'
-                                : 'text-amber-400'
-                            }`} />
+                            <Mail className="w-5 h-5 text-emerald-400" />
                           </motion.div>
                           <div>
                             <code className="text-[13px] font-mono text-white/90">{result.email}</code>
                             <div className="flex items-center gap-2 mt-0.5">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
-                                getVerdictDisplay(result.verdict || 'VALID').color === 'emerald'
-                                  ? 'bg-emerald-500/[0.15] text-emerald-400'
-                                  : 'bg-amber-500/[0.15] text-amber-400'
-                              }`}>
-                                {getVerdictDisplay(result.verdict || 'VALID').label}
+                              <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-emerald-500/[0.15] text-emerald-400">
+                                Valid
                               </span>
-                              {result.tokens_used !== undefined && (
-                                <span className="text-[9px] text-white/30">{result.tokens_used} token{result.tokens_used !== 1 ? 's' : ''}</span>
-                              )}
                             </div>
                           </div>
                         </div>
                         <button
-                          onClick={() => handleCopy(result.email, 'result-email')}
+                          onClick={() => handleCopy(result.email!, 'result-email')}
                           className="h-9 w-9 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors"
                         >
                           {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
@@ -931,7 +909,7 @@ function ConnectorAgentInner() {
                         </div>
                         <div>
                           <p className="text-[13px] text-white/70">No email found</p>
-                          <p className="text-[11px] text-white/40 mt-0.5">{result.reason || 'Could not find a valid email'}</p>
+                          <p className="text-[11px] text-white/40 mt-0.5">Could not find a valid email</p>
                         </div>
                       </div>
                     )}
@@ -956,7 +934,7 @@ export default function ConnectorAgent() {
     return (
       <ComingSoon
         title="Connector Agent"
-        description="Find & verify emails with deliverability-safe lookups. Coming soon."
+        description="Locate & confirm contacts. Coming soon."
       />
     );
   }
