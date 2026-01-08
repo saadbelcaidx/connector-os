@@ -1088,6 +1088,7 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
 /**
  * POST /api/keys/generate
  * Creates a new API key (one per user)
+ * If active key exists, rotates automatically (revoke old + create new)
  */
 app.post('/api/keys/generate', (req, res) => {
   const userId = req.headers['x-user-id'];
@@ -1097,13 +1098,20 @@ app.post('/api/keys/generate', (req, res) => {
     return res.status(400).json({ success: false, error: 'Missing user headers' });
   }
 
-  // Check for existing active key
+  // Check for existing active key - if exists, revoke it (rotation)
   const existing = db.prepare(`
     SELECT * FROM api_keys WHERE user_id = ? AND status = 'active'
   `).get(userId);
 
+  let rotated = false;
+  let previousKeyId = null;
+
   if (existing) {
-    return res.status(400).json({ success: false, error: 'Active key already exists' });
+    // Revoke existing key
+    db.prepare(`UPDATE api_keys SET status = 'revoked' WHERE id = ?`).run(existing.id);
+    rotated = true;
+    previousKeyId = existing.id;
+    console.log(`[Keys] Rotated: revoked old key ${existing.id} for ${userEmail}`);
   }
 
   // Generate new key
@@ -1120,14 +1128,16 @@ app.post('/api/keys/generate', (req, res) => {
   // Initialize usage for this period
   getOrCreateUsage(userId, keyId);
 
-  console.log(`[Keys] Generated key for ${userEmail}: ${keyPrefix}`);
+  console.log(`[Keys] Generated key for ${userEmail}: ${keyPrefix}${rotated ? ' (rotated)' : ''}`);
 
   res.json({
     success: true,
     key_id: keyId,
-    key: key, // Only returned once!
+    key: key,
     key_prefix: keyPrefix,
     created_at: new Date().toISOString(),
+    rotated,
+    previous_key_id: previousKeyId,
   });
 });
 
