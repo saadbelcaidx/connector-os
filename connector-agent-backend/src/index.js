@@ -1502,6 +1502,17 @@ app.post('/api/email/v2/verify', async (req, res) => {
     return res.status(400).json({ success: false, error: 'email required' });
   }
 
+  const emailLower = emailToVerify.toLowerCase();
+
+  // FAST PATH: Check if email was previously found by FIND (already verified)
+  const foundEmail = db.prepare(`
+    SELECT email FROM email_cache WHERE LOWER(email) = ?
+  `).get(emailLower);
+  if (foundEmail) {
+    console.log(`[Verify] CACHE HIT from email_cache: ${emailLower}`);
+    return res.json({ email: emailToVerify });
+  }
+
   // Check quota first (don't deduct yet)
   const usage = getOrCreateUsage(effectiveUserId, effectiveKeyId);
   const MONTHLY_LIMIT = 10000;
