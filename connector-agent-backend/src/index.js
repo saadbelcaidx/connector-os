@@ -1304,6 +1304,8 @@ app.post('/api/email/v2/find', async (req, res) => {
   // Helper to cache and return VALID email
   const cacheAndReturn = (email, source, isCatchAll = false) => {
     deductTokens(effectiveUserId, effectiveKeyId, 1);
+
+    // Cache in email_cache (for find dedup)
     db.prepare(`
       INSERT OR REPLACE INTO email_cache (id, domain, first_name, last_name, email, verdict, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1316,6 +1318,9 @@ app.post('/api/email/v2/find', async (req, res) => {
       'VALID',
       new Date().toISOString()
     );
+
+    // Also cache in verify_cache (so verify endpoint returns VALID)
+    cacheVerdict(email, 'VALID');
 
     // Record pattern for learning (skip catch-all, they're all best-guess)
     if (!isCatchAll) {
