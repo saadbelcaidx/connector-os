@@ -28,7 +28,8 @@ import {
   Globe,
   Mail,
   Activity,
-  Eye
+  Eye,
+  Zap
 } from 'lucide-react';
 
 // ============================================================
