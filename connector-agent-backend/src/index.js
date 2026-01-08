@@ -1098,20 +1098,11 @@ app.post('/api/keys/generate', (req, res) => {
     return res.status(400).json({ success: false, error: 'Missing user headers' });
   }
 
-  // Check for existing active key - if exists, revoke it (rotation)
-  const existing = db.prepare(`
-    SELECT * FROM api_keys WHERE user_id = ? AND status = 'active'
-  `).get(userId);
-
-  let rotated = false;
-  let previousKeyId = null;
-
-  if (existing) {
-    // Revoke existing key
-    db.prepare(`UPDATE api_keys SET status = 'revoked' WHERE id = ?`).run(existing.id);
-    rotated = true;
-    previousKeyId = existing.id;
-    console.log(`[Keys] Rotated: revoked old key ${existing.id} for ${userEmail}`);
+  // Delete ALL existing keys for this user (clean slate on generate)
+  const deleted = db.prepare(`DELETE FROM api_keys WHERE user_id = ?`).run(userId);
+  const rotated = deleted.changes > 0;
+  if (rotated) {
+    console.log(`[Keys] Rotated: deleted ${deleted.changes} old key(s) for ${userEmail}`);
   }
 
   // Generate new key
@@ -1137,7 +1128,6 @@ app.post('/api/keys/generate', (req, res) => {
     key_prefix: keyPrefix,
     created_at: new Date().toISOString(),
     rotated,
-    previous_key_id: previousKeyId,
   });
 });
 
