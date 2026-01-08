@@ -18,7 +18,7 @@ const path = require('path');
 const { extractEmailsForPerson } = require('./webExtractor');
 
 const app = express();
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 
 // ============================================================
 // DATABASE SETUP
@@ -186,10 +186,10 @@ app.use(cors({
     'https://app.connector-os.com',
     'https://connector-os.com',
     'http://localhost:5173',
-    'http://127.0.0.1:5173'
+    
   ],
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-email'],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type", "x-user-id", "x-user-email"],
   credentials: true,
 }));
 
@@ -1202,12 +1202,15 @@ app.delete('/api/keys/:id', (req, res) => {
  */
 app.get('/api/email/v2/quota', (req, res) => {
   const apiKey = verifyApiKey(req.headers['authorization']);
+  const userId = req.headers['x-user-id'];
 
-  if (!apiKey) {
-    return res.status(401).json({ success: false, error: 'Invalid or missing API key' });
+  // Allow quota check via API key OR user headers (for when key not in localStorage)
+  if (!apiKey && !userId) {
+    return res.status(401).json({ success: false, error: 'Missing authentication' });
   }
 
-  const usage = getOrCreateUsage(apiKey.user_id, apiKey.id);
+  const effectiveUserId = apiKey ? apiKey.user_id : userId;
+  const usage = getOrCreateUsage(effectiveUserId, apiKey?.id || '');
   const MONTHLY_LIMIT = 10000;
 
   res.json({
@@ -1248,10 +1251,15 @@ app.get('/api/email/v2/quota', (req, res) => {
  */
 app.post('/api/email/v2/find', async (req, res) => {
   const apiKey = verifyApiKey(req.headers['authorization']);
+  const userId = req.headers['x-user-id'];
 
-  if (!apiKey) {
-    return res.status(401).json({ success: false, error: 'Invalid or missing API key' });
+  // Allow API key OR user headers (for UI usage without stored key)
+  if (!apiKey && !userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
   }
+
+  const effectiveUserId = apiKey ? apiKey.user_id : userId;
+  const effectiveKeyId = apiKey ? apiKey.id : '';
 
   const { firstName, lastName, domain } = req.body;
 
@@ -1262,8 +1270,6 @@ app.post('/api/email/v2/find', async (req, res) => {
   if (!domain) {
     return res.status(400).json({ success: false, error: 'domain required' });
   }
-
-  const userId = apiKey.user_id;
 
   // Check cache first (with TTL)
   const cached = db.prepare(`
@@ -1276,20 +1282,15 @@ app.post('/api/email/v2/find', async (req, res) => {
     const age = Date.now() - new Date(cached.created_at).getTime();
     const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
     if (age < SEVEN_DAYS) {
-      return res.json({
-        success: true,
-        email: cached.email,
-        verdict: cached.verdict,
-        tokens_used: 0,
-      });
+      return res.json({ email: cached.email });
     }
   }
 
   // Check if user has enough quota
-  const usage = getOrCreateUsage(userId, apiKey.id);
+  const usage = getOrCreateUsage(effectiveUserId, effectiveKeyId);
   const MONTHLY_LIMIT = 10000;
   if (usage.tokens_used >= MONTHLY_LIMIT) {
-    return res.status(429).json({ success: false, error: 'Quota exceeded' });
+    return res.status(429).json({ email: null });
   }
 
   // Check degradation mode
@@ -1297,15 +1298,12 @@ app.post('/api/email/v2/find', async (req, res) => {
 
   // RESTRICTED: No API calls, return NOT_FOUND (no charge)
   if (mode === 'RESTRICTED') {
-    return res.json({
-      success: false,
-      reason: 'no_deliverable_email',
-    });
+    return res.json({ email: null });
   }
 
   // Helper to cache and return VALID email
   const cacheAndReturn = (email, source, isCatchAll = false) => {
-    deductTokens(userId, apiKey.id, 1);
+    deductTokens(effectiveUserId, effectiveKeyId, 1);
     db.prepare(`
       INSERT OR REPLACE INTO email_cache (id, domain, first_name, last_name, email, verdict, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1325,7 +1323,7 @@ app.post('/api/email/v2/find', async (req, res) => {
     }
 
     console.log(`[Find] SUCCESS via ${source}: ${email}${isCatchAll ? ' (catch-all)' : ''}`);
-    return res.json({ success: true, email, verdict: 'VALID' });
+    return res.json({ email });
   };
 
   // ============================================================
@@ -1447,18 +1445,11 @@ app.post('/api/email/v2/find', async (req, res) => {
   // If all attempts hit service_busy, that's retryable - not a definitive "not found"
   if (allServiceBusy && !hasRealVerdict) {
     console.log(`[Find] SERVICE BUSY: All verification attempts timed out`);
-    return res.json({
-      success: false,
-      reason: 'service_busy',
-      retryable: true,
-    });
+    return res.json({ email: null });
   }
 
   console.log(`[Find] FAILED: No deliverable email for ${firstName} ${lastName} @ ${domain}`);
-  res.json({
-    success: false,
-    reason: 'no_deliverable_email',
-  });
+  res.json({ email: null });
 });
 
 // ============================================================
@@ -1477,10 +1468,15 @@ app.post('/api/email/v2/find', async (req, res) => {
 app.post('/api/email/v2/verify', async (req, res) => {
   const VERIFY_DEADLINE_MS = 8000; // 8 second deadline for single verify
   const apiKey = verifyApiKey(req.headers['authorization']);
+  const userId = req.headers['x-user-id'];
 
-  if (!apiKey) {
-    return res.status(401).json({ success: false, error: 'Invalid or missing API key' });
+  // Allow API key OR user headers (for UI usage without stored key)
+  if (!apiKey && !userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
   }
+
+  const effectiveUserId = apiKey ? apiKey.user_id : userId;
+  const effectiveKeyId = apiKey ? apiKey.id : '';
 
   const { email, emails } = req.body;
   const emailToVerify = email || (emails && emails[0]);
@@ -1489,44 +1485,31 @@ app.post('/api/email/v2/verify', async (req, res) => {
     return res.status(400).json({ success: false, error: 'email required' });
   }
 
-  const userId = apiKey.user_id;
-
   // Check quota first (don't deduct yet)
-  const usage = getOrCreateUsage(userId, apiKey.id);
+  const usage = getOrCreateUsage(effectiveUserId, effectiveKeyId);
   const MONTHLY_LIMIT = 10000;
   if (usage.tokens_used >= MONTHLY_LIMIT) {
-    return res.status(429).json({ success: false, error: 'Quota exceeded' });
+    return res.status(429).json({ email: null });
   }
 
   const result = await withDeadline(
-    verifyEmail(emailToVerify, userId),
+    verifyEmail(emailToVerify, effectiveUserId),
     VERIFY_DEADLINE_MS,
     emailToVerify
   );
 
   // Handle deadline exceeded - retryable, no charge
   if (result.verdict === 'SERVICE_BUSY') {
-    return res.json({
-      success: false,
-      email: emailToVerify,
-      reason: 'service_busy',
-      retryable: true,
-    });
+    return res.json({ email: null });
   }
 
   // Token accounting: only charge on VALID or INVALID (not cached, not service_busy)
-  let tokensUsed = 0;
   if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
-    deductTokens(userId, apiKey.id, 1);
-    tokensUsed = 1;
+    deductTokens(effectiveUserId, effectiveKeyId, 1);
   }
 
-  res.json({
-    success: true,
-    email: emailToVerify,
-    verdict: result.verdict,
-    tokens_used: tokensUsed,
-  });
+  // VALID = return email, anything else = null
+  res.json({ email: result.verdict === 'VALID' ? emailToVerify : null });
 });
 
 // ============================================================
@@ -1613,7 +1596,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     }
 
     if (foundEmail) {
-      deductTokens(userId, apiKey.id, 1);
+      deductTokens(effectiveUserId, effectiveKeyId, 1);
       tokensUsed += 1;
 
       db.prepare(`
@@ -1673,7 +1656,7 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
 
     // Charge 1 token per valid verdict (not cached, not unknown)
     if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
-      deductTokens(apiKey.user_id, apiKey.id, 1);
+      deductTokens(effectiveUserId, effectiveKeyId, 1);
       tokensUsed += 1;
     }
 
@@ -1849,7 +1832,7 @@ app.get('/admin/status', (req, res) => {
       max_burst: RATE_LIMIT.maxBurst,
       rate: RATE_LIMIT.tokensPerSecond + '/sec',
     },
-    queue_depth: requestQueue.length,
+    queue_depth: 0,
     metrics_60s: breakdown,
   });
 });
@@ -1894,7 +1877,7 @@ app.get('/health', (req, res) => {
     mode,
     mailtester: mailtesterStatus,
     mailtester_keys: MAILTESTER_API_KEYS.length,
-    queue_depth: requestQueue.length,
+    queue_depth: 0,
     timestamp: new Date().toISOString(),
   });
 });
