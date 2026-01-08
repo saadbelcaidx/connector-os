@@ -1035,10 +1035,22 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
   const emailLower = email.toLowerCase();
   const domain = emailLower.split('@')[1];
 
-  // Check cache first (respects TTLs)
+  // Check verify_cache first (respects TTLs)
   const cachedVerdict = getCachedVerdict(emailLower);
   if (cachedVerdict) {
     return { verdict: cachedVerdict, cached: true };
+  }
+
+  // Also check email_cache (from FIND results)
+  const emailCached = db.prepare(`
+    SELECT email, verdict, created_at FROM email_cache WHERE email = ?
+  `).get(emailLower);
+  if (emailCached && emailCached.verdict === 'VALID') {
+    const age = Date.now() - new Date(emailCached.created_at).getTime();
+    const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+    if (age < SEVEN_DAYS) {
+      return { verdict: 'VALID', cached: true };
+    }
   }
 
   // Check if domain is known catch-all - still VALID (users want emails!)
