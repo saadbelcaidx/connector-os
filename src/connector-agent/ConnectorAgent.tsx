@@ -163,7 +163,7 @@ function SSMGateLocal({ children }: { children: React.ReactNode }) {
           className="text-center max-w-md"
         >
           <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-5">
-            <Fingerprint className="w-7 h-7 text-white/50" />
+            <Eye className="w-7 h-7 text-white/50" />
           </div>
           <h1 className="text-[17px] font-semibold text-white/90 mb-2">Authentication Required</h1>
           <p className="text-[13px] text-white/50 mb-6">Sign in to access Connector Agent.</p>
