@@ -87,7 +87,7 @@ function looksLikeRightOrg(person: EnrichedPerson, companyDomain: string, compan
 
   // Weak match: org name contains company name token (only if nothing else)
   const orgName = (person.organization?.name || person.organization_name || "").toLowerCase();
-  const cn = (companyName || "").toLowerCase();
+  const cn = (typeof companyName === 'string' ? companyName : String(companyName || "")).toLowerCase();
   const domainWithoutTld = d.split('.')[0];
 
   if (orgName && cn && (orgName.includes(cn) || cn.includes(orgName))) {
@@ -385,12 +385,13 @@ export function selectBestPerson(
     })));
   }
 
-  // Step 2: Filter by email presence (required for "ready" status)
-  const withEmail = orgMatched.filter(x => !!x.person.email);
-  console.log("[Apollo Pick] With email:", withEmail.length);
+  // Step 2: Filter by email availability (has_email: true OR actual email)
+  // Apollo search returns has_email=true but not the actual email - people_match reveals it
+  const withEmail = orgMatched.filter(x => !!x.person.email || x.person.has_email === true);
+  console.log("[Apollo Pick] With email (or has_email):", withEmail.length);
 
   if (withEmail.length === 0) {
-    // Check if we have org matches but no emails
+    // Check if we have org matches but no emails at all
     if (orgMatched.length > 0) {
       return {
         status: 'not_found',
@@ -1195,7 +1196,9 @@ async function fetchFromApollo(
     return null;
   }
 
-  const companyName = context.companyName || domain;
+  // Ensure companyName is always a string (could be object/array from dataset)
+  const rawCompanyName = context.companyName || domain;
+  const companyName = typeof rawCompanyName === 'string' ? rawCompanyName : String(rawCompanyName || domain);
   const companySize = context.companySize || 0;
   const signalType = context.signalType || 'jobs';
   const jobCategory = context.jobCategory || 'unknown';
@@ -1304,10 +1307,67 @@ async function fetchFromApollo(
           }
         }
       }
+
+      // Step 2d: CANONICAL DOMAIN RESOLUTION - Try to find company's indexed domain
+      if (people.length === 0 && companyName) {
+        console.log('[PersonEnrichment] Step 2d: CANONICAL DOMAIN RESOLUTION via mixed_companies_search');
+        console.log(`[PersonEnrichment] Searching for company: "${companyName}" (input domain: ${domain})`);
+
+        try {
+          const companySearchRes = await callApolloProxy('mixed_companies_search', apiKey, {
+            q: companyName,
+            per_page: 1,
+          });
+
+          if (companySearchRes.ok) {
+            const companyData = await companySearchRes.json();
+            const topAccount = companyData?.accounts?.[0];
+            const canonicalDomain = topAccount?.primary_domain || topAccount?.domain;
+
+            if (canonicalDomain) {
+              // Normalize both domains for comparison
+              const normalizedInput = domain.toLowerCase().replace(/^www\./, '');
+              const normalizedCanonical = canonicalDomain.toLowerCase().replace(/^www\./, '');
+
+              if (normalizedCanonical !== normalizedInput) {
+                console.log(`[PersonEnrichment] ✅ Found canonical domain: ${canonicalDomain} (differs from input: ${domain})`);
+                console.log('[PersonEnrichment] Step 2e: RETRY with canonical domain');
+
+                // Retry people_search with canonical domain using same filters
+                const canonicalRes = await callApolloProxy('people_search', apiKey, {
+                  domain: canonicalDomain,
+                  departments: effectiveDepartments,
+                  seniorities: signalParams.seniorities,
+                  titles: effectiveTitles,
+                });
+
+                if (canonicalRes.ok) {
+                  const canonicalData = await canonicalRes.json();
+                  people = canonicalData?.people || [];
+                  if (people.length > 0) {
+                    console.log(`[PersonEnrichment] ✅ Canonical domain search returned ${people.length} people`);
+                    searchStrategy = 'canonical_domain';
+                  } else {
+                    console.log('[PersonEnrichment] ℹ️ Canonical domain search also returned zero people');
+                  }
+                }
+              } else {
+                console.log(`[PersonEnrichment] ℹ️ Canonical domain matches input domain (${canonicalDomain}), skipping retry`);
+              }
+            } else {
+              console.log('[PersonEnrichment] ℹ️ mixed_companies_search returned no primary_domain');
+            }
+          } else {
+            console.log('[PersonEnrichment] ℹ️ mixed_companies_search request failed, skipping canonical resolution');
+          }
+        } catch (canonicalError) {
+          console.log('[PersonEnrichment] ℹ️ Canonical domain resolution error (non-fatal):', canonicalError);
+        }
+      }
     }
 
     if (people.length === 0) {
-      console.log('[PersonEnrichment] ℹ️ All search strategies returned zero people');
+      console.log('[PersonEnrichment] ℹ️ All search strategies returned zero people (including canonical domain)');
       return {
         name: null,
         title: null,
@@ -1489,7 +1549,11 @@ async function fetchFromSSM(domain: string, titles: string[], endpointUrl: strin
   }
 }
 
-export function isEnrichmentConfigured(config: EnrichmentConfig): boolean {
+/**
+ * Check if CONTACT enrichment is configured (Apollo / PDL / SSM)
+ * This is for finding decision makers at companies.
+ */
+export function isContactEnrichmentConfigured(config: EnrichmentConfig): boolean {
   if (!config || config.provider === 'none') {
     return false;
   }
@@ -1503,6 +1567,15 @@ export function isEnrichmentConfigured(config: EnrichmentConfig): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Check if COMPANY INTEL is configured (Instantly)
+ * This is for pain points, competitors, customer profiles.
+ * Separate from contact enrichment - never share config checks.
+ */
+export function isCompanyIntelConfigured(instantlyConfig: { apiKey?: string } | null): boolean {
+  return !!instantlyConfig?.apiKey;
 }
 
 export function getHighestMatchingTitle(

@@ -11,69 +11,40 @@ export function WelcomeModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 backdrop-blur-sm bg-black/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70 backdrop-blur-sm">
       <div
-        className="relative max-w-md w-full rounded-[20px] p-8 border border-[#26F7C7]/30"
+        className="relative max-w-sm w-full rounded-2xl p-6 border border-white/[0.08]"
         style={{
-          background: 'linear-gradient(135deg, rgba(12, 12, 12, 0.95) 0%, rgba(10, 10, 10, 0.95) 100%)',
-          backdropFilter: 'blur(24px)',
-          boxShadow: '0 0 40px rgba(38, 247, 199, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+          background: 'rgba(12, 12, 12, 0.95)',
+          boxShadow: '0 24px 48px rgba(0, 0, 0, 0.4)',
         }}
       >
         <button
           onClick={skipOnboarding}
-          className="absolute top-4 right-4 text-white/40 hover:text-white/80 transition-colors"
+          className="absolute top-4 right-4 text-white/30 hover:text-white/60 transition-colors"
         >
-          <X size={20} />
+          <X size={18} />
         </button>
 
-        <div
-          className="w-16 h-16 mx-auto mb-6 rounded-2xl flex items-center justify-center"
-          style={{
-            background: 'linear-gradient(135deg, rgba(38, 247, 199, 0.2) 0%, rgba(38, 247, 199, 0.05) 100%)',
-            border: '1px solid rgba(38, 247, 199, 0.3)',
-            boxShadow: '0 0 30px rgba(38, 247, 199, 0.2)',
-          }}
-        >
-          <Sparkles size={32} className="text-[#26F7C7]" />
+        <div className="flex items-center gap-3 mb-5">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(255, 255, 255, 0.06)' }}
+          >
+            <Sparkles size={20} className="text-white/70" />
+          </div>
+          <div>
+            <h2 className="text-[15px] font-medium text-white/90">Welcome to Connector OS</h2>
+            <p className="text-[12px] text-white/40">Quick tour — 30 seconds</p>
+          </div>
         </div>
-
-        <h2
-          className="text-2xl font-semibold text-center mb-3"
-          style={{
-            background: 'linear-gradient(135deg, #FFFFFF 0%, rgba(255, 255, 255, 0.7) 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}
-        >
-          Welcome to Operator OS
-        </h2>
-
-        <p className="text-white/60 text-center mb-8 leading-relaxed">
-          Let me show you around. This will take 30 seconds.
-        </p>
 
         <button
           onClick={startOnboarding}
-          className="w-full py-3 px-6 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2"
-          style={{
-            background: 'linear-gradient(135deg, rgba(38, 247, 199, 0.15) 0%, rgba(38, 247, 199, 0.05) 100%)',
-            border: '1px solid rgba(38, 247, 199, 0.3)',
-            color: '#26F7C7',
-            boxShadow: '0 0 20px rgba(38, 247, 199, 0.15)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(38, 247, 199, 0.25) 0%, rgba(38, 247, 199, 0.1) 100%)';
-            e.currentTarget.style.boxShadow = '0 0 30px rgba(38, 247, 199, 0.25)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(38, 247, 199, 0.15) 0%, rgba(38, 247, 199, 0.05) 100%)';
-            e.currentTarget.style.boxShadow = '0 0 20px rgba(38, 247, 199, 0.15)';
-          }}
+          className="w-full py-2.5 rounded-lg text-[13px] font-medium bg-white/90 text-black hover:bg-white transition-colors flex items-center justify-center gap-2"
         >
           Start Tour
-          <ArrowRight size={18} />
+          <ArrowRight size={14} />
         </button>
       </div>
     </div>
@@ -100,54 +71,40 @@ export function TourTooltip({
   isLastStep = false,
 }: TourTooltipProps) {
   const positionClasses = {
-    top: 'bottom-full mb-4',
-    bottom: 'top-full mt-4',
-    left: 'right-full mr-4',
-    right: 'left-full ml-4',
+    top: 'bottom-full mb-3',
+    bottom: 'top-full mt-3',
+    left: 'right-full mr-3',
+    right: 'left-full ml-3',
   };
 
   return (
     <div className={`absolute z-50 ${positionClasses[position]}`}>
       <div
-        className="w-80 rounded-[16px] p-6 border border-[#26F7C7]/30"
+        className="w-72 rounded-xl p-4 border border-white/[0.08]"
         style={{
-          background: 'linear-gradient(135deg, rgba(12, 12, 12, 0.98) 0%, rgba(10, 10, 10, 0.98) 100%)',
-          backdropFilter: 'blur(24px)',
-          boxShadow: '0 0 40px rgba(38, 247, 199, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+          background: 'rgba(12, 12, 12, 0.95)',
+          backdropFilter: 'blur(20px)',
+          boxShadow: '0 16px 32px rgba(0, 0, 0, 0.4)',
         }}
       >
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[#26F7C7] text-sm font-medium">{step}</span>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] text-white/50 font-medium uppercase tracking-wide">{step}</span>
           <button
             onClick={onSkip}
-            className="text-white/40 hover:text-white/80 transition-colors text-sm"
+            className="text-white/30 hover:text-white/60 transition-colors text-[11px]"
           >
-            Skip tour
+            Skip
           </button>
         </div>
 
-        <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
-        <p className="text-white/70 text-sm mb-4 leading-relaxed">{description}</p>
+        <h3 className="text-[14px] font-medium text-white/90 mb-1">{title}</h3>
+        <p className="text-[12px] text-white/50 mb-4 leading-relaxed">{description}</p>
 
         <button
           onClick={onNext}
-          className="w-full py-2.5 px-4 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2"
-          style={{
-            background: 'linear-gradient(135deg, rgba(38, 247, 199, 0.15) 0%, rgba(38, 247, 199, 0.05) 100%)',
-            border: '1px solid rgba(38, 247, 199, 0.3)',
-            color: '#26F7C7',
-            boxShadow: '0 0 15px rgba(38, 247, 199, 0.1)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(38, 247, 199, 0.25) 0%, rgba(38, 247, 199, 0.1) 100%)';
-            e.currentTarget.style.boxShadow = '0 0 25px rgba(38, 247, 199, 0.2)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(38, 247, 199, 0.15) 0%, rgba(38, 247, 199, 0.05) 100%)';
-            e.currentTarget.style.boxShadow = '0 0 15px rgba(38, 247, 199, 0.1)';
-          }}
+          className="w-full py-2 rounded-lg text-[12px] font-medium bg-white/90 text-black hover:bg-white transition-colors flex items-center justify-center gap-1.5"
         >
-          {isLastStep ? 'Enter Operator OS' : 'Next'}
+          {isLastStep ? 'Get Started' : 'Next'}
           <ArrowRight size={16} />
         </button>
       </div>

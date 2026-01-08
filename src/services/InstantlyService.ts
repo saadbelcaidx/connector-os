@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { humanGreeting } from './AIService';
 
 interface InstantlyLeadPayload {
   campaign: string;  // Note: "campaign" not "campaign_id"
@@ -26,27 +27,43 @@ export interface DualSendParams {
   contact_title?: string;
   company_domain?: string;
   intro_text?: string;
+  // Scoring telemetry (separated)
+  operator_fit_score?: number;      // Old: demand → operator fit (0-100)
+  supply_match_score?: number;      // New: demand → supply fit (45-70+)
+  supply_match_reasoning?: string;  // Operator-style reasoning for match
+  supply_domain?: string;           // Which provider was selected
 }
 
+/**
+ * Generate fallback intro text when AI is not configured.
+ * NICHE-AGNOSTIC: Uses generic language that works for any domain.
+ */
 function generateIntroText(type: 'DEMAND' | 'SUPPLY', firstName: string, companyName: string, signal?: string): string {
-  const name = firstName.toLowerCase();
+  const { greeting } = humanGreeting(firstName);
+  const greetingLower = greeting.toLowerCase();
 
   if (type === 'DEMAND') {
+    // Map signal to a generic observation
     const signalContext = signal === 'hiring'
-      ? "noticed you've got an open role"
+      ? "noticed you're growing the team"
       : signal === 'funding'
       ? "saw the recent funding news"
-      : "saw you're scaling the team";
+      : signal === 'expansion'
+      ? "saw you're expanding"
+      : "noticed some activity that caught my eye";
 
-    return `hey ${name} — ${signalContext}.\nwhen teams stretch, that's usually a real need, not noise.\ni know someone who helps in this spot. want me to connect you?`;
+    return `${greetingLower} — ${signalContext}.\nwhen things move fast, timing matters.\ni know someone who helps in situations like this. want me to connect you?`;
   } else {
+    // Generic supply-side intro
     const opportunityContext = signal === 'hiring'
-      ? "with hiring pressure right now"
+      ? "that's growing their team right now"
       : signal === 'funding'
-      ? "that just raised and is expanding"
-      : "that's scaling quickly";
+      ? "that just raised and is moving fast"
+      : signal === 'expansion'
+      ? "that's expanding quickly"
+      : "with momentum right now";
 
-    return `hey ${name} — found a company ${opportunityContext}.\nfeels like the exact kind of problem you already solve.\nwant an intro?`;
+    return `${greetingLower} — found a company ${opportunityContext}.\nfeels like the kind of situation you're built for.\nwant an intro?`;
   }
 }
 
@@ -90,7 +107,8 @@ export async function sendToInstantly(
 
     if (success) {
       console.log(`[InstantlyService] Lead created successfully, recording send...`);
-      await recordSend(params, introText);
+      // Fire-and-forget - don't block send on DB logging
+      recordSend(params, introText);
       return { success: true, leadId: `${params.email}-${Date.now()}` };
     } else {
       console.error(`[InstantlyService] Lead creation failed`);
@@ -105,7 +123,10 @@ export async function sendToInstantly(
   }
 }
 
-async function recordSend(params: DualSendParams, introText: string): Promise<void> {
+async function recordSend(params: DualSendParams, introText: string, retryCount = 0): Promise<void> {
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 1000;
+
   try {
     const { error } = await supabase
       .from('connector_sends')
@@ -122,21 +143,50 @@ async function recordSend(params: DualSendParams, introText: string): Promise<vo
         signal_metadata: params.signal_metadata || {},
         instantly_status: 'sent',
         sent_at: new Date().toISOString(),
+        // Scoring telemetry (separated)
+        operator_fit_score: params.operator_fit_score ?? null,
+        supply_match_score: params.supply_match_score ?? null,
+        supply_match_reasoning: params.supply_match_reasoning ?? null,
+        supply_domain: params.supply_domain ?? null,
       });
 
     if (error) {
       console.error('[InstantlyService] Failed to record send:', error);
+      // Retry on transient errors
+      if (retryCount < MAX_RETRIES && (error.code === 'PGRST301' || error.message?.includes('network'))) {
+        console.log(`[InstantlyService] Retrying recordSend (${retryCount + 1}/${MAX_RETRIES})...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (retryCount + 1)));
+        return recordSend(params, introText, retryCount + 1);
+      }
     } else {
-      console.log(`[InstantlyService] Recorded ${params.type} send to ${params.email}`);
+      const scoreLog = params.supply_match_score !== undefined ? ` (supply_match: ${params.supply_match_score})` : '';
+      console.log(`[InstantlyService] Recorded ${params.type} send to ${params.email}${scoreLog}`);
     }
   } catch (error) {
     console.error('[InstantlyService] Exception recording send:', error);
+    // Retry on network exceptions
+    if (retryCount < MAX_RETRIES) {
+      console.log(`[InstantlyService] Retrying recordSend after exception (${retryCount + 1}/${MAX_RETRIES})...`);
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (retryCount + 1)));
+      return recordSend(params, introText, retryCount + 1);
+    }
   }
 }
 
+export interface InstantlyLeadResult {
+  success: boolean;
+  resultStatus: 'added' | 'skipped' | 'skipped_existing' | 'skipped_campaign' | 'error' | string;
+  rawResponse?: any;
+  error?: string;
+}
+
+// TEMPORARY: Set to true to disable skip flags for testing
+const DISABLE_SKIPS_FOR_TESTING = false;
+
 export async function createInstantlyLead(
   apiKey: string,
-  payload: InstantlyLeadPayload
+  payload: InstantlyLeadPayload,
+  options?: { validateCampaign?: boolean; disableSkips?: boolean }
 ): Promise<boolean> {
   console.log('[InstantlyService] Starting lead creation via edge function');
   console.log('[InstantlyService] Payload:', payload);
@@ -144,6 +194,12 @@ export async function createInstantlyLead(
   try {
     const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/instantly-proxy`;
     console.log('[InstantlyService] Calling edge function:', edgeFunctionUrl);
+
+    // Use options or fall back to testing flag
+    const disableSkips = options?.disableSkips ?? DISABLE_SKIPS_FOR_TESTING;
+    const validateCampaign = options?.validateCampaign ?? false;
+
+    console.log('[InstantlyService] Options - validateCampaign:', validateCampaign, 'disableSkips:', disableSkips);
 
     const response = await fetch(edgeFunctionUrl, {
       method: 'POST',
@@ -153,7 +209,9 @@ export async function createInstantlyLead(
       },
       body: JSON.stringify({
         apiKey,
-        payload
+        payload,
+        validateCampaign,
+        disableSkips
       })
     });
 
@@ -163,14 +221,30 @@ export async function createInstantlyLead(
       const error = await response.json();
       console.error('[InstantlyService] Edge function error:', error);
       console.error('[InstantlyService] Instantly API error details:', error.details);
+      console.error('[InstantlyService] Result status:', error.resultStatus);
 
       const errorMessage = error.details || error.error || 'Failed to create lead';
       throw new Error(`Instantly API error: ${errorMessage}`);
     }
 
     const result = await response.json();
-    console.log('[InstantlyService] Lead created successfully:', result);
-    return true;
+
+    // Log detailed result
+    console.log('[InstantlyService] Raw response:', JSON.stringify(result, null, 2));
+    console.log('[InstantlyService] Result status:', result.resultStatus);
+
+    // Check if lead was actually added vs skipped
+    if (result.resultStatus === 'added') {
+      console.log('[InstantlyService] ✓ Lead ADDED successfully');
+      return true;
+    } else if (result.resultStatus?.startsWith('skipped')) {
+      console.warn('[InstantlyService] ⚠ Lead SKIPPED:', result.resultStatus);
+      // Still return true since API call succeeded, but log the skip
+      return true;
+    } else {
+      console.log('[InstantlyService] Lead created with status:', result.resultStatus);
+      return true;
+    }
 
   } catch (error) {
     console.error('[InstantlyService] Exception:', error);

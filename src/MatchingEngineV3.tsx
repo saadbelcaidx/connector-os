@@ -1,5 +1,15 @@
+/**
+ * DOCTRINE: See PIPELINE_CONTRACT.md
+ *
+ * - Gate: entity needs domain OR companyName
+ * - Modes: MATCHING_ONLY (has domain) or ACTION (needs enrichment)
+ * - Single source of truth: PipelineRunSnapshot
+ * - No garbage polishing: skip bad data, don't fake it
+ */
+
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, TrendingUp, Loader2, Radio, Settings as SettingsIcon, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowLeft, TrendingUp, Loader2, Radio, Settings as SettingsIcon, RefreshCw, Briefcase, Clock, CheckCircle, Minus, ArrowRight, ArrowUpRight, AlertCircle, Info, Sparkles, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
 import { PredictionService, SignalTrend } from './PredictionService';
@@ -7,8 +17,6 @@ import { JobTrendChart } from './JobTrendChart';
 import { supabase } from './lib/supabase';
 import { useAuth } from './AuthContext';
 import AppHeader from './AppHeader';
-import { useOnboarding } from './OnboardingContext';
-import { TourTooltip } from './Onboarding';
 import {
   loadSignalsConfig,
   fetchJobSignals,
@@ -21,9 +29,11 @@ import {
   extractJobLikeFields,
   safeLower,
   safeText,
+  FETCH_LIMITS,
 } from './services/SignalsClient';
 import { generateJobInsights, JobInsights } from './services/JobInsightsEngine';
-import { rewriteIntro, isAIConfigured, rewriteInsight, cleanApiResponse, generateWhyNow, generateWhyYou, generateDemandIntro, generateSupplyIntro } from './services/AIService';
+import { rewriteIntro, isAIConfigured, rewriteInsight, cleanApiResponse, generateWhyNow, generateWhyYou, generateDemandIntro, generateSupplyIntro, getDisabledProvider, detectDatasetNiche, detectNicheHeuristic, DetectedNiche, generateMatchNarration, stackSignals, scoreDeal, MatchNarration, StackedSignal, DealScore, aiMatchSuppliers, generateIntrosAntifragile, detectMatchContext, generateDemandIntroAntifragile, generateSupplyIntroAntifragile, generateAggregatedSupplyIntro, humanGreeting } from './services/AIService';
+import { AIHealthBanner } from './components/AIHealthBanner';
 import { createRichFundingSignal, createRichJobsSignal, createRichLayoffsSignal, RichSignal } from './services/SignalFormatters';
 import {
   buildCleanJobsSummary,
@@ -33,17 +43,92 @@ import {
   buildCleanTechSummary
 } from './services/CleanViewHelpers';
 import { detectWhoHasPressure, detectTargetTitles } from './services/WhoClassificationService';
-import { enrichPerson, PersonData, EnrichmentConfig, calculateEnrichmentStatus, isEnrichmentStale, isEnrichmentConfigured, calculateOutboundReadiness, roleCategoryFromJobTitle } from './services/PersonEnrichmentService';
+import { enrichPerson, PersonData, EnrichmentConfig, calculateEnrichmentStatus, isEnrichmentStale, isContactEnrichmentConfigured, isCompanyIntelConfigured, calculateOutboundReadiness, roleCategoryFromJobTitle } from './services/PersonEnrichmentService';
 import { findWorkOwnerByDomain, WorkOwnerSettings, WorkOwnerHireCategory } from './services/ApolloWorkOwnerService';
 import { getContextualPressureProfile } from './services/PersonPressureService';
 import { PersonContactCard } from './PersonContactCard';
 import { createInstantlyLead, sendToInstantly, DualSendParams } from './services/InstantlyService';
-import { fetchSupplySignals, findMatchingSupply, SupplyCompany, getSupplyEnrichmentTitles } from './services/SupplySignalsClient';
+import { fetchSupplySignals, findScoredMatches, SupplyCompany, getSupplyEnrichmentTitles, DemandContext, ScoredSupplyMatch } from './services/SupplySignalsClient';
 import { HireCategory, extractHireCategory } from './services/CompanyRoleClassifier';
 import { findSupplyContact, SupplyContact } from './services/ApolloSupplyEnrichmentService';
 import { findEmailWithFallback, mapHireCategoryToAnymail } from './services/AnymailFinderService';
 import { cleanCompanyName } from './services/IntroBuilder';
+import { humanizeRoleType, getRolePlural } from './services/PressureWiringService';
+import { detectHiringPressure, PressureDetectionResult } from './pressure/PressureDetector';
+import { rankSupplyProviders } from './services/SupplyQualityRanker';
+import {
+  TrustedSupplyPools,
+  updatePoolForRole,
+  getPoolEntry,
+  createEmptyPools,
+  getNextRotatedProvider,
+  markProviderUsed
+} from './services/TrustedSupplyPools';
+import {
+  TrustedDemandPools,
+  addDemandToPool,
+  createEmptyDemandPools,
+  markDemandUsed,
+  getNextRotatedDemand,
+  getDomainsForRole
+} from './services/TrustedDemandPools';
+import {
+  BatchSendExecutor,
+  createDemandBatchItem,
+  createSupplyBatchItem,
+  estimateBatchDuration,
+  groupSupplyByEmail,
+  detectCommonCategory,
+  shouldUseAggregatedIntro,
+  SupplyMatchGroup
+} from './services/BatchSendService';
+import {
+  PreEnrichedContactsPools,
+  PreEnrichedContact,
+  createEmptyPreEnrichedPools,
+  createPreEnrichedContact,
+  addToPreEnrichedPool,
+  bulkAddToPreEnrichedPool,
+  getReadyContacts,
+  getReadyCount,
+  getUniqueSendCount,
+  getTotalReadyCount,
+  markContactConsumed
+} from './services/PreEnrichedContactsPool';
+import {
+  aiQueue,
+  QueueStatus,
+  getQueueStatusMessage,
+  getQueueTooltip
+} from './services/AIRequestQueue';
+import {
+  startBackgroundEnrichment,
+  onPressureDetected,
+  isWorkerRunning,
+  getWorkerProgress,
+  startBackgroundSupplyEnrichment,
+  isSupplyWorkerRunning,
+  getSupplyWorkerProgress,
+  SupplyEnrichmentProgress
+} from './services/BackgroundEnrichmentWorker';
 import type { ConnectorProfile } from './types';
+import { scoreSignalQuality, SignalQualityScore, CompanySignalData, SignalItem } from './services/SignalQualityScorer';
+import { enrichDomain, CompanyEnrichment, getPrimaryPain } from './services/CompanyEnrichmentService';
+import { quickCleanIntel, deepCleanIntel, getCleanedIntel } from './services/IntelCleanerService';
+// PHASE 4 COMPLETE: matchingResolvers no longer needed - using getDemandState/getSupplyContactState
+import { getCachedContact, saveToCache, updateVerificationStatus, isVerificationStale } from './services/EnrichedContactsCache';
+// Pipeline Integration (Stage 5: pipeline is the system)
+import {
+  runShadowPipeline,
+  type PipelineIntegrationConfig,
+} from './pipeline/integration';
+import {
+  snapshotToUIState,
+} from './pipeline/uiAdapter';
+import {
+  getCurrentSnapshot,
+  type PipelineRunSnapshot,
+} from './pipeline/snapshot';
 
 const WINDOW_STATUS_LABELS = {
   EARLY: 'Early',
@@ -52,12 +137,47 @@ const WINDOW_STATUS_LABELS = {
   OPEN: 'Open'
 };
 
+// NICHE-AGNOSTIC: No hardcoded "hiring" language
 const WINDOW_STATUS_DESCRIPTIONS = {
   EARLY: 'Early signal across multiple companies — exploratory outreach viable',
-  BUILDING: 'Hiring pressure forming across several firms — test outreach',
-  WATCH: 'Clear hiring activity — good timing',
-  OPEN: 'Strong multi-company hiring window — act fast'
+  BUILDING: 'Pressure forming across several firms — test outreach',
+  WATCH: 'Clear activity — good timing',
+  OPEN: 'Strong multi-company window — act fast'
 };
+
+// Signal quality tier explanations
+const TIER_EXPLANATIONS: Record<'A' | 'B' | 'C', { label: string; description: string }> = {
+  A: { label: 'Strong', description: 'Multiple indicators, timing is now' },
+  B: { label: 'Good', description: 'Solid indicators, momentum forming' },
+  C: { label: 'Medium', description: 'Early signs, worth exploring' },
+};
+
+/**
+ * RUNTIME SAFEGUARD: Truncate verbose niche labels to MAX 5 words
+ * Prevents AI from returning essay-length demandType/supplyType
+ */
+function truncateNicheLabel(label: string | undefined, maxWords: number = 5): string {
+  if (!label) return '';
+  const words = label.split(/\s+/);
+  if (words.length <= maxWords) return label;
+  return words.slice(0, maxWords).join(' ');
+}
+
+/**
+ * Get SHORT niche display string (max 10 words total)
+ * Uses oneLiner if available, otherwise truncates demandType → supplyType
+ */
+function getNicheDisplayLabel(niche: DetectedNiche | null, fallback: string = ''): string {
+  if (!niche) return fallback;
+  // Prefer oneLiner if available and short
+  if (niche.oneLiner && niche.oneLiner.split(/\s+/).length <= 10) {
+    return niche.oneLiner;
+  }
+  // Otherwise truncate and format
+  const demand = truncateNicheLabel(niche.demandType, 4);
+  const supply = truncateNicheLabel(niche.supplyType, 4);
+  return `${demand} → ${supply}`;
+}
 
 /**
  * Convert hire category to readable text for narration
@@ -130,6 +250,7 @@ interface MatchingResult {
   companyName: string;
   domain: string;
   signalSummary: string;
+  isCuratedList?: boolean;  // true = contacts dataset (no signals), false = jobs dataset (has signals)
   windowStatus: string;
   dealValueEstimate: number;
   probabilityOfClose: number;
@@ -143,10 +264,12 @@ interface MatchingResult {
   suggestedTimeline: string;
   jobCount?: number;
   signalStrength: number;
-  matchScore: number;
+  operatorFitScore: number;  // Demand→Operator fit (0-100): how well this demand matches operator's profile
   matchReasons: string[];
   companySize: number;
   signalType: string;
+  // Signal quality scoring
+  qualityScore: SignalQualityScore;
 }
 
 const serviceOptions = [
@@ -228,7 +351,7 @@ function mapSignalTypeToPainPoints(signalType?: string | null): string[] {
   return mapping[signalType || ''] || [];
 }
 
-function estimateDealValue(companySize: number, matchScore: number, signalStrength: number) {
+function estimateDealValue(companySize: number, operatorFitScore: number, signalStrength: number) {
   let base = 5000;
 
   if (companySize < 50) base = 5000;
@@ -236,13 +359,13 @@ function estimateDealValue(companySize: number, matchScore: number, signalStreng
   else if (companySize < 1000) base = 50000;
   else base = 100000;
 
-  const multiplier = Math.max(0.3, (matchScore + signalStrength) / 200);
+  const multiplier = Math.max(0.3, (operatorFitScore + signalStrength) / 200);
 
   return Math.round(base * multiplier);
 }
 
-function calculateProbability(matchScore: number, signalStrength: number, windowStatus: string) {
-  let base = (matchScore + signalStrength) / 2;
+function calculateProbability(operatorFitScore: number, signalStrength: number, windowStatus: string) {
+  let base = (operatorFitScore + signalStrength) / 2;
 
   const windowBoost = {
     EARLY: 0.6,
@@ -374,7 +497,7 @@ function SignalBlock({
 }) {
   return (
     <div
-      className="flex items-start gap-3 p-3 rounded-2xl mb-2 relative transition-all duration-350"
+      className="flex items-start gap-3 p-3 rounded-2xl mb-2 relative transition-all duration-200"
       style={{
         background: 'rgba(14, 165, 233, 0.04)',
         border: '1px solid rgba(14, 165, 233, 0.15)',
@@ -432,7 +555,7 @@ function RichSignalBlock({
 
   return (
     <div
-      className="p-4 rounded-2xl mb-3 transition-all duration-350"
+      className="p-4 rounded-2xl mb-3 transition-all duration-200"
       style={{
         background: 'rgba(14, 165, 233, 0.04)',
         border: '1px solid rgba(14, 165, 233, 0.15)',
@@ -497,8 +620,12 @@ function sendPressureAlert(email: string, forecast: string) {
 
 function MatchingEngineV3() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { currentStep, nextStep, skipOnboarding } = useOnboarding();
+  const { user, runtimeMode } = useAuth();
+
+  // RUNTIME MODE: Explicit guest vs auth mode (single source of truth)
+  // - 'guest': No DB writes, no AI calls, localStorage only, zero side effects
+  // - 'auth': Full persistence, AI enabled (if configured), realtime subscriptions
+  const isGuest = runtimeMode === 'guest';
 
   const [provider, setProvider] = useState<ProviderInputs>({
     servicesDelivered: ['SaaS Implementation', 'Sales Ops'],
@@ -555,6 +682,7 @@ function MatchingEngineV3() {
   const [showCleanFunding, setShowCleanFunding] = useState(false);
   const [showCleanLayoffs, setShowCleanLayoffs] = useState(false);
   const [showCleanHiring, setShowCleanHiring] = useState(false);
+
   const [showCleanTech, setShowCleanTech] = useState(false);
 
   const [cleanJobsSummary, setCleanJobsSummary] = useState<string | null>(null);
@@ -583,10 +711,10 @@ function MatchingEngineV3() {
   const [operatorName, setOperatorName] = useState<string>('');
   const [operatorCompany, setOperatorCompany] = useState<string>('');
 
-  const [personDataByDomain, setPersonDataByDomain] = useState<Record<string, PersonData | null>>({});
+  // PHASE 4 COMPLETE: personDataByDomain migrated to demandStates[domain].contact
   const [isEnrichingDomain, setIsEnrichingDomain] = useState<string | null>(null);
   const [noContactsFoundByDomain, setNoContactsFoundByDomain] = useState<Record<string, boolean>>({});
-  const [toastNotification, setToastNotification] = useState<{ type: 'success' | 'error' | 'warning' | 'cache'; message: string } | null>(null);
+  const [toastNotification, setToastNotification] = useState<{ type: 'success' | 'error' | 'warning' | 'cache' | 'info'; message: string } | null>(null);
   const [personPressureProfileByDomain, setPersonPressureProfileByDomain] = useState<Record<string, string>>({});
   const [enrichmentConfig, setEnrichmentConfig] = useState<EnrichmentConfig>({ provider: 'none' });
   const [conversationStartedByDomain, setConversationStartedByDomain] = useState<Record<string, boolean>>({});
@@ -595,8 +723,7 @@ function MatchingEngineV3() {
   const [rewriteCache, setRewriteCache] = useState<Map<string, string>>(new Map());
   const [aiRewrittenIntroByDomain, setAiRewrittenIntroByDomain] = useState<Record<string, string>>({});
   const [finalIntroByDomain, setFinalIntroByDomain] = useState<Record<string, string>>({});
-  const [demandIntroByDomain, setDemandIntroByDomain] = useState<Record<string, string>>({});
-  const [supplyIntroByDomain, setSupplyIntroByDomain] = useState<Record<string, string>>({});
+  // PHASE 4 COMPLETE: demandIntro/supplyIntro migrated to demandStates[domain].demandIntro/supplyIntro
   const [isGeneratingDemandIntro, setIsGeneratingDemandIntro] = useState(false);
   const [isGeneratingSupplyIntro, setIsGeneratingSupplyIntro] = useState(false);
 
@@ -605,6 +732,8 @@ function MatchingEngineV3() {
   const [aiWhyNowByDomain, setAiWhyNowByDomain] = useState<Record<string, string>>({});
   const [aiWhyYouByDomain, setAiWhyYouByDomain] = useState<Record<string, string>>({});
   const [activeResultIndex, setActiveResultIndex] = useState(0);
+  // Stage 5: Legacy state kept for fallback until snapshot is ready
+  // Primary source of truth is now pipelineSnapshot
   const [matchingResults, setMatchingResults] = useState<MatchingResult[]>([]);
   const [instantlyConfig, setInstantlyConfig] = useState<{apiKey: string; campaignId: string; campaignDemand: string; campaignSupply: string} | null>(null);
   const [isSendingInstantlyByDomain, setIsSendingInstantlyByDomain] = useState<Record<string, boolean>>({});
@@ -612,15 +741,362 @@ function MatchingEngineV3() {
   const [demandStatusByDomain, setDemandStatusByDomain] = useState<Record<string, string>>({});
   const [supplyStatusByDomain, setSupplyStatusByDomain] = useState<Record<string, string>>({});
 
+  // Pressure detection from PressureInversionEngine (loaded from settings)
+  const [pressureDetection, setPressureDetection] = useState<PressureDetectionResult | null>(null);
+
+  // Trusted supply pools - grows to 50-200 providers per roleType
+  const [trustedSupplyPools, setTrustedSupplyPools] = useState<TrustedSupplyPools>(createEmptyPools());
+
+  // Trusted demand pools - grows to 100-300 companies per roleType
+  const [trustedDemandPools, setTrustedDemandPools] = useState<TrustedDemandPools>(createEmptyDemandPools());
+
+  // Pre-enriched contacts pool - ready contacts for batch send (capped at 500 per roleType)
+  const [preEnrichedPools, setPreEnrichedPools] = useState<PreEnrichedContactsPools>(createEmptyPreEnrichedPools());
+
+  // Background enrichment worker progress
+  const [enrichmentWorkerProgress, setEnrichmentWorkerProgress] = useState<{
+    roleType: string;
+    total: number;
+    completed: number;
+    succeeded: number;
+  } | null>(null);
+
+  // Optimistic UI for pool filling
+  const [isPreparingPool, setIsPreparingPool] = useState(false);
+  const [optimisticProgress, setOptimisticProgress] = useState(0);
+  const [prevReadyCount, setPrevReadyCount] = useState(0);
+  const [showFirstContactPulse, setShowFirstContactPulse] = useState(false);
+  const [newlyReadyDomains, setNewlyReadyDomains] = useState<Set<string>>(new Set());
+  const [showLongWaitReassurance, setShowLongWaitReassurance] = useState(false);
+  const [isDiscoveringMatch, setIsDiscoveringMatch] = useState(false);
+  const prevMatchCount = useRef(0);
+
+  // AI Niche Detection - what industry/niche this dataset represents
+  const [detectedNiche, setDetectedNiche] = useState<DetectedNiche | null>(null);
+  const [isDetectingNiche, setIsDetectingNiche] = useState(false);
+  const longWaitTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // AI Match Narrations - Rich stories about each company
+  const [matchNarrations, setMatchNarrations] = useState<Record<string, MatchNarration>>({});
+  const [stackedSignals, setStackedSignals] = useState<Record<string, StackedSignal>>({});
+  const [dealScores, setDealScores] = useState<Record<string, DealScore>>({});
+
+  // Stage 5: Legacy fallback - primary source is pipelineSnapshot.dataHealth
+  interface DataHealth {
+    demand: { total: number; withName: number; withDomain: number; quality: 'good' | 'partial' | 'poor' };
+    supply: { total: number; withName: number; withEmail: number; quality: 'good' | 'partial' | 'poor' };
+  }
+  const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
+  const [isGeneratingNarrations, setIsGeneratingNarrations] = useState(false);
+  const optimisticIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Auto-trigger tracking (once per session per roleType)
+  const autoTriggeredRolesRef = useRef<Set<string>>(new Set());
+
+  // Live feed of recently found contacts (for enrichment UI)
+  interface FoundContact {
+    name: string;
+    title: string;
+    company: string;
+    domain: string;
+    email: string;
+    foundAt: number;
+  }
+  const [recentlyFoundContacts, setRecentlyFoundContacts] = useState<FoundContact[]>([]);
+  const maxRecentContacts = 5; // Show last 5 in live feed
+
+  // Batch send mode
+  const [batchSize, setBatchSize] = useState<number>(300);
+  const batchExecutorRef = useRef<BatchSendExecutor | null>(null);
+  const [routingProgress, setRoutingProgress] = useState<{
+    total: number;
+    completed: number;
+    startTime: number;
+  } | null>(null);
+  const [batchSummaryModal, setBatchSummaryModal] = useState<{
+    show: boolean;
+    succeeded: number;
+    demandCount: number;
+    supplyCount: number;
+    dailyTotal: number;
+    durationMs: number;
+    cancelled?: boolean;
+    skipped?: number;
+  } | null>(null);
+
+  // V2 Batch Preflight - sample preview + cancel window
+  const [showBatchPreflight, setShowBatchPreflight] = useState<boolean>(false);
+  const [preflightCountdown, setPreflightCountdown] = useState<number>(0);
+  const [preflightSendCount, setPreflightSendCount] = useState<number>(0);
+  const preflightTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const executeBatchSendRef = useRef<(() => Promise<void>) | null>(null);
+
+  // AI Queue Status - for rate limit protection UX
+  const [aiQueueStatus, setAiQueueStatus] = useState<QueueStatus | null>(null);
+
+  // First-run overlay - Apple-style 3-step intro
+  const [showFirstRunOverlay, setShowFirstRunOverlay] = useState<boolean>(false);
+  const [firstRunStep, setFirstRunStep] = useState<number>(1);
+
+  // Subscribe to AI queue status for rate-limit protection UX
+  useEffect(() => {
+    const unsubscribe = aiQueue.subscribe((status) => {
+      // Only update if there's activity or we need to show status
+      if (status.pending > 0 || status.active > 0 || status.mode !== 'normal') {
+        setAiQueueStatus(status);
+      } else {
+        setAiQueueStatus(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Check localStorage on mount to show first-run overlay
+  useEffect(() => {
+    const hasSeenFirstRun = localStorage.getItem('connector_first_run_seen');
+    if (!hasSeenFirstRun) {
+      // Small delay to let UI settle before showing overlay
+      const timer = setTimeout(() => {
+        setShowFirstRunOverlay(true);
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  // "Finding the match" animation when results first appear
+  useEffect(() => {
+    const currentCount = matchingResults.length;
+    if (prevMatchCount.current === 0 && currentCount > 0) {
+      // First time we got results - show discovery animation
+      setIsDiscoveringMatch(true);
+      const timer = setTimeout(() => {
+        setIsDiscoveringMatch(false);
+      }, 1800); // Show for 1.8 seconds
+      return () => clearTimeout(timer);
+    }
+    prevMatchCount.current = currentCount;
+  }, [matchingResults.length]);
+
+  const dismissFirstRunOverlay = () => {
+    localStorage.setItem('connector_first_run_seen', 'true');
+    localStorage.setItem('matching_engine_onboarded', 'true');
+    setShowFirstRunOverlay(false);
+    setFirstRunStep(1);
+  };
+
+  const advanceFirstRunStep = () => {
+    if (firstRunStep < 3) {
+      setFirstRunStep(firstRunStep + 1);
+    } else {
+      dismissFirstRunOverlay();
+    }
+  };
+
+  // ==========================================================================
+  // OPERATOR DAILY DASHBOARD - $10k/mo SOP
+  // ==========================================================================
+  // Daily target: 300-500 sends = ~$10k/mo revenue potential
+  const [dailyTarget, setDailyTarget] = useState<number>(300);
+  const [dailySentToday, setDailySentToday] = useState<number>(0);
+  const [dailyRepliedToday, setDailyRepliedToday] = useState<number>(0);
+  const [lastResetDate, setLastResetDate] = useState<string>(new Date().toDateString());
+  const [sessionCreditsUsed, setSessionCreditsUsed] = useState<number>(0);
+  const [paginationOffset, setPaginationOffset] = useState<number>(0);
+  const [hasMoreRecords, setHasMoreRecords] = useState<boolean>(true);
+  const [totalRecordsAvailable, setTotalRecordsAvailable] = useState<number>(0);
+
+  // UI states for operator dashboard
+  const [isEditingTarget, setIsEditingTarget] = useState<boolean>(false);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+
+  // Enrichment progress for reptile-brain feedback
+  const [enrichmentQueue, setEnrichmentQueue] = useState<number>(0);
+  const [enrichmentCompleted, setEnrichmentCompleted] = useState<number>(0);
+  const [currentEnrichingDomain, setCurrentEnrichingDomain] = useState<string | null>(null);
+
+  // Reset daily counts at midnight
+  useEffect(() => {
+    const today = new Date().toDateString();
+    if (lastResetDate !== today) {
+      setDailySentToday(0);
+      setDailyRepliedToday(0);
+      setLastResetDate(today);
+      localStorage.setItem('operator_last_reset', today);
+      localStorage.setItem('operator_sent_today', '0');
+    }
+  }, [lastResetDate]);
+
+  // Persist daily stats to localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('operator_sent_today');
+    const savedTarget = localStorage.getItem('operator_daily_target');
+    const savedDate = localStorage.getItem('operator_last_reset');
+    const today = new Date().toDateString();
+
+    if (savedDate === today && saved) {
+      setDailySentToday(parseInt(saved) || 0);
+    }
+    if (savedTarget) {
+      setDailyTarget(parseInt(savedTarget) || 300);
+    }
+  }, []);
+
+  // ==========================================================================
+  // REPLY COUNT FROM SUPABASE (Real-time)
+  // ==========================================================================
+
+  // Fetch today's reply count from Supabase (AUTHED ONLY)
+  const fetchTodayReplyCount = async () => {
+    // GUEST GUARD: Skip DB call for guests
+    if (isGuest) {
+      console.log('[Replies] Skipping fetch for guest');
+      return;
+    }
+
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayISO = today.toISOString();
+
+      const { data, error } = await supabase
+        .from('replies')
+        .select('thread_id', { count: 'exact', head: true })
+        .gte('replied_at', todayISO)
+        .eq('direction', 'inbound');
+
+      if (error) {
+        console.warn('[Replies] Failed to fetch count:', error);
+        return;
+      }
+
+      // Use count from response
+      const count = (data as any)?.length || 0;
+
+      // Also try to get distinct count
+      const { count: distinctCount } = await supabase
+        .from('replies')
+        .select('*', { count: 'exact', head: true })
+        .gte('replied_at', todayISO)
+        .eq('direction', 'inbound');
+
+      const replyCount = distinctCount || count || 0;
+      setDailyRepliedToday(replyCount);
+      localStorage.setItem('operator_replied_today', String(replyCount));
+      console.log(`[Replies] Today's count: ${replyCount}`);
+    } catch (err) {
+      console.error('[Replies] Error fetching count:', err);
+    }
+  };
+
+  // Fetch reply count on mount and set up realtime subscription (AUTHED ONLY)
+  useEffect(() => {
+    // Load from localStorage for instant UI (both guest and authed)
+    const savedReplied = localStorage.getItem('operator_replied_today');
+    const savedDate = localStorage.getItem('operator_last_reset');
+    const today = new Date().toDateString();
+    if (savedDate === today && savedReplied) {
+      setDailyRepliedToday(parseInt(savedReplied) || 0);
+    }
+
+    // GUEST GUARD: Skip DB fetch + realtime for guests
+    if (isGuest) {
+      console.log('[Replies] Skipping realtime subscription for guest');
+      return;
+    }
+
+    // Initial fetch (authed only)
+    fetchTodayReplyCount();
+
+    // Set up Supabase Realtime subscription for replies table (authed only)
+    const channel = supabase
+      .channel('replies-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'replies',
+          filter: 'direction=eq.inbound',
+        },
+        (payload) => {
+          console.log('[Replies] New reply received:', payload);
+          // Increment count
+          setDailyRepliedToday(prev => {
+            const newCount = prev + 1;
+            localStorage.setItem('operator_replied_today', String(newCount));
+            return newCount;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isGuest]);
+
+  // Persist daily target changes
+  const updateDailyTarget = (newTarget: number) => {
+    const clamped = Math.max(50, Math.min(1000, newTarget));
+    setDailyTarget(clamped);
+    localStorage.setItem('operator_daily_target', String(clamped));
+    setIsEditingTarget(false);
+  };
+
+  // Track API credit usage - ONLY for verified emails
+  // Cache of verified emails to prevent double-charging (30-day window)
+  const verifiedEmailsCacheRef = useRef<Map<string, string>>(new Map()); // email -> verifiedAt ISO
+
+  const shouldChargeCredit = (email: string, verificationStatus?: string): boolean => {
+    if (!email) return false;
+    if (verificationStatus && verificationStatus !== 'verified') return false;
+
+    // Check 30-day cache to prevent double-charging
+    const cachedAt = verifiedEmailsCacheRef.current.get(email);
+    if (cachedAt) {
+      const daysSince = (Date.now() - new Date(cachedAt).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSince < 30) {
+        console.log(`[Credits] Skipping charge for ${email} - verified ${Math.round(daysSince)}d ago`);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const trackCreditUsage = (email: string, verificationStatus?: string) => {
+    if (!shouldChargeCredit(email, verificationStatus)) return;
+
+    // Add to cache
+    verifiedEmailsCacheRef.current.set(email, new Date().toISOString());
+    setSessionCreditsUsed(prev => prev + 1);
+    console.log(`[Credits] +1 for verified email: ${email}`);
+  };
+
   // Two-contact architecture: separate demand (hiring company) and supply (provider) contacts
-  const [supplyContactByDomain, setSupplyContactByDomain] = useState<Record<string, SupplyContact | null>>({});
-  const [selectedSupplyByDomain, setSelectedSupplyByDomain] = useState<Record<string, SupplyCompany | null>>({});
+  // PHASE 4 COMPLETE: supplyContactBySupplyDomain migrated to supplyContacts[supplyDomain].contact
+  // KEYING INVARIANT:
+  // - supplyContacts[supplyDomain].contact - "who do we email at this provider?"
+  // - selectedSupplyByDemandDomain[demandDomain] - "for this demand, which supply did we pick?"
+  const [selectedSupplyByDemandDomain, setSelectedSupplyByDemandDomain] = useState<Record<string, SupplyCompany | null>>({});
   const [alternativeSupplyByDomain, setAlternativeSupplyByDomain] = useState<Record<string, SupplyCompany[]>>({});
   const [isEnrichingSupplyByDomain, setIsEnrichingSupplyByDomain] = useState<Record<string, boolean>>({});
+  const [rotationAppliedByDomain, setRotationAppliedByDomain] = useState<Record<string, boolean>>({});
+  const [expandedSupplyDomain, setExpandedSupplyDomain] = useState<string | null>(null);
+  const [matchReasoningByDemandDomain, setMatchReasoningByDemandDomain] = useState<Record<string, string>>({});
+  const [supplyMatchScoreByDomain, setSupplyMatchScoreByDomain] = useState<Record<string, number>>({});
+  // Store ALL scored matches per demand domain (for provider switching)
+  const [allScoredMatchesByDomain, setAllScoredMatchesByDomain] = useState<Record<string, ScoredSupplyMatch[]>>({});
+
+  // Company enrichment (Instantly AI) - pain points, competitors, customer profiles
+  const [companyEnrichmentByDomain, setCompanyEnrichmentByDomain] = useState<Record<string, CompanyEnrichment | null>>({});
+  const [isEnrichingCompanyByDomain, setIsEnrichingCompanyByDomain] = useState<Record<string, boolean>>({});
+  const [intelExpandedByDomain, setIntelExpandedByDomain] = useState<Record<string, boolean>>({});
 
   // Dynamic supply discovery - companies fetched from Apify supply dataset
   const [discoveredSupplyCompanies, setDiscoveredSupplyCompanies] = useState<SupplyCompany[]>([]);
   const [supplyDiscoveryStatus, setSupplyDiscoveryStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+  const [rawSupplyCount, setRawSupplyCount] = useState<number>(0); // Original contact count before filtering
 
   // Supply confirmation flow - for Option B (user-confirmed supply creation)
   const [pendingSupplyConfirmation, setPendingSupplyConfirmation] = useState<{
@@ -684,9 +1160,403 @@ function MatchingEngineV3() {
 
   const activeResult = matchingResults[activeResultIndex] || null;
 
-  const showToast = (type: 'success' | 'error' | 'warning' | 'cache', message: string) => {
+  // ============================================================================
+  // NEW STATE ARCHITECTURE - Single Source of Truth (Phase 1: Introduction)
+  // ============================================================================
+  //
+  // MIGRATION STATUS: Phase 1 - Introduction (no legacy removal yet)
+  //
+  // This replaces the 28+ domain-keyed maps with TWO authoritative sources:
+  // 1. demandStates: Record<demandDomain, DemandState> - all demand-side state
+  // 2. supplyContacts: Record<supplyDomain, SupplyContactState> - supply contacts only
+  //
+  // Key rule: demandStates is ALWAYS keyed by DEMAND domain
+  //           supplyContacts is ALWAYS keyed by SUPPLY domain
+  //           Supply is REFERENCED in DemandState by domain, never embedded
+
+  interface DemandState {
+    domain: string; // DEMAND domain - canonical key
+
+    // DEMAND CONTACT (person at the demand company)
+    contact: PersonData | null;
+    contactStatus: 'pending' | 'enriching' | 'enriched' | 'failed' | 'not_found';
+
+    // COMPANY INTEL
+    companyIntel: CompanyEnrichment | null;
+    companyIntelStatus: 'pending' | 'enriching' | 'ready' | 'failed';
+
+    // SUPPLY MATCHING (reference by domain, don't embed)
+    selectedSupplyDomain: string | null;
+    matchScore: number | null;
+    matchReasoning: string | null;
+
+    // INTROS
+    demandIntro: string | null;
+    supplyIntro: string | null;
+    introsStatus: 'pending' | 'generating' | 'ready' | 'failed';
+
+    // SEND STATUS
+    demandSendStatus: 'idle' | 'sending' | 'sent' | 'replied' | 'failed';
+    supplySendStatus: 'idle' | 'sending' | 'sent' | 'replied' | 'failed';
+
+    // META
+    lastUpdatedAt: number;
+  }
+
+  interface SupplyContactState {
+    domain: string; // SUPPLY domain - canonical key
+    contact: SupplyContact | null;
+    contactStatus: 'pending' | 'enriching' | 'enriched' | 'failed' | 'not_found';
+    lastUpdatedAt: number;
+  }
+
+  // DEFAULT FACTORIES
+  const createDefaultDemandState = (domain: string): DemandState => ({
+    domain,
+    contact: null,
+    contactStatus: 'pending',
+    companyIntel: null,
+    companyIntelStatus: 'pending',
+    selectedSupplyDomain: null,
+    matchScore: null,
+    matchReasoning: null,
+    demandIntro: null,
+    supplyIntro: null,
+    introsStatus: 'pending',
+    demandSendStatus: 'idle',
+    supplySendStatus: 'idle',
+    lastUpdatedAt: Date.now(),
+  });
+
+  const createDefaultSupplyContactState = (domain: string): SupplyContactState => ({
+    domain,
+    contact: null,
+    contactStatus: 'pending',
+    lastUpdatedAt: Date.now(),
+  });
+
+  // Stage 5: Legacy fallback state - primary source is pipelineSnapshot
+  // PHASE 4 COMPLETE: Single source of truth for all domain state
+  // - demandStates[demandDomain] = all demand-side state (contact, intros, send status, etc.)
+  // - supplyContacts[supplyDomain] = supply contact state only
+  const [demandStates, setDemandStates] = useState<Record<string, DemandState>>({});
+  const [supplyContacts, setSupplyContacts] = useState<Record<string, SupplyContactState>>({});
+
+  // REFS to avoid stale closures in async callbacks
+  const demandStatesRef = useRef<Record<string, DemandState>>({});
+  const supplyContactsRef = useRef<Record<string, SupplyContactState>>({});
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    demandStatesRef.current = demandStates;
+  }, [demandStates]);
+
+  useEffect(() => {
+    supplyContactsRef.current = supplyContacts;
+  }, [supplyContacts]);
+
+  // HELPERS - these never return undefined, always return a valid state object
+  const getDemandState = (domain: string): DemandState => {
+    return demandStatesRef.current[domain] || createDefaultDemandState(domain);
+  };
+
+  const getSupplyContactState = (domain: string): SupplyContactState => {
+    return supplyContactsRef.current[domain] || createDefaultSupplyContactState(domain);
+  };
+
+  // UPDATE HELPERS - immutable updates with automatic timestamp
+  const updateDemandState = (domain: string, updates: Partial<DemandState>): void => {
+    setDemandStates(prev => ({
+      ...prev,
+      [domain]: {
+        ...(prev[domain] || createDefaultDemandState(domain)),
+        ...updates,
+        lastUpdatedAt: Date.now(),
+      }
+    }));
+  };
+
+  const updateSupplyContactState = (domain: string, updates: Partial<SupplyContactState>): void => {
+    setSupplyContacts(prev => ({
+      ...prev,
+      [domain]: {
+        ...(prev[domain] || createDefaultSupplyContactState(domain)),
+        ...updates,
+        lastUpdatedAt: Date.now(),
+      }
+    }));
+  };
+
+  // BATCH UPDATE - for initializing multiple domains at once
+  const batchUpdateDemandStates = (updates: Record<string, Partial<DemandState>>): void => {
+    setDemandStates(prev => {
+      const next = { ...prev };
+      for (const [domain, domainUpdates] of Object.entries(updates)) {
+        next[domain] = {
+          ...(prev[domain] || createDefaultDemandState(domain)),
+          ...domainUpdates,
+          lastUpdatedAt: Date.now(),
+        };
+      }
+      return next;
+    });
+  };
+
+  // ============================================================================
+  // PHASE 4: STATE WRITE HELPERS (single source of truth)
+  // ============================================================================
+  // These helpers write ONLY to new state. Legacy state has been removed.
+
+  const setDemandIntro = (domain: string, intro: string | null) => {
+    updateDemandState(domain, { demandIntro: intro, introsStatus: intro ? 'ready' : 'pending' });
+  };
+
+  const setSupplyIntro = (domain: string, intro: string | null) => {
+    updateDemandState(domain, { supplyIntro: intro });
+  };
+
+  const setDemandContact = (domain: string, contact: PersonData | null) => {
+    updateDemandState(domain, {
+      contact,
+      contactStatus: contact?.email ? 'enriched' : contact ? 'enriched' : 'pending'
+    });
+  };
+
+  const setSupplyContactForDomain = (supplyDomain: string, contact: SupplyContact | null) => {
+    updateSupplyContactState(supplyDomain, {
+      contact,
+      contactStatus: contact?.email ? 'enriched' : 'pending'
+    });
+  };
+
+  // ============================================================================
+  // END NEW STATE ARCHITECTURE
+  // ============================================================================
+
+  // ============================================================================
+  // LOCAL STORAGE PERSISTENCE - Prevents data loss on navigation
+  // ============================================================================
+  const CACHE_KEY = 'matching_engine_state_v2';
+  const LEGACY_CACHE_KEY = 'matching_engine_state_v1';
+  const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+  // Restore state from localStorage on mount - deferred to avoid blocking first paint
+  useEffect(() => {
+    const restoreCache = () => {
+      try {
+        // MIGRATION: Clear legacy v1 cache (ambiguous key semantics)
+        if (localStorage.getItem(LEGACY_CACHE_KEY)) {
+          localStorage.removeItem(LEGACY_CACHE_KEY);
+          console.log('[Cache] Legacy cache cleared (v1 → v2)');
+        }
+
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (!cached) return;
+
+        const { data, timestamp } = JSON.parse(cached);
+        const age = Date.now() - timestamp;
+
+        if (age > CACHE_TTL) {
+          localStorage.removeItem(CACHE_KEY);
+          return;
+        }
+
+        // Batch state updates to minimize re-renders
+        if (data.matchingResults?.length > 0) setMatchingResults(data.matchingResults);
+        if (data.signals) setSignals(data.signals);
+
+        // Phase 4: Restore directly to new state (single source of truth)
+        if (data.demandStates) {
+          setDemandStates(data.demandStates);
+          demandStatesRef.current = data.demandStates;
+        }
+        if (data.supplyContacts) {
+          setSupplyContacts(data.supplyContacts);
+          supplyContactsRef.current = data.supplyContacts;
+        }
+
+        // Keep other state that wasn't migrated
+        if (data.demandStatusByDomain) setDemandStatusByDomain(data.demandStatusByDomain);
+        if (data.supplyStatusByDomain) setSupplyStatusByDomain(data.supplyStatusByDomain);
+        if (data.introUnlockedByDomain) setIntroUnlockedByDomain(data.introUnlockedByDomain);
+        if (data.selectedSupplyByDemandDomain) setSelectedSupplyByDemandDomain(data.selectedSupplyByDemandDomain);
+        if (data.pressureDetection) setPressureDetection(data.pressureDetection);
+        if (data.discoveredSupplyCompanies?.length > 0) {
+          setDiscoveredSupplyCompanies(data.discoveredSupplyCompanies);
+          setSupplyDiscoveryStatus('loaded');
+        }
+
+        // Reassurance: Show user their progress was restored
+        const readyCount = Object.values(data.demandStates || {}).filter((s: any) => s?.contact?.email).length;
+        if (readyCount > 0 || data.matchingResults?.length > 0) {
+          console.log('[Cache] Restored session:', readyCount, 'contacts ready,', data.matchingResults?.length || 0, 'matches');
+          showToast('success', `Welcome back — ${readyCount > 0 ? `${readyCount} contacts ready` : 'resuming where you left off'}`);
+        }
+      } catch {
+        localStorage.removeItem(CACHE_KEY);
+      }
+    };
+
+    // Defer restore to after first paint for smooth load
+    if ('requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(restoreCache, { timeout: 100 });
+    } else {
+      setTimeout(restoreCache, 0);
+    }
+  }, []);
+
+  // Save state to localStorage when key data changes
+  useEffect(() => {
+    // Only save if we have meaningful data
+    if (matchingResults.length === 0 && !signals.jobs.isLive) return;
+
+    // Limit cached results to reduce storage size
+    const limitedResults = matchingResults.slice(0, 50).map(r => ({
+      ...r,
+      rawPayload: undefined, // Strip large raw data
+    }));
+
+    // Strip raw payloads from signals too
+    const lightSignals = {
+      ...signals,
+      jobs: { ...signals.jobs, rawPayload: undefined },
+      funding: { ...signals.funding, rawPayload: undefined },
+      layoffs: { ...signals.layoffs, rawPayload: undefined },
+      hiringVelocity: { ...signals.hiringVelocity, rawPayload: undefined },
+      toolAdoption: { ...signals.toolAdoption, rawPayload: undefined },
+    };
+
+    // Limit domain-keyed objects
+    const limitDomainObject = <T,>(obj: Record<string, T>, limit = 30): Record<string, T> => {
+      const keys = Object.keys(obj).slice(0, limit);
+      return keys.reduce((acc, key) => ({ ...acc, [key]: obj[key] }), {});
+    };
+
+    // Phase 4: Cache new state (single source of truth)
+    const stateToCache = {
+      matchingResults: limitedResults,
+      signals: lightSignals,
+      demandStates: limitDomainObject(demandStates),
+      supplyContacts: limitDomainObject(supplyContacts),
+      demandStatusByDomain: limitDomainObject(demandStatusByDomain),
+      supplyStatusByDomain: limitDomainObject(supplyStatusByDomain),
+      introUnlockedByDomain: limitDomainObject(introUnlockedByDomain),
+      selectedSupplyByDemandDomain: limitDomainObject(selectedSupplyByDemandDomain),
+      pressureDetection,
+      discoveredSupplyCompanies: discoveredSupplyCompanies.slice(0, 20),
+    };
+
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        data: stateToCache,
+        timestamp: Date.now(),
+      }));
+      console.log('[MatchingEngine] State cached');
+    } catch (error) {
+      // Quota exceeded - clear cache and try again
+      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        console.warn('[MatchingEngine] Cache quota exceeded, clearing old cache');
+        localStorage.removeItem(CACHE_KEY);
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({
+            data: stateToCache,
+            timestamp: Date.now(),
+          }));
+        } catch {
+          console.error('[MatchingEngine] Still cannot cache after clearing');
+        }
+      } else {
+        console.error('[MatchingEngine] Failed to cache state:', error);
+      }
+    }
+  }, [
+    matchingResults,
+    signals,
+    demandStates,
+    supplyContacts,
+    demandStatusByDomain,
+    supplyStatusByDomain,
+    introUnlockedByDomain,
+    selectedSupplyByDemandDomain,
+    pressureDetection,
+    discoveredSupplyCompanies,
+  ]);
+
+  // Clear cache function (for manual refresh)
+  const clearStateCache = () => {
+    localStorage.removeItem(CACHE_KEY);
+    console.log('[MatchingEngine] Cache cleared');
+  };
+
+  const showToast = (type: 'success' | 'error' | 'warning' | 'cache' | 'info', message: string) => {
     setToastNotification({ type, message });
     setTimeout(() => setToastNotification(null), 4000);
+  };
+
+  // Load More Companies - pagination for datasets > 100
+  const loadMoreCompanies = async () => {
+    if (isLoadingMore || !hasMoreRecords) return;
+
+    setIsLoadingMore(true);
+    console.log(`[Pagination] Loading more from offset ${paginationOffset}...`);
+
+    try {
+      const config = await loadSignalsConfig();
+      // Check both new field (demandDatasetId) and deprecated field (jobsApiUrl)
+      if (!config.demandDatasetId && !config.jobsApiUrl) {
+        showToast('error', 'No dataset URL configured');
+        setIsLoadingMore(false);
+        return;
+      }
+
+      // Fetch next batch with offset
+      const result = await fetchJobSignals(config, '', {
+        limit: FETCH_LIMITS.JOBS_BATCH,
+        offset: paginationOffset,
+      });
+
+      if (result.rawPayload?.data && Array.isArray(result.rawPayload.data)) {
+        const newItems = result.rawPayload.data;
+        const newCount = newItems.length;
+
+        if (newCount === 0) {
+          setHasMoreRecords(false);
+          showToast('info', 'All companies loaded');
+        } else {
+          // Append to existing signals
+          setSignals(prev => {
+            const existingData = prev.jobs?.rawPayload?.data || [];
+            return {
+              ...prev,
+              jobs: {
+                ...prev.jobs,
+                rawPayload: {
+                  ...prev.jobs?.rawPayload,
+                  data: [...existingData, ...newItems],
+                },
+              },
+            };
+          });
+
+          // Update pagination state
+          const newOffset = paginationOffset + newCount;
+          setPaginationOffset(newOffset);
+          setTotalRecordsAvailable(prev => prev + newCount);
+          setHasMoreRecords(newCount >= FETCH_LIMITS.JOBS_BATCH);
+
+          showToast('success', `Loaded ${newCount} more companies`);
+          console.log(`[Pagination] Loaded ${newCount} more, total offset now ${newOffset}`);
+        }
+      } else {
+        setHasMoreRecords(false);
+        showToast('info', 'No more companies');
+      }
+    } catch (error) {
+      console.error('[Pagination] Load more failed:', error);
+      showToast('error', 'Failed to load more');
+    } finally {
+      setIsLoadingMore(false);
+    }
   };
 
   const previousState = useRef<{
@@ -704,16 +1574,92 @@ function MatchingEngineV3() {
   });
 
   useEffect(() => {
-    loadSettingsFromDatabase();
-    loadSignalHistory();
-  }, []);
+    // Guest mode: load settings read-only (enrichment works), skip DB writes
+    // Auth mode: full flow with row creation + signal history
+    if (!user?.id) {
+      // Guest: just load settings (enrichment config etc), skip history
+      loadSettingsFromDatabase();
+      setSettingsLoaded(true);
+      return;
+    }
+
+    ensureOperatorSettingsRow().then(() => {
+      loadSettingsFromDatabase();
+      loadSignalHistory();
+    });
+  }, [user?.id]);
+
+  /**
+   * Ensure operator_settings row exists before any reads/writes.
+   * Prevents 400 errors from missing rows.
+   * AUTHED ONLY - never called for guests.
+   */
+  const ensureOperatorSettingsRow = async () => {
+    // GUEST GUARD: This should never be called for guests
+    if (isGuest) {
+      console.warn('[Settings] ensureOperatorSettingsRow called for guest - skipping');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('operator_settings')
+        .upsert(
+          { user_id: user!.id },
+          { onConflict: 'user_id', ignoreDuplicates: true }
+        );
+      if (error) {
+        console.warn('[Settings] Failed to ensure row exists:', error.message);
+      }
+    } catch (err) {
+      console.warn('[Settings] Error ensuring row:', err);
+    }
+  };
 
   const loadSettingsFromDatabase = async () => {
     try {
+      // Guest mode: read from localStorage instead of DB
+      if (!user?.id) {
+        const cached = localStorage.getItem('guest_settings');
+        if (cached) {
+          const { settings, profile } = JSON.parse(cached);
+          setEnrichmentConfig({
+            provider: 'apollo',
+            apiKey: settings?.enrichmentApiKey || undefined,
+            anymailFinderApiKey: settings?.anymailFinderApiKey || undefined,
+            ssmApiKey: settings?.ssmApiKey || undefined,
+          });
+          setInstantlyConfig({
+            apiKey: settings?.instantlyApiKey || '',
+            campaignId: '',
+            campaignDemand: settings?.instantlyCampaignDemand || '',
+            campaignSupply: settings?.instantlyCampaignSupply || ''
+          });
+          // Load AI config for intro generation
+          const provider = settings?.aiProvider || 'openai';
+          setAiConfig({
+            openaiKey: provider === 'openai' ? (settings?.aiOpenaiApiKey || '') : '',
+            azureKey: provider === 'azure' ? (settings?.aiAzureApiKey || '') : '',
+            azureEndpoint: provider === 'azure' ? (settings?.aiAzureEndpoint || '') : '',
+            azureDeployment: provider === 'azure' ? (settings?.aiAzureDeployment || 'gpt-4o') : '',
+            claudeKey: provider === 'anthropic' ? (settings?.aiAnthropicApiKey || '') : '',
+            model: 'gpt-4o',
+            enableRewrite: true,
+            enableCleaning: true,
+            enableEnrichment: true,
+            enableForecasting: false,
+          });
+          if (profile) setConnectorProfile(profile);
+          console.log('[Settings] Loaded from localStorage (guest mode), AI provider:', provider);
+        }
+        setSettingsLoaded(true);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('operator_settings')
         .select('*')
-        .eq('user_id', 'default')
+        .eq('user_id', user.id)
         .maybeSingle();
 
       if (error) throw error;
@@ -730,14 +1676,15 @@ function MatchingEngineV3() {
         });
 
         // Build AI config based on selected provider
-        const selectedProvider = data.ai_provider || 'none';
+        const selectedProvider = data.ai_provider || 'openai';
         const loadedAiConfig = {
           // Map keys based on selected provider
           openaiKey: selectedProvider === 'openai' ? (data.ai_openai_api_key || '') : '',
           azureKey: selectedProvider === 'azure' ? (data.ai_azure_api_key || '') : '',
           azureEndpoint: selectedProvider === 'azure' ? (data.ai_azure_endpoint || '') : '',
+          azureDeployment: selectedProvider === 'azure' ? (data.ai_azure_deployment || 'gpt-4o') : '',
           claudeKey: selectedProvider === 'anthropic' ? (data.ai_anthropic_api_key || '') : '',
-          model: data.ai_model || 'gpt-4o-mini',
+          model: data.ai_model || 'gpt-4o',
           enableRewrite: data.ai_enable_rewrite ?? true,
           enableCleaning: data.ai_enable_signal_cleaning ?? true,
           enableEnrichment: data.ai_enable_enrichment ?? true,
@@ -770,6 +1717,7 @@ function MatchingEngineV3() {
           apiKey: data.enrichment_api_key || undefined,
           endpointUrl: data.enrichment_endpoint_url || undefined,
           anymailFinderApiKey: data.anymail_finder_api_key || undefined,
+          ssmApiKey: data.ssm_api_key || undefined,
         });
 
         setInstantlyConfig({
@@ -808,6 +1756,26 @@ function MatchingEngineV3() {
           departments: deptString ? deptString.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
           keywords: keywordsString ? keywordsString.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
         });
+
+        // Load pressure detection from PressureInversionEngine
+        if (data.pressure_detection) {
+          setPressureDetection(data.pressure_detection as PressureDetectionResult);
+        }
+
+        // Load trusted supply pools
+        if (data.trusted_supply_pools) {
+          setTrustedSupplyPools(data.trusted_supply_pools as TrustedSupplyPools);
+        }
+
+        // Load trusted demand pools
+        if (data.trusted_demand_pools) {
+          setTrustedDemandPools(data.trusted_demand_pools as TrustedDemandPools);
+        }
+
+        // Load pre-enriched contacts pools
+        if (data.pre_enriched_pools) {
+          setPreEnrichedPools(data.pre_enriched_pools as PreEnrichedContactsPools);
+        }
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -817,11 +1785,26 @@ function MatchingEngineV3() {
   };
 
   const loadSignalHistory = async () => {
+    // GUEST: Load from localStorage
+    if (isGuest) {
+      try {
+        const cached = localStorage.getItem('guest_signal_history');
+        if (cached) {
+          const history = JSON.parse(cached);
+          setSignalHistory(history);
+        }
+      } catch (err) {
+        console.warn('[SignalHistory] Failed to load from localStorage:', err);
+      }
+      return;
+    }
+
+    // AUTHED: Load from DB with actual user.id
     try {
       const { data, error } = await supabase
         .from('signal_history')
         .select('signal_strength, created_at')
-        .eq('user_id', 'default')
+        .eq('user_id', user!.id)
         .order('created_at', { ascending: false })
         .limit(10);
 
@@ -873,16 +1856,39 @@ function MatchingEngineV3() {
   };
 
   const saveSignalToHistory = async (strength: number, trend: SignalTrend, forecast: string) => {
+    const historyEntry = {
+      signalStrength: strength,
+      timestamp: new Date().toISOString(),
+    };
+
+    // GUEST: Save to localStorage
+    if (isGuest) {
+      try {
+        const cached = localStorage.getItem('guest_signal_history');
+        const history: SignalHistory[] = cached ? JSON.parse(cached) : [];
+        history.push(historyEntry);
+        // Keep only last 10 entries
+        const trimmed = history.slice(-10);
+        localStorage.setItem('guest_signal_history', JSON.stringify(trimmed));
+        setSignalHistory(trimmed);
+      } catch (err) {
+        console.warn('[SignalHistory] Failed to save to localStorage:', err);
+      }
+      return;
+    }
+
+    // AUTHED: Save to DB with actual user.id
     try {
       const whoRoles = activeResult?.whoHasPressureRoles || [];
       const titles = activeResult?.targetTitles || [];
-      const personData = activeResult ? personDataByDomain[activeResult.domain] : null;
+      // Phase 2: Read from new state
+      const personData = activeResult ? getDemandState(activeResult.domain).contact : null;
       const personPressureProfile = activeResult ? personPressureProfileByDomain[activeResult.domain] : null;
 
       const { error } = await supabase
         .from('signal_history')
         .insert({
-          user_id: 'default',
+          user_id: user!.id,
           signal_strength: strength,
           jobs_count: trend.jobsCount,
           funding_amount: trend.fundingAmount,
@@ -913,9 +1919,12 @@ function MatchingEngineV3() {
   const logUsage = async (introGenerated: boolean = false) => {
     if (!user) return;
 
+    // Check if user.id is a valid UUID (SAAS mode) or a placeholder (non-SAAS mode)
+    const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
+
     try {
       await supabase.from('usage_logs').insert({
-        user_id: user.id,
+        user_id: isValidUuid ? user.id : null,
         tool_name: 'Matching Engine V3',
         signal_strength: signalStrength,
         pressure_forecast: predictionResult.pressureForecast,
@@ -926,11 +1935,12 @@ function MatchingEngineV3() {
             services: provider.servicesDelivered,
             tier: user.tier,
           },
+          username: user.username,
         },
         created_at: new Date().toISOString(),
       });
     } catch {
-      // Silently fail - usage_logs table may not exist in free tier
+      // Silently fail - usage_logs table may not exist or RLS issue
     }
   };
 
@@ -964,16 +1974,29 @@ function MatchingEngineV3() {
   }, [signals, emailAlertsEnabled, alertEmail, user]);
 
   const fetchSignals = async () => {
+    console.log('[MatchingEngine] fetchSignals called - starting refresh');
+    clearStateCache(); // Clear cached state on manual refresh
     setIsRefreshing(true);
+    console.log('[MatchingEngine] isRefreshing set to true');
     setSignals(prev => ({ ...prev, loading: true, error: null }));
 
-    // Clear all cached provider data when refreshing (important when dataset URL changes)
-    setSelectedSupplyByDomain({});
+    // Phase 4: Clear new state (single source of truth)
+    setDemandStates({});
+    demandStatesRef.current = {};
+    setSupplyContacts({});
+    supplyContactsRef.current = {};
+
+    // Clear other state that wasn't fully migrated
+    setSelectedSupplyByDemandDomain({});
     setAlternativeSupplyByDomain({});
-    setSupplyContactByDomain({});
-    setSupplyIntroByDomain({});
     setIsEnrichingSupplyByDomain({});
-    console.log('[MatchingEngine] Cleared cached provider data for fresh reload');
+    batchIntroGenerationRef.current = false; // Allow batch intros to regenerate
+
+    // Clear demand pools on refresh to prevent stale accumulation (243 vs 96 bug)
+    setTrustedDemandPools(createEmptyDemandPools());
+    setPreEnrichedPools(createEmptyPreEnrichedPools());
+
+    console.log('[MatchingEngine] Cleared cached provider data + pools + intros for fresh reload');
 
     try {
       const config = await loadSignalsConfig();
@@ -990,16 +2013,142 @@ function MatchingEngineV3() {
       ]);
 
       // Fetch supply signals (dynamic provider discovery)
-      if (config.supplyApiUrl) {
+      const supplyUrl = config.supplyDatasetId || config.supplyApiUrl;
+      if (supplyUrl) {
         setSupplyDiscoveryStatus('loading');
         try {
-          const supplyResult = await fetchSupplySignals(config.supplyApiUrl);
+          const supplyResult = await fetchSupplySignals(supplyUrl, undefined, undefined, config.apifyToken);
           if (supplyResult.isLive) {
             setDiscoveredSupplyCompanies(supplyResult.companies);
+            setRawSupplyCount(supplyResult.totalDiscovered || supplyResult.companies.length);
             setSupplyDiscoveryStatus('loaded');
             console.log(`[Supply] Discovered ${supplyResult.companies.length} supply companies from ${supplyResult.totalDiscovered} total`);
             // Debug: Log first 5 supply companies to trace where they come from
             console.log('[Supply] First 5 companies:', supplyResult.companies.slice(0, 5).map(c => `${c.name} (${c.domain})`));
+
+            // ================================================================
+            // AUTO-POPULATE SUPPLY CONTACTS FROM APIFY DATA
+            // If dataset already has email/name, verify then USE IT
+            // ================================================================
+            const anymailKey = config.anymailFinderApiKey;
+            let withEmail = 0;
+            let withNameOnly = 0;
+            let needsEnrichment = 0;
+            let verified = 0;
+            let discarded = 0;
+
+            // Collect supplies with emails for verification
+            const suppliesToVerify: Array<{ supply: typeof supplyResult.companies[0]; email: string }> = [];
+
+            for (const supply of supplyResult.companies) {
+              const existing = supply.existingContact;
+
+              if (existing?.email && supply.domain) {
+                suppliesToVerify.push({ supply, email: existing.email });
+                withEmail++;
+              } else if (existing?.name && supply.domain) {
+                withNameOnly++;
+              } else {
+                needsEnrichment++;
+              }
+            }
+
+            console.log(`[Supply] Found ${withEmail} emails from dataset, ${withNameOnly} have names only, ${needsEnrichment} need enrichment`);
+
+            // DO NOT auto-verify on load - saves Anymail credits
+            // User can manually enrich/verify when they select a contact
+            const autoPopulatedContacts: Record<string, SupplyContact> = {};
+
+            if (suppliesToVerify.length > 0) {
+              console.log(`[Supply] Using ${suppliesToVerify.length} emails from dataset (no auto-verification)`);
+              for (const { supply, email } of suppliesToVerify) {
+                const existing = supply.existingContact;
+                autoPopulatedContacts[supply.domain] = {
+                  email: email,
+                  name: existing?.name || 'there',
+                  title: existing?.title || '',
+                  company: supply.name,
+                  domain: supply.domain,
+                  linkedin: existing?.linkedin,
+                  confidence: 70, // Unverified - will verify on manual enrich
+                };
+                verified++;
+              }
+            }
+
+            // Merge with existing contacts (don't overwrite manual enrichments)
+            // Phase 3: Use dual-write helper for each auto-populated supply contact
+            if (Object.keys(autoPopulatedContacts).length > 0) {
+              for (const [supplyDomain, contact] of Object.entries(autoPopulatedContacts)) {
+                // Only set if not already enriched (existing manual enrichments take priority)
+                if (!supplyContactsRef.current[supplyDomain]?.contact?.email) {
+                  setSupplyContactForDomain(supplyDomain, contact);
+                }
+              }
+            }
+
+            console.log(`[Supply] Auto-populated: ${verified} verified, ${discarded} discarded, ${withNameOnly} need Anymail, ${needsEnrichment} need Apollo`);
+
+            // ================================================================
+            // TRIGGER BACKGROUND SUPPLY ENRICHMENT
+            // Enriches supply companies without emails (in parallel with demand)
+            // ================================================================
+            const apolloKey = config.apolloApiKey;
+            // anymailKey already declared above for verification
+            if (apolloKey && (withNameOnly > 0 || needsEnrichment > 0)) {
+              const alreadyEnrichedDomains = new Set(Object.keys(autoPopulatedContacts));
+
+              // Create enrichment function using findSupplyContact
+              const supplyEnrichFn = async (domain: string, companyName: string) => {
+                try {
+                  const contact = await findSupplyContact(
+                    apolloKey,
+                    domain,
+                    companyName,
+                    undefined, // existingContact
+                    getSupplyEnrichmentTitles('sales', detectedNiche) // Niche-aware titles
+                  );
+                  if (contact?.email) {
+                    return {
+                      email: contact.email,
+                      name: contact.name,
+                      title: contact.title,
+                      company: contact.company,
+                      domain: contact.domain,
+                      linkedin: contact.linkedin,
+                      confidence: contact.confidence
+                    };
+                  }
+                  return null;
+                } catch (err) {
+                  console.error(`[SupplyEnrich] Error for ${companyName}:`, err);
+                  return null;
+                }
+              };
+
+              // Start background enrichment (fire-and-forget)
+              startBackgroundSupplyEnrichment(
+                supplyResult.companies.map(c => ({ domain: c.domain, name: c.name })),
+                alreadyEnrichedDomains,
+                supplyEnrichFn,
+                (domain, contact) => {
+                  // Phase 3: Use dual-write helper
+                  setSupplyContactForDomain(domain, {
+                    email: contact.email,
+                    name: contact.name,
+                    title: contact.title,
+                    company: contact.company,
+                    domain: contact.domain,
+                    linkedin: contact.linkedin,
+                    confidence: contact.confidence
+                  });
+                },
+                (progress) => {
+                  console.log(`[SupplyEnrich] Progress: ${progress.succeeded}/${progress.enriched} of ${progress.total}`);
+                }
+              );
+              console.log(`[Supply] Started background enrichment for ${withNameOnly + needsEnrichment} supply companies`);
+            }
           } else {
             setSupplyDiscoveryStatus('error');
           }
@@ -1044,10 +2193,102 @@ function MatchingEngineV3() {
       }));
 
       if (jobsRes.status === 'fulfilled' && jobsRes.value.rawPayload?.data) {
-        const richJobs = createRichJobsSignal(jobsRes.value.rawPayload.data);
+        const rawItems = jobsRes.value.rawPayload.data;
+        const richJobs = createRichJobsSignal(rawItems);
         setRichJobsSignal(richJobs);
+
+        // ================================================================
+        // PRE-POPULATE personDataByDomain FROM DATASET CONTACTS
+        // Uses existingContact from extractJobLikeFields (single source of truth)
+        // ================================================================
+        const prePopulatedContacts: Record<string, PersonData> = {};
+        let prePopulatedCount = 0;
+
+        for (const item of rawItems) {
+          // Use existingContact from normalized data (already extracted by SignalsClient)
+          // Falls back to raw item extraction for backwards compatibility
+          const existing = item.existingContact || extractJobLikeFields(item.raw || item).existingContact;
+          if (!existing?.email || !existing.email.includes('@')) continue;
+
+          // Extract domain from normalized data or raw
+          let domain = item.company?.url || item.company_url;
+          if (!domain) {
+            const extracted = extractJobLikeFields(item.raw || item);
+            domain = extracted.companyUrl || safeLower(extracted.companyName).replace(/[^a-z0-9]/g, '') + '.com';
+          }
+          domain = domain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+          if (!domain) continue;
+
+          // Only add if we don't already have this domain
+          if (!prePopulatedContacts[domain]) {
+            prePopulatedContacts[domain] = {
+              email: existing.email,
+              name: existing.name || '',
+              title: existing.title || '',
+              linkedin: existing.linkedin || '',
+              confidence: 95, // High confidence - direct from dataset
+            };
+            prePopulatedCount++;
+          }
+        }
+
+        if (prePopulatedCount > 0) {
+          console.log(`[Dataset] Pre-populated ${prePopulatedCount} contacts from dataset (will skip enrichment)`);
+          // Phase 4: Use new state ref for check, existing enrichments take priority
+          for (const [domain, contact] of Object.entries(prePopulatedContacts)) {
+            if (!demandStatesRef.current[domain]?.contact) {
+              setDemandContact(domain, contact);
+            }
+          }
+        }
+
+        // Run pressure detection on fetched data
+        const detectedPressure = detectHiringPressure({ source: 'jobs', rawItems });
+        if (detectedPressure.pressureDetected) {
+          console.log('[MatchingEngine] Pressure detected:', detectedPressure.roleType, 'confidence:', detectedPressure.confidence);
+          setPressureDetection(detectedPressure);
+        }
+
+        // NOTE: Dataset contacts are stored in demandStates via setDemandContact above.
+        // They get added to preEnrichedPools when user initiates routing (not auto on load).
+        // This ensures STATE 3 (results) shows before STATE 5 (ready to route).
+
+        // Run AI niche detection (fire and forget - doesn't block UI)
+        if (Array.isArray(rawItems) && rawItems.length > 0) {
+          setIsDetectingNiche(true);
+          // First, get heuristic immediately (fast)
+          const heuristicNiche = detectNicheHeuristic(rawItems);
+          setDetectedNiche(heuristicNiche);
+
+          // Then, try AI detection (async, will override heuristic if successful)
+          console.log('[NicheDetection] AI config check:', { hasConfig: !!aiConfig, isConfigured: aiConfig ? isAIConfigured(aiConfig) : false });
+          if (aiConfig && isAIConfigured(aiConfig)) {
+            console.log('[NicheDetection] Calling AI niche detection...');
+            detectDatasetNiche(rawItems, aiConfig).then((aiNiche) => {
+              console.log('[NicheDetection] AI returned:', aiNiche?.niche, 'confidence:', aiNiche?.confidence);
+              if (aiNiche && aiNiche.confidence > heuristicNiche.confidence) {
+                setDetectedNiche(aiNiche);
+                console.log('[MatchingEngine] AI niche detected:', aiNiche.niche, '|', aiNiche.oneLiner);
+              }
+            }).catch((err) => {
+              console.error('[MatchingEngine] AI niche detection failed:', err);
+            }).finally(() => {
+              setIsDetectingNiche(false);
+            });
+          } else {
+            setIsDetectingNiche(false);
+          }
+        }
+
+        // Check if there are more records to load (pagination)
+        const itemCount = Array.isArray(rawItems) ? rawItems.length : 0;
+        setHasMoreRecords(itemCount >= 100); // If we got 100, there's probably more
+        setTotalRecordsAvailable(itemCount);
+        setPaginationOffset(itemCount);
+        console.log(`[Pagination] Loaded ${itemCount} records, hasMore: ${itemCount >= 100}`);
       } else {
         setRichJobsSignal(null);
+        setHasMoreRecords(false);
       }
 
       if (fundingRes.status === 'fulfilled' && fundingRes.value.rawPayload?.dataset) {
@@ -1089,6 +2330,17 @@ function MatchingEngineV3() {
     }
   };
 
+  // REMOVED: Auto-fetch - user must click "Scan for signals" button
+  // User controls when to start scanning (saves tokens + gives control)
+  // const hasAutoFetchedRef = useRef(false);
+  // useEffect(() => {
+  //   if (settingsLoaded && !hasAutoFetchedRef.current) {
+  //     hasAutoFetchedRef.current = true;
+  //     console.log('[MatchingEngine] Auto-fetching signals on first load...');
+  //     fetchSignals();
+  //   }
+  // }, [settingsLoaded]);
+
   // REMOVED: Auto-fetch on provider change - user must manually refresh to save tokens
   // useEffect(() => {
   //   const debounceTimer = setTimeout(() => {
@@ -1104,6 +2356,685 @@ function MatchingEngineV3() {
   //   }, 15 * 60 * 1000);
   //   return () => clearInterval(interval);
   // }, []);
+
+  // ============================================================================
+  // PIPELINE INTEGRATION (Stage 5: Pipeline is the system)
+  // PipelineRunSnapshot drives UI, legacy state for fallback only
+  // ============================================================================
+  const pipelineTriggeredRef = useRef(false);
+  const [shadowPipelineRunning, setShadowPipelineRunning] = useState(false);
+  const [pipelineSnapshot, setPipelineSnapshot] = useState<PipelineRunSnapshot | null>(null);
+
+  useEffect(() => {
+    // Stage 5: Pipeline is the system (no feature flags)
+    // Only run once per data load
+    if (pipelineTriggeredRef.current) return;
+    // Don't run if already running
+    if (shadowPipelineRunning) return;
+    // Wait for settings to load
+    if (!settingsLoaded) return;
+    // Need raw data for pipeline
+    if (!signals.jobs.rawPayload) {
+      console.log('[Pipeline] No raw demand data available yet');
+      return;
+    }
+    // Stage 5: Trigger on raw data availability
+    const hasDemandData = signals.jobs.rawPayload?.data?.length > 0 || signals.jobs.rawPayload?.length > 0;
+    if (!hasDemandData || discoveredSupplyCompanies.length === 0) return;
+
+    pipelineTriggeredRef.current = true;
+    setShadowPipelineRunning(true);
+
+    // Stage 5: Legacy comparison removed - stub snapshot for compatibility
+    const legacySnapshot = {
+      matchCount: 0,
+      domains: [] as string[],
+      enrichedCount: 0,
+      readyToSendCount: 0,
+    };
+
+    console.log('[Pipeline] Starting pipeline run...');
+
+    // Prepare pipeline config
+    const pipelineConfig: PipelineIntegrationConfig = {
+      aiConfig: aiConfig,
+      enrichmentConfig: {
+        apiKey: enrichmentConfig.apiKey,
+        anymailFinderApiKey: enrichmentConfig.anymailFinderApiKey,
+        ssmApiKey: enrichmentConfig.ssmApiKey,
+      },
+      instantlyConfig: instantlyConfig ? {
+        apiKey: instantlyConfig.apiKey,
+        campaignDemand: instantlyConfig.campaignDemand,
+        campaignSupply: instantlyConfig.campaignSupply,
+      } : null,
+      userId: user?.id || null,
+    };
+
+    console.log('[Shadow] Running shadow pipeline...');
+    console.log('[Shadow] Config:', {
+      aiConfigured: !!aiConfig && isAIConfigured(aiConfig),
+      enrichmentConfigured: !!enrichmentConfig.apiKey,
+      instantlyConfigured: !!instantlyConfig?.apiKey,
+    });
+
+    // Run shadow pipeline (no sends, no writes, just comparison)
+    runShadowPipeline(
+      signals.jobs.rawPayload || [],
+      discoveredSupplyCompanies,
+      pipelineConfig,
+      legacySnapshot
+    ).then(() => {
+      // Stage 5: Pipeline is the system - get snapshot for UI
+      const snapshot = getCurrentSnapshot();
+      console.log('[Pipeline] Complete:', snapshot?.runId);
+      if (snapshot) {
+        setPipelineSnapshot(snapshot);
+        console.log('[Pipeline] UI driven by snapshot');
+      }
+      setShadowPipelineRunning(false);
+    }).catch(err => {
+      console.error('[Pipeline] Error:', err);
+      setShadowPipelineRunning(false);
+    });
+
+  }, [settingsLoaded, matchingResults.length, discoveredSupplyCompanies.length, signals.jobs.rawPayload, aiConfig, enrichmentConfig, instantlyConfig, user?.id, demandStates, preEnrichedPools, shadowPipelineRunning]);
+
+  // Reset pipeline trigger when data refreshes
+  useEffect(() => {
+    if (isRefreshing) {
+      pipelineTriggeredRef.current = false;
+    }
+  }, [isRefreshing]);
+
+  // ============================================================================
+  // AI NARRATION GENERATION - Fire and forget, enriches matching results
+  // Users don't care about AI costs - process ALL results
+  // ============================================================================
+  const generateNarrationsForResults = async (results: MatchingResult[]) => {
+    if (!aiConfig || !isAIConfigured(aiConfig)) return;
+    if (results.length === 0) return;
+
+    setIsGeneratingNarrations(true);
+    console.log(`[AIService] Generating narrations for ALL ${results.length} companies (users don't care about AI costs)...`);
+
+    // Process ALL results - no limit (deals are $20K+, AI costs are negligible)
+    const topResults = results;
+
+    for (const result of topResults) {
+      // Skip if we already have narration for this domain
+      if (matchNarrations[result.domain]) continue;
+
+      try {
+        // Get matched supply for this result
+        const matchedSupply = selectedSupplyByDemandDomain[result.domain] || discoveredSupplyCompanies[0];
+
+        // Generate AI narration
+        const narration = await generateMatchNarration(
+          aiConfig,
+          {
+            companyName: result.companyName,
+            domain: result.domain,
+            signals: [result.signalSummary, ...(result.matchReasons || [])],
+            jobTitles: result.jobTitlesBeingHired,
+            jobCount: result.jobCount,
+            signalAge: undefined, // TODO: track signal age
+            industry: detectIndustry(result.companyName, result.domain)
+          },
+          matchedSupply ? {
+            name: matchedSupply.name || matchedSupply.domain,
+            specialty: matchedSupply.specialty || matchedSupply.nicheExpertise
+          } : undefined
+        );
+
+        if (narration) {
+          setMatchNarrations(prev => ({ ...prev, [result.domain]: narration }));
+          console.log(`[AIService] Narration: ${result.companyName} → ${narration.headline}`);
+        }
+
+        // Also generate signal stacking
+        const signals = [
+          { text: result.signalSummary, type: 'hiring' as const },
+          ...(result.matchReasons || []).slice(0, 2).map(r => ({
+            text: r,
+            type: 'other' as const
+          }))
+        ];
+
+        const stacked = await stackSignals(aiConfig, signals, result.companyName);
+        if (stacked) {
+          setStackedSignals(prev => ({ ...prev, [result.domain]: stacked }));
+        }
+
+        // Generate deal score if we have supply
+        if (matchedSupply) {
+          const score = await scoreDeal(
+            aiConfig,
+            {
+              companyName: result.companyName,
+              signals: [result.signalSummary, ...(result.matchReasons || [])],
+              jobCount: result.jobCount
+            },
+            {
+              name: matchedSupply.name || matchedSupply.domain,
+              specialty: matchedSupply.specialty,
+              matchScore: result.operatorFitScore
+            }
+          );
+          if (score) {
+            setDealScores(prev => ({ ...prev, [result.domain]: score }));
+          }
+        }
+      } catch (err) {
+        console.error(`[AIService] Narration failed for ${result.domain}:`, err);
+      }
+    }
+
+    setIsGeneratingNarrations(false);
+  };
+
+  // Trigger narration generation when matching results are ready
+  useEffect(() => {
+    if (matchingResults.length > 0 && aiConfig && isAIConfigured(aiConfig)) {
+      // Small delay to not block UI
+      const timer = setTimeout(() => {
+        generateNarrationsForResults(matchingResults);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [matchingResults.length, aiConfig]);
+
+  // ============================================================================
+  // BATCH INTRO GENERATION - Generate intros for all ready contacts in STATE 5
+  // ============================================================================
+  const batchIntroGenerationRef = useRef(false);
+  const batchIntroRetryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const batchIntroStartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastProcessedReadyCountRef = useRef(0); // Track last processed count
+
+  useEffect(() => {
+    const roleType = pressureDetection?.roleType;
+    if (!roleType || roleType === 'unknown') return;
+
+    const readyCount = getReadyCount(preEnrichedPools, roleType);
+    const hasAI = aiConfig && isAIConfigured(aiConfig);
+    const hasSupply = discoveredSupplyCompanies.length > 0;
+
+    // Don't restart while actively generating - just track that more are available
+    // The generation loop will pick up new contacts when it finishes
+    if (batchIntroGenerationRef.current) {
+      // Silently note new contacts arrived - don't restart
+      if (readyCount > lastProcessedReadyCountRef.current) {
+        console.log('[BatchIntros] New contacts ready while generating:', lastProcessedReadyCountRef.current, '→', readyCount, '(will process after current batch)');
+      }
+      return; // Don't restart - let current batch finish
+    }
+
+    // STATE 5 conditions: has ready contacts, AI configured, supply available, not already running
+    if (readyCount > 0 && hasAI && hasSupply) {
+      batchIntroGenerationRef.current = true;
+      lastProcessedReadyCountRef.current = readyCount; // Track what we're processing
+
+      console.log('[BatchIntros] ═══════════════════════════════════════════════');
+      console.log('[BatchIntros] STATE 5 conditions met - generating batch intros');
+      console.log('[BatchIntros] Ready count:', readyCount);
+      console.log('[BatchIntros] Matching results:', matchingResults.length);
+      console.log('[BatchIntros] Supply companies:', discoveredSupplyCompanies.length);
+      console.log('[BatchIntros] First supply:', discoveredSupplyCompanies[0]?.name);
+
+      // Get ALL ready contacts and generate intros for ALL of them
+      const readyContacts = getReadyContacts(preEnrichedPools, roleType, readyCount);
+
+      const generateBatchIntros = async () => {
+        try {
+        // ================================================================
+        // STEP 1: Filter supply companies that have contact emails
+        // ================================================================
+        // Phase 2: Read from new state for supply contacts
+        const suppliesWithContacts = discoveredSupplyCompanies.filter(s =>
+          getSupplyContactState(s.domain).contact?.email
+        );
+
+        console.log('[BatchIntros] Supply companies with contacts:', suppliesWithContacts.length, '/', discoveredSupplyCompanies.length);
+
+        if (suppliesWithContacts.length === 0 && discoveredSupplyCompanies.length > 0) {
+          console.warn('[BatchIntros] ⚠️ No supply contacts have emails yet - using first provider for demand intros');
+        }
+
+        // ================================================================
+        // STEP 1.5: Fetch company enrichment (pain points, competitors) in PARALLEL
+        // ================================================================
+        // LOCAL lookup object - merges existing state + newly fetched data
+        // This avoids React state async issues
+        const localEnrichmentLookup: Record<string, CompanyEnrichment | null> = { ...companyEnrichmentByDomain };
+
+        if (isCompanyIntelConfigured(instantlyConfig)) {
+          const domainsNeedingEnrichment = readyContacts
+            .filter(c => !localEnrichmentLookup[c.domain])
+            .map(c => c.domain);
+
+          if (domainsNeedingEnrichment.length > 0) {
+            console.log(`[BatchIntros] Fetching company enrichment for ${domainsNeedingEnrichment.length} domains...`);
+
+            // Fetch all in parallel (fast)
+            const enrichmentResults = await Promise.all(
+              domainsNeedingEnrichment.map(async (domain) => {
+                try {
+                  const enrichment = await enrichDomain(domain, instantlyConfig.apiKey, user?.id);
+                  return { domain, enrichment };
+                } catch (err) {
+                  console.warn(`[BatchIntros] Company enrichment failed for ${domain}:`, err);
+                  return { domain, enrichment: null };
+                }
+              })
+            );
+
+            // Add to LOCAL lookup (immediate access) + prepare state update
+            const newEnrichments: Record<string, CompanyEnrichment | null> = {};
+            for (const { domain, enrichment } of enrichmentResults) {
+              if (enrichment) {
+                localEnrichmentLookup[domain] = enrichment; // LOCAL - immediate
+                newEnrichments[domain] = enrichment;        // For state update
+              }
+            }
+
+            // Update React state for UI (async, but we use localEnrichmentLookup below)
+            if (Object.keys(newEnrichments).length > 0) {
+              setCompanyEnrichmentByDomain(prev => ({ ...prev, ...newEnrichments }));
+              console.log(`[BatchIntros] ✓ Enriched ${Object.keys(newEnrichments).length} companies with pain points/competitors`);
+            }
+          }
+        } else {
+          console.log('[BatchIntros] Skip company enrichment - Instantly API key not configured');
+        }
+
+        // ================================================================
+        // STEP 2: Generate DEMAND intros (PARALLEL processing for speed)
+        // ================================================================
+        const PARALLEL_BATCH_SIZE = 5; // Process 5 intros at a time (reduced from 10 to prevent Azure rate limits)
+
+        // Prepare all contacts that need intros
+        // DEBUG: Log domain matching
+        console.log('[BatchIntros] Ready contacts domains:', readyContacts.slice(0, 5).map(c => c.domain));
+        console.log('[BatchIntros] Matching results domains:', matchingResults.slice(0, 5).map(r => r.domain));
+
+        const contactsNeedingIntros = readyContacts.filter(contact => {
+          // Phase 2: Read from new state (single source of truth)
+          const state = getDemandState(contact.domain);
+          if (state.demandIntro) {
+            console.log('[BatchIntros] Skipping (already has intro):', contact.domain);
+            return false;
+          }
+          const result = matchingResults.find(r => r.domain === contact.domain);
+          if (!result) {
+            console.log('[BatchIntros] Skipping (no matching result):', contact.domain);
+          }
+          return !!result;
+        });
+
+        console.log('[BatchIntros] Contacts needing intros:', contactsNeedingIntros.length);
+
+        let totalGenerated = 0;
+        let totalFailed = 0;
+        const failedDomains: Array<{ contact: typeof contactsNeedingIntros[0]; provider: typeof discoveredSupplyCompanies[0] }> = [];
+
+        // Process in parallel batches
+        for (let batchStart = 0; batchStart < contactsNeedingIntros.length; batchStart += PARALLEL_BATCH_SIZE) {
+          const batch = contactsNeedingIntros.slice(batchStart, batchStart + PARALLEL_BATCH_SIZE);
+
+          console.log(`[BatchIntros] Processing batch ${Math.floor(batchStart / PARALLEL_BATCH_SIZE) + 1}/${Math.ceil(contactsNeedingIntros.length / PARALLEL_BATCH_SIZE)} (${batch.length} intros)`);
+
+          // Generate all intros in this batch in parallel
+          const introPromises = batch.map(async (contact, idx) => {
+            const globalIdx = batchStart + idx;
+            const result = matchingResults.find(r => r.domain === contact.domain);
+            if (!result) return null;
+
+            // Category-based matching: find best supply for this demand's category
+            let provider = selectedSupplyByDemandDomain[contact.domain];
+            if (!provider) {
+              // Extract demand category from job titles
+              const demandCategory = extractHireCategory(
+                result.jobTitlesBeingHired?.[0] || '',
+                result.jobTitlesBeingHired || []
+              );
+
+              // Build demand context for scoring
+              const demandContext: DemandContext = {
+                companyName: contact.companyName || contact.domain,
+                domain: contact.domain,
+                category: demandCategory,
+                signalStrength: result.signalStrength,
+              };
+
+              // Find best matching supply by category
+              const supplyPool = suppliesWithContacts.length > 0 ? suppliesWithContacts : discoveredSupplyCompanies;
+              const scoredMatches = findScoredMatches(supplyPool, demandContext, 1);
+
+              if (scoredMatches.length > 0) {
+                provider = scoredMatches[0].supply;
+                console.log(`[BatchIntros] Category match: ${contact.domain} (${demandCategory}) → ${provider.name}`);
+              } else {
+                // Fallback to first available if no category match
+                provider = supplyPool[0];
+                console.log(`[BatchIntros] No category match for ${contact.domain}, using first available: ${provider?.name}`);
+              }
+            }
+
+            if (!provider?.name) return null;
+
+            try {
+              // Use niche-aware signal fallback
+              const nicheSignalFallback = detectedNiche?.actionVerb
+                ? `${detectedNiche.actionVerb}`
+                : `${result.jobCount || 1} active signals`;
+
+              const signalDetail = result.signalSummary || nicheSignalFallback;
+              const firstName = (contact.name || '').split(' ')[0] || 'there';
+              const providerSpecialty = provider.specialty || detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
+
+              // Step 1: Detect match context (2-5 words)
+              const matchContext = await detectMatchContext(
+                aiConfig,
+                {
+                  companyName: contact.companyName || contact.domain,
+                  signalDetail
+                },
+                {
+                  providerName: provider.name,
+                  specialty: providerSpecialty
+                }
+              );
+
+              // Step 2: Generate demand intro using anti-fragile approach (signal-based, no enrichment)
+              const intro = await generateDemandIntroAntifragile(
+                aiConfig,
+                {
+                  matchContext,
+                  firstName,
+                  companyName: contact.companyName || contact.domain,
+                  signalDetail,
+                  isCuratedList: result.isCuratedList
+                },
+                {
+                  name: provider.name,
+                  specialty: providerSpecialty
+                }
+              );
+
+              if (intro && intro.length > 10) {
+                return { domain: contact.domain, intro, provider, failed: false };
+              } else {
+                console.warn(`[BatchIntros] Empty/short intro for ${contact.domain}:`, intro ? `"${intro}" (${intro.length} chars)` : 'null/empty');
+                return { domain: contact.domain, intro: null, provider, failed: true };
+              }
+            } catch (err) {
+              const isTimeout = err instanceof Error && err.message.includes('timed out');
+              console.error('[BatchIntros] ❌ Exception for', contact.domain, ':', err instanceof Error ? err.message : err, isTimeout ? '(will retry)' : '');
+              return { domain: contact.domain, intro: null, provider, failed: true, isTimeout };
+            }
+          });
+
+          // Wait for all intros in this batch
+          const results = await Promise.all(introPromises);
+
+          // Update state with all successful intros from this batch
+          const successfulIntros: Record<string, string> = {};
+          const successfulProviders: Record<string, typeof discoveredSupplyCompanies[0]> = {};
+
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r && r.intro && !r.failed) {
+              successfulIntros[r.domain] = r.intro;
+              successfulProviders[r.domain] = r.provider;
+              console.log('[BatchIntros] ✓', r.domain);
+            } else if (r && r.failed && r.isTimeout) {
+              // Track timeout failures for retry
+              failedDomains.push({ contact: batch[i], provider: r.provider });
+            }
+          }
+
+          // Batch update state (more efficient)
+          const batchSuccessCount = Object.keys(successfulIntros).length;
+          const batchFailCount = batch.length - batchSuccessCount;
+          totalGenerated += batchSuccessCount;
+          totalFailed += batchFailCount;
+
+          if (batchSuccessCount > 0) {
+            // Phase 3: Dual-write for each successful intro
+            for (const [domain, intro] of Object.entries(successfulIntros)) {
+              setDemandIntro(domain, intro);
+            }
+            setSelectedSupplyByDemandDomain(prev => ({ ...prev, ...successfulProviders }));
+          }
+
+          console.log(`[BatchIntros] Batch complete: ${batchSuccessCount}/${batch.length} succeeded | Running total: ${totalGenerated}/${contactsNeedingIntros.length} (${totalFailed} failed)`);
+        }
+
+        // ================================================================
+        // STEP 2.5: RETRY failed demand intros (timeout errors only)
+        // ================================================================
+        if (failedDomains.length > 0) {
+          console.log(`[BatchIntros] Retrying ${failedDomains.length} timed-out domains after 2s delay...`);
+          await new Promise(r => setTimeout(r, 2000)); // 2 second delay before retry
+
+          for (const { contact, provider } of failedDomains) {
+            const result = matchingResults.find(r => r.domain === contact.domain);
+            if (!result) continue;
+
+            try {
+              // Use niche-aware signal fallback
+              const nicheSignalFallback = detectedNiche?.actionVerb
+                ? `${detectedNiche.actionVerb}`
+                : `${result.jobCount || 1} active signals`;
+
+              const signalDetail = result.signalSummary || nicheSignalFallback;
+              const firstName = (contact.name || '').split(' ')[0] || 'there';
+              const providerSpecialty = provider.specialty || detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
+
+              // Step 1: Detect match context (2-5 words)
+              const matchContext = await detectMatchContext(
+                aiConfig,
+                {
+                  companyName: contact.companyName || contact.domain,
+                  signalDetail
+                },
+                {
+                  providerName: provider.name,
+                  specialty: providerSpecialty
+                }
+              );
+
+              // Step 2: Generate demand intro using anti-fragile approach (signal-based, no enrichment)
+              const intro = await generateDemandIntroAntifragile(
+                aiConfig,
+                {
+                  matchContext,
+                  firstName,
+                  companyName: contact.companyName || contact.domain,
+                  signalDetail,
+                  isCuratedList: result?.isCuratedList
+                },
+                {
+                  name: provider.name,
+                  specialty: providerSpecialty
+                }
+              );
+
+              if (intro && intro.length > 10) {
+                // Phase 3: Use dual-write helper
+                setDemandIntro(contact.domain, intro);
+                setSelectedSupplyByDemandDomain(prev => ({ ...prev, [contact.domain]: provider }));
+                totalGenerated++;
+                totalFailed--;
+                console.log('[BatchIntros] ✓ Retry succeeded:', contact.domain);
+              }
+            } catch (err) {
+              console.error('[BatchIntros] ❌ Retry failed:', contact.domain, err instanceof Error ? err.message : err);
+            }
+          }
+        }
+
+        // ================================================================
+        // STEP 3: Generate SUPPLY intros (PARALLEL processing)
+        // Each supply gets intro about a DIFFERENT demand company
+        // ================================================================
+        console.log('[BatchIntros] Generating supply intros for', suppliesWithContacts.length, 'providers');
+
+        let totalSupplyGenerated = 0;
+        let totalSupplyFailed = 0;
+
+        // Prepare supply intro tasks
+        const supplyIntroTasks = [];
+        for (let i = 0; i < suppliesWithContacts.length && i < readyContacts.length; i++) {
+          const supply = suppliesWithContacts[i];
+          const contact = readyContacts[i];
+          const demandDomain = contact.domain;
+
+          // Skip if supply intro already exists - Phase 2: Read from new state
+          const demandState = getDemandState(demandDomain);
+          if (demandState.supplyIntro) continue;
+
+          const result = matchingResults.find(r => r.domain === demandDomain);
+          if (!result) continue;
+
+          supplyIntroTasks.push({ supply, contact, demandDomain, result });
+        }
+
+        // Process in parallel batches
+        for (let batchStart = 0; batchStart < supplyIntroTasks.length; batchStart += PARALLEL_BATCH_SIZE) {
+          const batch = supplyIntroTasks.slice(batchStart, batchStart + PARALLEL_BATCH_SIZE);
+
+          const supplyPromises = batch.map(async ({ supply, contact, demandDomain, result }) => {
+            // Phase 2: Read supply contact from new state
+            const supplyContactState = getSupplyContactState(supply.domain);
+            const supplyContact = supplyContactState.contact;
+            // Use legacy hireCategory for backwards compatibility
+            const hireCategory = result.jobTitlesBeingHired?.[0]?.toLowerCase().includes('engineer') ? 'engineering'
+              : result.jobTitlesBeingHired?.[0]?.toLowerCase().includes('sales') ? 'sales'
+              : result.jobTitlesBeingHired?.[0]?.toLowerCase().includes('market') ? 'marketing'
+              : 'engineering';
+
+            // Use niche-aware signal fallback
+            const nicheSignalFallback = detectedNiche?.actionVerb
+              ? `${detectedNiche.actionVerb}`
+              : 'showing momentum';
+
+            try {
+              const signalDetail = result.signalSummary || nicheSignalFallback;
+              const providerSpecialty = supply.specialty || detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
+
+              // Step 1: Detect match context (2-5 words)
+              const matchContext = await detectMatchContext(
+                aiConfig,
+                {
+                  companyName: contact.companyName || contact.domain,
+                  signalDetail
+                },
+                {
+                  providerName: supply.name,
+                  specialty: providerSpecialty
+                }
+              );
+
+              // Step 2: Generate supply intro using anti-fragile approach (signal-based, no enrichment)
+              const supplyIntro = await generateSupplyIntroAntifragile(
+                aiConfig,
+                {
+                  matchContext,
+                  providerFirstName: supplyContact?.name?.split(' ')[0] || 'there',
+                  providerCompany: supply.name
+                },
+                {
+                  companyName: contact.companyName || contact.domain,
+                  contactName: contact.name || 'the decision maker',
+                  contactTitle: contact.title || 'decision maker',
+                  signalDetail
+                }
+              );
+
+              if (supplyIntro && supplyIntro.length > 10) {
+                return { demandDomain, supplyIntro, supplyName: supply.name };
+              } else {
+                console.warn(`[BatchIntros] Empty/short supply intro for ${supply.name}:`, supplyIntro ? `"${supplyIntro}" (${supplyIntro.length} chars)` : 'null/empty');
+              }
+            } catch (err) {
+              console.error('[BatchIntros] ❌ Supply exception for', supply.name, ':', err instanceof Error ? err.message : err);
+            }
+            return null;
+          });
+
+          const supplyResults = await Promise.all(supplyPromises);
+
+          // Batch update state
+          const successfulSupplyIntros: Record<string, string> = {};
+          for (const r of supplyResults) {
+            if (r) {
+              successfulSupplyIntros[r.demandDomain] = r.supplyIntro;
+              totalSupplyGenerated++;
+              console.log('[BatchIntros] ✓ Supply intro for', r.supplyName);
+            } else {
+              totalSupplyFailed++;
+            }
+          }
+
+          if (Object.keys(successfulSupplyIntros).length > 0) {
+            // Phase 3: Dual-write for each successful supply intro
+            for (const [domain, intro] of Object.entries(successfulSupplyIntros)) {
+              setSupplyIntro(domain, intro);
+            }
+          }
+        }
+
+        console.log('[BatchIntros] ═══════════════════════════════════════════════');
+        console.log(`[BatchIntros] COMPLETE:`);
+        console.log(`  DEMAND: ${totalGenerated} generated, ${totalFailed} failed`);
+        console.log(`  SUPPLY: ${totalSupplyGenerated} generated, ${totalSupplyFailed} failed`);
+        console.log('[BatchIntros] ═══════════════════════════════════════════════');
+
+        // Check if new contacts arrived while we were generating
+        const currentReadyCount = getReadyCount(preEnrichedPools, roleType);
+        if (currentReadyCount > lastProcessedReadyCountRef.current) {
+          console.log(`[BatchIntros] ✓ New contacts arrived during generation: ${lastProcessedReadyCountRef.current} → ${currentReadyCount}`);
+          // Reset ref to allow processing new contacts (with small delay to avoid rapid fire)
+          batchIntroRetryTimeoutRef.current = setTimeout(() => {
+            batchIntroGenerationRef.current = false;
+          }, 2000);
+        } else {
+          // All done, keep ref true to prevent re-running for same contacts
+          console.log('[BatchIntros] ✓ All contacts processed, no new arrivals');
+        }
+
+        // CRITICAL: Reset ref if we didn't generate all intros (allows retry)
+        const targetCount = contactsNeedingIntros.length;
+        if (totalGenerated < targetCount) {
+          console.log(`[BatchIntros] ⚠️ Incomplete: ${totalGenerated}/${targetCount} - will retry in 10s`);
+          // Reset ref after a delay to allow retry (store ref for cleanup)
+          batchIntroRetryTimeoutRef.current = setTimeout(() => {
+            batchIntroGenerationRef.current = false;
+          }, 10000);
+        }
+        } catch (err) {
+          console.error('[BatchIntros] ❌ FATAL ERROR in batch generation:', err);
+          // Reset ref so it can be retried
+          batchIntroGenerationRef.current = false;
+        }
+      };
+
+      // Run with delay to not block UI (store ref for cleanup)
+      batchIntroStartTimeoutRef.current = setTimeout(generateBatchIntros, 1000);
+    }
+
+    // Cleanup timeouts on unmount
+    return () => {
+      if (batchIntroRetryTimeoutRef.current) {
+        clearTimeout(batchIntroRetryTimeoutRef.current);
+      }
+      if (batchIntroStartTimeoutRef.current) {
+        clearTimeout(batchIntroStartTimeoutRef.current);
+      }
+    };
+  }, [pressureDetection?.roleType, preEnrichedPools, aiConfig, discoveredSupplyCompanies.length, matchingResults]);
 
   useEffect(() => {
     if (activeResult && signals.jobs.metadata) {
@@ -1227,6 +3158,20 @@ function MatchingEngineV3() {
     // GUARD: Don't build companies until jobs data is actually ready
     const rawPayload = signals.jobs.rawPayload;
     const jobItems = rawPayload?.data ?? [];
+    const datasetType = rawPayload?.datasetType || 'jobs_dataset';
+    const isCuratedList = datasetType === 'curated_list';
+
+    // DIAGNOSTIC: Log exactly what's failing
+    console.log('[MatchingEngine] Data check:', {
+      isLive: signals.jobs.isLive,
+      hasRawPayload: !!rawPayload,
+      rawPayloadKeys: rawPayload ? Object.keys(rawPayload) : [],
+      jobItemsIsArray: Array.isArray(jobItems),
+      jobItemsLength: jobItems.length,
+      datasetType,
+      isCuratedList,
+      sampleItem: jobItems[0] ? JSON.stringify(jobItems[0]).slice(0, 200) : null
+    });
 
     if (!signals.jobs.isLive || !Array.isArray(jobItems) || jobItems.length === 0) {
       console.log('[MatchingEngine] Jobs data not ready yet, skipping company build');
@@ -1250,13 +3195,13 @@ function MatchingEngineV3() {
       signalType = 'tech';
     }
 
-    const companies: { name: string; domain: string; jobCount: number; sampleJob?: any; industry?: string; companySize?: number; geography?: string; jobTitles: string[] }[] = [];
+    const companies: { name: string; domain: string; jobCount: number; sampleJob?: any; allJobs: any[]; industry?: string; companySize?: number; geography?: string; jobTitles: string[] }[] = [];
 
     // DEFENSIVE: Ensure we have an array before iterating
     const safeJobItems = Array.isArray(jobItems) ? jobItems : [];
 
     if (safeJobItems.length > 0) {
-      const companyMap = new Map<string, { name: string; count: number; sampleJob: any; jobTitles: Set<string> }>();
+      const companyMap = new Map<string, { name: string; count: number; sampleJob: any; allJobs: any[]; jobTitles: Set<string> }>();
 
       safeJobItems.forEach((job: any) => {
         // Use universal field extractor - handles ANY job object shape
@@ -1275,11 +3220,12 @@ function MatchingEngineV3() {
         if (companyMap.has(key)) {
           const existing = companyMap.get(key)!;
           if (jobTitle) existing.jobTitles.add(jobTitle);
+          existing.allJobs.push(job);
           companyMap.set(key, { ...existing, count: existing.count + 1 });
         } else {
           const titles = new Set<string>();
           if (jobTitle) titles.add(jobTitle);
-          companyMap.set(key, { name, count: 1, sampleJob: job, jobTitles: titles });
+          companyMap.set(key, { name, count: 1, sampleJob: job, allJobs: [job], jobTitles: titles });
         }
       });
 
@@ -1294,6 +3240,7 @@ function MatchingEngineV3() {
           domain: normalizedDomain || domain, // Use normalized domain (strips https://, www.)
           jobCount: value.count,
           sampleJob: value.sampleJob,
+          allJobs: value.allJobs,
           industry,
           companySize: extractedSize ?? undefined,
           geography,
@@ -1339,7 +3286,11 @@ function MatchingEngineV3() {
 
       const targetTitles = detectTargetTitles(whoHasPressureRoles);
 
-      const pressureProfile = `${company.jobCount} open role${company.jobCount !== 1 ? 's' : ''} detected`;
+      // NICHE-AGNOSTIC: Use detected niche or generic language
+      const signalNoun = detectedNiche?.actionVerb || 'signal';
+      const pressureProfile = company.jobCount > 1
+        ? `${company.jobCount} ${signalNoun}s detected`
+        : `${signalNoun} detected`;
 
       const whoCanSolve = provider.idealClient || 'Provider matching your profile';
 
@@ -1352,7 +3303,7 @@ function MatchingEngineV3() {
 
       const suggestedTimeline = timelineLabels[windowStatus] || 'Signal detected';
 
-      const { score: matchScore, reasons: matchReasons, breakdown } = calculateMatchScoreForCompany(
+      const { score: operatorFitScore, reasons: matchReasons, breakdown } = calculateMatchScoreForCompany(
         {
           whoRoles: whoHasPressureRoles,
           industry: company.industry ?? null,
@@ -1364,8 +3315,8 @@ function MatchingEngineV3() {
       );
 
       if (process.env.NODE_ENV === 'development') {
-        console.groupCollapsed('[MatchingEngine] Match score for company:', company.name);
-        console.log('Final match score:', matchScore);
+        console.groupCollapsed('[OperatorFit] Score for company:', company.name);
+        console.log('Operator fit score:', operatorFitScore);
         console.log('Breakdown:', breakdown);
         console.log('Enriched company meta:', {
           industry: company.industry,
@@ -1384,23 +3335,55 @@ function MatchingEngineV3() {
 
       const dealValueEstimate = estimateDealValue(
         company.companySize || 50,
-        matchScore,
+        operatorFitScore,
         signalStrength
       );
 
       const probabilityOfClose = calculateProbability(
-        matchScore,
+        operatorFitScore,
         signalStrength,
         windowStatus
       );
 
       const exactAngle = getConnectorAngle(topRole);
 
+      // Calculate signal quality score
+      const signalData: CompanySignalData = {
+        domain: company.domain,
+        companyName: company.name,
+        signals: (company.allJobs || []).map((job: any) => ({
+          title: extractJobLikeFields(job).title,
+          raw: job,
+        })),
+        secondarySignals: {
+          hasFunding: signals.funding.isLive && signals.funding.value !== 'No data',
+          hasLayoffs: signals.layoffs.isLive && signals.layoffs.value !== 'No data',
+        },
+      };
+      const qualityScore = scoreSignalQuality(signalData);
+
+      // Generate signalSummary based on dataset type
+      let signalSummary: string;
+      if (isCuratedList) {
+        // CURATED LIST MODE: Use industry/niche, not job signals
+        // The match is implicit - user curated both sides
+        const industry = company.industry || detectedNiche?.niche || 'your industry';
+        signalSummary = `${industry} company`;
+      } else {
+        // JOBS/SIGNALS MODE: Reference the hiring signal
+        signalSummary = detectedNiche?.actionVerb
+          ? `${detectedNiche.actionVerb} at ${company.name}`
+          : (company.jobCount > 1
+            ? `${company.jobCount} signals at ${company.name}`
+            : `Active at ${company.name}`);
+      }
+
       return {
         id: `${company.domain}-${index}`,
         companyName: company.name,
         domain: company.domain,
-        signalSummary: `${company.jobCount} open ${company.jobCount === 1 ? 'role' : 'roles'} at ${company.name}`,
+        signalSummary,
+        isCuratedList, // Pass through so intro generator knows the mode
         windowStatus,
         dealValueEstimate,
         probabilityOfClose,
@@ -1414,40 +3397,46 @@ function MatchingEngineV3() {
         suggestedTimeline,
         jobCount: company.jobCount,
         signalStrength,
-        matchScore,
+        operatorFitScore,
         matchReasons,
         companySize: company.companySize || 50,
         signalType: signalType,
+        qualityScore,
       };
     });
 
     const MATCH_THRESHOLD = 0;
     const filteredResults = results
-      .filter((r) => (connectorProfile ? r.matchScore >= MATCH_THRESHOLD : true))
+      .filter((r) => (connectorProfile ? r.operatorFitScore >= MATCH_THRESHOLD : true))
       .sort((a, b) => {
-        if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+        // Primary: Quality score (signal strength/freshness/density)
+        if (b.qualityScore.total !== a.qualityScore.total) {
+          return b.qualityScore.total - a.qualityScore.total;
+        }
+        // Secondary: Operator fit score (demand → operator)
+        if (b.operatorFitScore !== a.operatorFitScore) return b.operatorFitScore - a.operatorFitScore;
         return (b.signalStrength || 0) - (a.signalStrength || 0);
       });
 
     if (process.env.NODE_ENV === 'development') {
-      const allScores = results.map((r) => r.matchScore ?? 0);
+      const allScores = results.map((r) => r.operatorFitScore ?? 0);
       const maxScore = allScores.length ? Math.max(...allScores) : 0;
 
-      console.groupCollapsed('[MatchingEngine] Match scoring - batch result');
+      console.groupCollapsed('[OperatorFit] Batch scoring result');
       console.log('Total companies scored:', results.length);
       console.log('Threshold used:', MATCH_THRESHOLD);
       console.log('Companies passing threshold:', filteredResults.length);
-      console.log('Highest match score in batch:', maxScore);
+      console.log('Highest operator fit score:', maxScore);
       console.groupEnd();
     }
 
     if (filteredResults.length === 0 && connectorProfile && process.env.NODE_ENV === 'development') {
-      const allScores = results.map((r) => r.matchScore ?? 0);
+      const allScores = results.map((r) => r.operatorFitScore ?? 0);
       const maxScore = allScores.length ? Math.max(...allScores) : 0;
 
-      console.warn('[MatchingEngine] No strong matches in this batch.', {
+      console.warn('[OperatorFit] No strong matches in this batch.', {
         threshold: MATCH_THRESHOLD,
-        maxScoreInBatch: maxScore,
+        maxOperatorFitScore: maxScore,
         totalCompanies: results.length,
       });
     }
@@ -1455,28 +3444,67 @@ function MatchingEngineV3() {
     return filteredResults;
   };
 
+  // Track which snapshot we've processed to avoid infinite loops
+  const processedSnapshotRef = useRef<string | null>(null);
+
   useEffect(() => {
     try {
-      const results = calculateMatching();
-      setMatchingResults(results);
+      // Stage 5: Pipeline is the system - legacy matching removed
+      if (!pipelineSnapshot) return;
 
-      // Reset intro generation tracking for new results
-      // Only clear domains that are no longer in results
-      const newDomains = new Set(results.map(r => r.domain));
-      introGenerationAttemptedRef.current.forEach(domain => {
-        if (!newDomains.has(domain)) {
-          introGenerationAttemptedRef.current.delete(domain);
-        }
-      });
+      // Skip if we've already processed this snapshot
+      if (processedSnapshotRef.current === pipelineSnapshot.runId) return;
+      processedSnapshotRef.current = pipelineSnapshot.runId;
 
-      if (results.length > 0 && activeResultIndex >= results.length) {
+      console.log('[Stage 5] Processing pipeline snapshot:', pipelineSnapshot.runId);
+
+      // Reset activeResultIndex if needed
+      if (pipelineSnapshot.matches.length > 0 && activeResultIndex >= pipelineSnapshot.matches.length) {
         setActiveResultIndex(0);
       }
+
+      // Stage 5: Add demand companies to trusted pools using snapshot entities
+      const snapshotEntities = pipelineSnapshot.demandEntities || [];
+      if (pressureDetection?.pressureDetected && pressureDetection.roleType !== 'unknown' && snapshotEntities.length > 0) {
+        const roleType = pressureDetection.roleType;
+
+        // Use functional update to avoid stale closure
+        setTrustedDemandPools(currentPools => {
+          let updatedPools = currentPools;
+          for (const entity of snapshotEntities) {
+            updatedPools = addDemandToPool(updatedPools, {
+              domain: entity.company.domain || '',
+              companyName: entity.company.name || '',
+              pressureConfidence: pressureDetection.confidence === 'high' ? 90 : pressureDetection.confidence === 'medium' ? 70 : 50,
+              roleType
+            });
+          }
+          return updatedPools;
+        });
+
+        // Persist async (don't block UI)
+        (async () => {
+          try {
+            if (isGuest) {
+              // Will be handled by next render with updated pools
+              console.log('[TrustedDemandPools] Guest mode - persisting later');
+              return;
+            }
+            // AUTHED: persist to DB
+            await supabase
+              .from('operator_settings')
+              .update({ trusted_demand_pools: trustedDemandPools })
+              .eq('user_id', user!.id);
+            console.log('[TrustedDemandPools] Updated pool for', roleType);
+          } catch (err) {
+            console.warn('[TrustedDemandPools] Failed to persist:', err);
+          }
+        })();
+      }
     } catch (error) {
-      console.error('[MatchingEngine] Error calculating matches:', error);
-      setMatchingResults([]);
+      console.error('[Pipeline] Error:', error);
     }
-  }, [signalStrength, predictionResult, signals.jobs, signals.funding, signals.layoffs, signals.hiringVelocity, signals.toolAdoption, provider, connectorProfile]);
+  }, [pipelineSnapshot, pressureDetection, isGuest, user, activeResultIndex]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1495,7 +3523,7 @@ function MatchingEngineV3() {
 
   useEffect(() => {
     if (activeResult?.pressureProfile && activeResult.domain) {
-      const personData = personDataByDomain[activeResult.domain];
+      const personData = getDemandState(activeResult.domain).contact;
       if (!personData?.title) {
         setPersonPressureProfileByDomain(prev => ({
           ...prev,
@@ -1503,7 +3531,7 @@ function MatchingEngineV3() {
         }));
       }
     }
-  }, [activeResult?.pressureProfile, activeResult?.domain, personDataByDomain]);
+  }, [activeResult?.pressureProfile, activeResult?.domain, demandStates]);
 
   useEffect(() => {
     if (activeResult?.domain && isAIConfigured(aiConfig) && !aiWhyNowByDomain[activeResult.domain]) {
@@ -1513,7 +3541,7 @@ function MatchingEngineV3() {
 
   useEffect(() => {
     if (!activeResult) return;
-    const personData = personDataByDomain[activeResult.domain];
+    const personData = getDemandState(activeResult.domain).contact;
     const aiRewrittenIntro = aiRewrittenIntroByDomain[activeResult.domain];
     const finalIntro = finalIntroByDomain[activeResult.domain];
     const outboundReadiness = calculateOutboundReadiness(personData);
@@ -1522,16 +3550,20 @@ function MatchingEngineV3() {
       setIntroUnlockedByDomain(prev => ({ ...prev, [activeResult.domain]: false }));
       console.log('[MatchingEngine] Auto-locked intro — contact became ready');
     }
-  }, [activeResult?.domain, personDataByDomain, aiRewrittenIntroByDomain, finalIntroByDomain]);
+  }, [activeResult?.domain, demandStates, aiRewrittenIntroByDomain, finalIntroByDomain]);
 
   useEffect(() => {
     if (!activeResult) return;
 
-    const domain = activeResult.domain;
-    const personData = personDataByDomain[domain];
-    const supplyContact = supplyContactByDomain[domain];
-    const hasDemandIntro = demandIntroByDomain[domain];
-    const hasSupplyIntro = supplyIntroByDomain[domain];
+    const domain = activeResult.domain; // This is the DEMAND domain
+    // Phase 4: Read from new state (single source of truth)
+    const domainState = getDemandState(domain);
+    const personData = domainState.contact;
+    // Two-hop resolution: demand → selected supply → supply contact
+    const selectedSupply = selectedSupplyByDemandDomain[domain];
+    const supplyContact = selectedSupply ? getSupplyContactState(selectedSupply.domain).contact : null;
+    const hasDemandIntro = domainState.demandIntro;
+    const hasSupplyIntro = domainState.supplyIntro;
 
     // Check if we should generate intros
     const aiReady = aiConfig && isAIConfigured(aiConfig);
@@ -1553,7 +3585,176 @@ function MatchingEngineV3() {
       console.log('[MatchingEngine] Supply contact now available - generating supply intro for:', domain);
       generateDualIntros(domain); // Will skip demand (already exists), generate supply
     }
-  }, [activeResult?.whoHasPressureRoles, activeResult?.domain, personDataByDomain, supplyContactByDomain, signalStrength, demandIntroByDomain, supplyIntroByDomain, aiConfig]);
+  }, [activeResult?.whoHasPressureRoles, activeResult?.domain, demandStates, selectedSupplyByDemandDomain, supplyContacts, signalStrength, aiConfig]);
+
+  // AUTO-ENRICHMENT DISABLED - Option D: User controls token spend
+  // Dataset fetch is FREE (just reading Apify data)
+  // Enrichment costs tokens (Apollo/Anymail) - require manual trigger
+  //
+  // To enrich, user clicks "Enrich" button in the UI
+  // This prevents surprise token burns on page refresh
+  //
+  // OLD AUTO-TRIGGER CODE (preserved for reference):
+  /*
+  useEffect(() => {
+    const roleType = pressureDetection?.roleType;
+
+    // Skip if no pressure detected or no roleType
+    if (!pressureDetection?.pressureDetected || roleType === 'unknown') {
+      return;
+    }
+
+    // Check which pipelines are available
+    const hasCompanyIntel = isCompanyIntelConfigured(instantlyConfig);
+    const hasContactEnrichment = isContactEnrichmentConfigured(enrichmentConfig);
+
+    // If neither configured, log once and skip
+    if (!hasCompanyIntel && !hasContactEnrichment) {
+      console.log('[AutoEnrichment] Skip: neither Instantly nor Apollo/PDL configured');
+      return;
+    }
+
+    // TRACK A: Company Intel (Instantly) - runs independently
+    if (hasCompanyIntel) {
+      // Trigger company intel for visible domains (runs in handleCompanyEnrichment)
+      const visibleDomains = matchingResults.slice(0, 10).map(r => r.domain);
+      visibleDomains.forEach(domain => {
+        if (!companyEnrichmentByDomain[domain] && !isEnrichingCompanyByDomain[domain]) {
+          handleCompanyEnrichment(domain);
+        }
+      });
+      console.log('[CompanyIntel] Triggered for visible domains via Instantly');
+    } else {
+      console.log('[CompanyIntel] Skipped — Instantly key missing');
+    }
+
+    // TRACK B: Contact Enrichment (Apollo/PDL) - runs independently
+    if (!hasContactEnrichment) {
+      console.log('[ContactEnrichment] Skipped — No contact provider');
+      return; // Only skip contact track, company intel already ran above
+    }
+
+    // Skip if already running
+    if (isWorkerRunning(roleType)) {
+      console.log(`[ContactEnrichment] Skip: worker already running for ${roleType}`);
+      return;
+    }
+
+    // Skip if already auto-triggered this session for this role
+    if (autoTriggeredRolesRef.current.has(roleType)) {
+      return;
+    }
+
+    // Skip if no demand domains available for this roleType
+    const demandDomains = getDomainsForRole(trustedDemandPools, roleType);
+    if (demandDomains.length === 0) {
+      console.log(`[ContactEnrichment] Skip: no demand domains for ${roleType}`);
+      return;
+    }
+
+    // Check pool level - trigger if below 40% of capacity
+    const currentCount = getReadyCount(preEnrichedPools, roleType);
+    const REFILL_THRESHOLD = 40; // 40% of 100 capacity
+
+    if (currentCount < REFILL_THRESHOLD) {
+      console.log(`[ContactEnrichment] Pool low (${currentCount}/${REFILL_THRESHOLD}), refilling for ${roleType} via Apollo/PDL`);
+      autoTriggeredRolesRef.current.add(pressureDetection.roleType);
+
+      // Trigger enrichment silently (reuse existing logic)
+      const enrichFn = createEnrichmentFunction();
+      setIsPreparingPool(true);
+
+      // Start long-wait timer (5s) for reassurance message
+      if (longWaitTimerRef.current) clearTimeout(longWaitTimerRef.current);
+      longWaitTimerRef.current = setTimeout(() => {
+        setShowLongWaitReassurance(true);
+      }, 5000);
+
+      startBackgroundEnrichment(
+        pressureDetection.roleType,
+        trustedDemandPools,
+        preEnrichedPools,
+        enrichFn,
+        enrichmentConfig.anymailFinderApiKey,
+        enrichmentConfig.ssmApiKey,
+        (updatedPools) => {
+          // Cancel long-wait timer when first contact arrives
+          if (longWaitTimerRef.current) {
+            clearTimeout(longWaitTimerRef.current);
+            longWaitTimerRef.current = null;
+          }
+
+          // Track newly ready domains for highlight animation
+          const currentReady = getReadyContacts(preEnrichedPools, pressureDetection.roleType);
+          const newReady = getReadyContacts(updatedPools, pressureDetection.roleType);
+          const currentDomains = new Set(currentReady.map(c => c.domain));
+          const newDomains = newReady.filter(c => !currentDomains.has(c.domain)).map(c => c.domain);
+
+          if (newDomains.length > 0) {
+            setNewlyReadyDomains(prev => {
+              const updated = new Set(prev);
+              newDomains.forEach(d => updated.add(d));
+              return updated;
+            });
+            // Remove highlight after 400ms
+            setTimeout(() => {
+              setNewlyReadyDomains(prev => {
+                const updated = new Set(prev);
+                newDomains.forEach(d => updated.delete(d));
+                return updated;
+              });
+            }, 400);
+          }
+
+          setPreEnrichedPools(updatedPools);
+
+          // Check for first contact arriving
+          const newReadyCount = getReadyCount(updatedPools, pressureDetection.roleType);
+          if (prevReadyCount === 0 && newReadyCount > 0) {
+            setShowFirstContactPulse(true);
+            setTimeout(() => setShowFirstContactPulse(false), 1500);
+          }
+          setPrevReadyCount(newReadyCount);
+
+          // Persist silently
+          (async () => {
+            try {
+              // GUEST: persist to localStorage
+              if (isGuest) {
+                localStorage.setItem('guest_pre_enriched_pools', JSON.stringify(updatedPools));
+                return;
+              }
+              // AUTHED: persist to DB
+              await supabase
+                .from('operator_settings')
+                .update({ pre_enriched_pools: updatedPools })
+                .eq('user_id', user!.id);
+            } catch (err) {
+              console.warn('[AutoEnrichment] Failed to persist:', err);
+            }
+          })();
+        },
+        (progress) => {
+          setEnrichmentWorkerProgress({
+            roleType: progress.roleType,
+            total: progress.totalToEnrich,
+            completed: progress.enriched,
+            succeeded: progress.succeeded,
+          });
+
+          if (progress.enriched >= progress.totalToEnrich) {
+            setIsPreparingPool(false);
+            setShowLongWaitReassurance(false);
+            if (longWaitTimerRef.current) {
+              clearTimeout(longWaitTimerRef.current);
+              longWaitTimerRef.current = null;
+            }
+          }
+        }
+      );
+    }
+  }, [pressureDetection, enrichmentConfig, trustedDemandPools, preEnrichedPools]);
+  */
 
   const getSignalStrengthColor = (strength: number) => {
     if (strength >= 70) return '#26F7C7';
@@ -1568,7 +3769,7 @@ function MatchingEngineV3() {
   };
 
   const getSuggestedIntro = (domain: string) => {
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     const finalIntro = finalIntroByDomain[domain];
     const aiRewrittenIntro = aiRewrittenIntroByDomain[domain];
     const outboundReadiness = calculateOutboundReadiness(personData);
@@ -1588,15 +3789,16 @@ function MatchingEngineV3() {
   };
 
   const handleAiRewriteIntro = async (domain: string) => {
+    // AI requires config (works for both guest + auth if keys are set)
     if (!aiConfig || !isAIConfigured(aiConfig)) {
-      showToast('warning', 'Please set up AI in Settings first.');
+      showToast('warning', 'Set up API keys in Settings first.');
       return;
     }
 
     const result = matchingResults.find(r => r.domain === domain);
     if (!result) return;
 
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     const personPressureProfile = personPressureProfileByDomain[domain];
     const primaryRole = result.whoHasPressureRoles[0] || 'CEO';
     const need = provider.servicesDelivered[0] || 'operational excellence';
@@ -1694,7 +3896,7 @@ function MatchingEngineV3() {
       }
     } catch (error) {
       console.error('Error rewriting intro:', error);
-      showToast('error', 'AI rewrite failed. Check Settings and try again.');
+      showToast('error', 'Rewrite failed. Check Settings and try again.');
     } finally {
       setIsRewritingIntro(false);
     }
@@ -1704,7 +3906,7 @@ function MatchingEngineV3() {
     const result = matchingResults.find(r => r.domain === domain);
     if (!result) return;
 
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     const primaryRole = result.whoHasPressureRoles[0] || 'CEO';
 
     // Clear the cache entry to force a new generation
@@ -1717,8 +3919,9 @@ function MatchingEngineV3() {
 
     setFinalIntroByDomain(prev => ({ ...prev, [domain]: '' }));
     setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: '' }));
-    setDemandIntroByDomain(prev => ({ ...prev, [domain]: '' }));
-    setSupplyIntroByDomain(prev => ({ ...prev, [domain]: '' }));
+    // Phase 3: Use dual-write helpers for clearing intros
+    setDemandIntro(domain, null);
+    setSupplyIntro(domain, null);
     setIntroUnlockedByDomain(prev => ({ ...prev, [domain]: true }));
 
     // Clear the attempted guard so regeneration is allowed
@@ -1734,10 +3937,25 @@ function MatchingEngineV3() {
 
   // Generate both demand and supply intros for a domain
   const generateDualIntros = async (domain: string) => {
+    // ==========================================================================
+    // ANTI-FRAGILE INTRO GENERATION (3-Step Method)
+    // ==========================================================================
+    // Step 1: Detect match context (2-5 words)
+    // Step 2: Generate demand intro (3 sentences)
+    // Step 3: Generate supply intro (3 sentences)
+    // NO Instantly enrichment - focus on SIGNAL data only
+    // ==========================================================================
+
+    // AI requires config (works for both guest + auth if keys are set)
+    if (!aiConfig || !isAIConfigured(aiConfig)) {
+      console.log('[DualIntros] AI not configured, skipping intro generation');
+      return;
+    }
+
     const result = matchingResults.find(r => r.domain === domain);
     if (!result) return;
 
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     // Only require email - name can be extracted from email if missing
     if (!personData?.email) {
       console.log('[DualIntros] No email found, skipping intro generation');
@@ -1746,115 +3964,83 @@ function MatchingEngineV3() {
     // Ensure we have a name - use email prefix as fallback
     const contactName = personData.name || personData.email.split('@')[0];
 
-    console.log('[DualIntros] Generating demand and supply intros for', domain);
+    // Get the selected PROVIDER for this demand domain
+    const selectedProvider = selectedSupplyByDemandDomain[domain] || discoveredSupplyCompanies[0];
+    // Phase 2: Read from new state for supply contact
+    const supplyContactForIntro = selectedProvider ? getSupplyContactState(selectedProvider.domain).contact : null;
 
-    // Get the selected PROVIDER (like Toptal, Terminal, etc.) for this domain
-    const selectedProvider = selectedSupplyByDomain[domain];
-    const supplyContactForIntro = supplyContactByDomain[domain];
-
-    // Provider info for demand intro - this is WHO we're connecting them to
-    const provider = {
-      name: selectedProvider?.name || 'a recruiting partner',
-      company: selectedProvider?.name || 'a staffing firm',
-      specialty: selectedProvider?.specialty || 'fills these roles fast'
-    };
-
-    const firstName = contactName.split(' ')[0];
-    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
-
-    // Check if demand intro already exists (don't regenerate unnecessarily)
-    const existingDemandIntro = demandIntroByDomain[domain];
-
-    // Generate Demand Intro (to the hiring company) - only if not already generated
-    if (!existingDemandIntro) {
-      setIsGeneratingDemandIntro(true);
-      try {
-        // Run generation with minimum delay to prevent UI glitch
-        const [demandIntro] = await Promise.all([
-          generateDemandIntro(
-            aiConfig,
-            {
-              firstName,
-              companyName: result.companyName,
-              signalDetail,
-              roleLabel: result.jobTitlesBeingHired?.[0] || '',
-              roleCount: result.jobCount || 1,
-              jobTitles: result.jobTitlesBeingHired || []
-            },
-            {
-              name: provider.name,
-              company: provider.company,
-              specialty: provider.specialty
-            }
-          ),
-          new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
-        ]);
-        setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
-        setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
-        console.log('[DualIntros] Demand intro generated:', demandIntro);
-      } catch (error) {
-        console.error('[DualIntros] Demand intro failed:', error);
-      } finally {
-        setIsGeneratingDemandIntro(false);
-      }
-    } else {
-      console.log('[DualIntros] Demand intro already exists, skipping');
+    // VALIDATION: Skip if no valid provider
+    if (!selectedProvider?.name || selectedProvider.name === 'Unknown') {
+      console.warn('[DualIntros] ⚠️ SKIPPING - No valid provider name available');
+      return;
     }
 
-    // Generate Supply Intro (to the provider/recruiter)
-    // CRITICAL GATE: Only generate if we have a valid supply contact with email
-    if (!supplyContactForIntro || !supplyContactForIntro.email) {
-      console.log('[DualIntros] SKIPPING supply intro - no supply contact found');
-      // Clear any stale supply intro for this domain
-      setSupplyIntroByDomain(prev => {
-        const updated = { ...prev };
-        delete updated[domain];
-        return updated;
-      });
-      return; // Do not generate supply intro without a real contact
+    // Build signal detail from actual data (NOT from Instantly enrichment)
+    const signalDetail = result.signalSummary || (detectedNiche?.actionVerb
+      ? `${detectedNiche.actionVerb}`
+      : `${result.jobCount || 0} active signals`);
+
+    console.log('[DualIntros] ═══════════════════════════════════════════════');
+    console.log('[DualIntros] ANTI-FRAGILE: Generating intros for:', domain);
+    console.log('[DualIntros] Signal:', signalDetail);
+    console.log('[DualIntros] Provider:', selectedProvider.name);
+    console.log('[DualIntros] ═══════════════════════════════════════════════');
+
+    // Check if demand intro already exists - Phase 2: Read from new state
+    const introState = getDemandState(domain);
+    const existingDemandIntro = introState.demandIntro;
+    const existingSupplyIntro = introState.supplyIntro;
+
+    // If both exist, skip
+    if (existingDemandIntro && existingSupplyIntro) {
+      console.log('[DualIntros] Both intros already exist, skipping');
+      return;
     }
 
-    // This mentions the DEMAND company and DEMAND contact
-    // Determine hire category from job titles for better matching
-    const hireCategory = extractHireCategory(
-      result.jobTitlesBeingHired?.map(t => ({ title: t })),
-      result.signalSummary
-    );
-
+    setIsGeneratingDemandIntro(true);
     setIsGeneratingSupplyIntro(true);
-    try {
-      // Use actual company name from the contact (from Apollo) - more accurate than selectedProvider
-      const actualProviderName = supplyContactForIntro.company;
 
-      // Run generation with minimum delay to prevent UI glitch
-      const [supplyIntro] = await Promise.all([
-        generateSupplyIntro(
-          aiConfig,
-          {
-            company_name: result.companyName,
-            person_name: personData.name,
-            title: personData.title || 'decision maker'
-          },
-          {
-            summary: signalDetail,
-            roleCount: result.jobCount || 1,
-            roleLabel: result.jobTitlesBeingHired?.[0] || '',
-            hireCategory: hireCategory,
-            fitReason: `${result.companyName} is actively hiring`
-          },
-          { name: supplyContactForIntro.name },
-          {
-            name: actualProviderName,
-            specialty: selectedProvider?.specialty
-          }
-        ),
-        new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
-      ]);
-      setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
-      console.log('[DualIntros] Supply intro generated for', supplyContactForIntro.name, 'at', actualProviderName, ':', supplyIntro);
+    try {
+      // Use the combined anti-fragile function (3 steps internally)
+      const { demandIntro, supplyIntro, matchContext } = await generateIntrosAntifragile(
+        aiConfig,
+        {
+          companyName: result.companyName,
+          signalDetail,
+          contactFirstName: contactName.split(' ')[0],
+          contactName: contactName,
+          contactTitle: personData.title || 'decision maker',
+        },
+        {
+          providerName: selectedProvider.name,
+          providerSpecialty: selectedProvider.specialty || selectedProvider.nicheExpertise || 'helps companies like yours',
+          contactFirstName: supplyContactForIntro?.name?.split(' ')[0] || 'there',
+        }
+      );
+
+      console.log('[DualIntros] Match context:', matchContext);
+
+      // Update demand intro (if generated and not already existing)
+      // Phase 3: Use dual-write helper
+      if (demandIntro && !existingDemandIntro) {
+        setDemandIntro(domain, demandIntro);
+        setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+        console.log('[DualIntros] ✓ Demand intro:', demandIntro);
+      }
+
+      // Update supply intro (if generated, has supply contact, and not already existing)
+      // Phase 3: Use dual-write helper
+      if (supplyIntro && supplyContactForIntro?.email && !existingSupplyIntro) {
+        setSupplyIntro(domain, supplyIntro);
+        console.log('[DualIntros] ✓ Supply intro:', supplyIntro);
+      } else if (!supplyContactForIntro?.email) {
+        console.log('[DualIntros] SKIPPING supply intro - no supply contact email');
+      }
+
     } catch (error) {
-      console.error('[DualIntros] Supply intro failed:', error);
+      console.error('[DualIntros] Anti-fragile generation failed:', error);
     } finally {
+      setIsGeneratingDemandIntro(false);
       setIsGeneratingSupplyIntro(false);
     }
   };
@@ -1862,43 +4048,74 @@ function MatchingEngineV3() {
   // Individual regenerate functions for demand and supply intros
   // Added minimum delay to prevent UI glitching from fast state changes
   const regenerateDemandIntro = async (domain: string) => {
+    // AI requires config (works for both guest + auth if keys are set)
+    if (!aiConfig || !isAIConfigured(aiConfig)) return;
+
     const result = matchingResults.find(r => r.domain === domain);
     if (!result) return;
 
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     if (!personData?.name) return;
 
-    // Get the selected provider (like Toptal) for this domain
-    const selectedProvider = selectedSupplyByDomain[domain];
+    // Get the selected provider (like Toptal) for this demand domain
+    // FALLBACK: Use first discovered supply company if none specifically selected
+    const selectedProvider = selectedSupplyByDemandDomain[domain] || discoveredSupplyCompanies[0];
+
+    // READINESS GATE: Cannot generate intro without a real provider
+    if (!selectedProvider?.name || selectedProvider.name === 'Unknown') {
+      console.warn('[DualIntros] Cannot regenerate demand intro - no valid provider');
+      return;
+    }
+
+    // Use niche-aware specialty fallback
+    const nicheSpecialty = detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
     const provider = {
-      name: selectedProvider?.name || 'a recruiting partner',
-      company: selectedProvider?.name || 'a staffing firm',
-      specialty: selectedProvider?.specialty || 'fills these roles fast',
+      name: selectedProvider.name,
+      company: selectedProvider.name,
+      specialty: selectedProvider.specialty || selectedProvider.nicheExpertise || nicheSpecialty,
     };
 
     const firstName = personData.name.split(' ')[0];
-    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+    // Use niche-aware signal fallback
+    const nicheSignalFallback = detectedNiche?.actionVerb || 'showing momentum';
+    const signalDetail = result.signalSummary || nicheSignalFallback;
 
     setIsGeneratingDemandIntro(true);
 
     try {
-      // Run generation with minimum delay to prevent UI glitch
+      // Step 1: Detect match context (2-5 words)
+      const matchContext = await detectMatchContext(
+        aiConfig,
+        {
+          companyName: result.companyName,
+          signalDetail
+        },
+        {
+          providerName: provider.name,
+          specialty: provider.specialty
+        }
+      );
+
+      // Step 2: Generate demand intro using anti-fragile approach (signal-based, no enrichment)
       const [demandIntro] = await Promise.all([
-        generateDemandIntro(
+        generateDemandIntroAntifragile(
           aiConfig,
           {
+            matchContext,
             firstName,
             companyName: result.companyName,
             signalDetail,
-            roleLabel: result.jobTitlesBeingHired?.[0] || '',
-            roleCount: result.jobCount || 1,
-            jobTitles: result.jobTitlesBeingHired || []
+            isCuratedList: result.isCuratedList
           },
-          { name: provider.name, company: provider.company, specialty: provider.specialty }
+          {
+            name: provider.name,
+            specialty: provider.specialty
+          }
         ),
         new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
       ]);
-      setDemandIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
+      // Phase 3: Use dual-write helper
+      setDemandIntro(domain, demandIntro);
       setAiRewrittenIntroByDomain(prev => ({ ...prev, [domain]: demandIntro }));
       console.log('[DualIntros] Demand intro regenerated:', demandIntro);
     } catch (error) {
@@ -1909,20 +4126,23 @@ function MatchingEngineV3() {
   };
 
   const regenerateSupplyIntro = async (domain: string) => {
+    // AI requires config (works for both guest + auth if keys are set)
+    if (!aiConfig || !isAIConfigured(aiConfig)) return;
+
     const result = matchingResults.find(r => r.domain === domain);
     if (!result) return;
 
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     if (!personData?.name) return;
 
-    // Get the supply contact (person at provider company)
-    const supplyContactForIntro = supplyContactByDomain[domain];
-    // Get the selected provider (Toptal, Terminal, etc.)
-    const selectedProvider = selectedSupplyByDomain[domain];
+    // Get the selected provider (Toptal, Terminal, etc.) for this demand domain
+    const selectedProvider = selectedSupplyByDemandDomain[domain];
+    // Phase 2: Read from new state - two-hop resolution: use selectedProvider's domain to get supply contact
+    const supplyContactForIntro = selectedProvider ? getSupplyContactState(selectedProvider.domain).contact : null;
 
     // CRITICAL GATE: Only regenerate if we have a valid supply contact with email
     if (!supplyContactForIntro || !supplyContactForIntro.email) {
-      console.log('[DualIntros] Cannot regenerate supply intro - no supply contact found');
+      console.log('[DualIntros] Cannot regenerate supply intro - no supply contact found for demand:', domain);
       return;
     }
 
@@ -1930,35 +4150,52 @@ function MatchingEngineV3() {
     const actualProviderName = supplyContactForIntro.company;
     console.log('[DualIntros] Regenerating supply intro for provider:', actualProviderName, 'contact:', supplyContactForIntro.name);
 
-    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+    // Niche-aware fallbacks
+    const nicheSignalFallback = detectedNiche?.actionVerb || 'showing momentum';
+    const nicheFitReason = detectedNiche
+      ? `${result.companyName} is ${detectedNiche.actionVerb}`
+      : `${result.companyName} is showing activity`;
+
+    const signalDetail = result.signalSummary || nicheSignalFallback;
 
     setIsGeneratingSupplyIntro(true);
 
     try {
-      // Run generation with minimum delay to prevent UI glitch
+      const providerSpecialty = selectedProvider?.specialty || detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
+
+      // Step 1: Detect match context (2-5 words)
+      const matchContext = await detectMatchContext(
+        aiConfig,
+        {
+          companyName: result.companyName,
+          signalDetail
+        },
+        {
+          providerName: actualProviderName,
+          specialty: providerSpecialty
+        }
+      );
+
+      // Step 2: Generate supply intro using anti-fragile approach (signal-based, no enrichment)
       const [supplyIntro] = await Promise.all([
-        generateSupplyIntro(
+        generateSupplyIntroAntifragile(
           aiConfig,
           {
-            company_name: result.companyName,
-            person_name: personData.name,
-            title: personData.title || 'decision maker'
+            matchContext,
+            providerFirstName: supplyContactForIntro.name?.split(' ')[0] || 'there',
+            providerCompany: actualProviderName
           },
           {
-            summary: signalDetail,
-            roleCount: result.jobCount || 1,
-            roleLabel: result.jobTitlesBeingHired?.[0] || '',
-            fitReason: `${result.companyName} is actively hiring`
-          },
-          { name: supplyContactForIntro.name },
-          {
-            name: actualProviderName,
-            specialty: selectedProvider?.specialty
+            companyName: result.companyName,
+            contactName: personData.name,
+            contactTitle: personData.title || 'decision maker',
+            signalDetail
           }
         ),
         new Promise(resolve => setTimeout(resolve, 400)) // Min delay to prevent glitch
       ]);
-      setSupplyIntroByDomain(prev => ({ ...prev, [domain]: supplyIntro }));
+      // Phase 3: Use dual-write helper
+      setSupplyIntro(domain, supplyIntro);
       console.log('[DualIntros] Supply intro regenerated for', supplyContactForIntro.name, 'at', actualProviderName, ':', supplyIntro);
     } catch (error) {
       console.error('[DualIntros] Supply intro failed:', error);
@@ -1968,6 +4205,7 @@ function MatchingEngineV3() {
   };
 
   const generateWhyNowAndWhyYou = async (domain: string) => {
+    // AI requires config (works for both guest + auth if keys are set)
     const result = matchingResults.find(r => r.domain === domain);
     if (!result || !isAIConfigured(aiConfig)) return;
 
@@ -2080,26 +4318,142 @@ function MatchingEngineV3() {
       selectedSupply = specificSupply;
       alternatives = discoveredSupplyCompanies.filter(s => s.domain !== specificSupply.domain);
     } else {
-      // Auto-select from dynamically discovered supply companies
-      const matches = findMatchingSupply(discoveredSupplyCompanies, hireCategory, 5);
+      // AI-POWERED MATCHING: Let AI pick the best suppliers (no keyword restrictions)
+      let matches: SupplyCompany[] = [];
+
+      if (isAIConfigured(aiConfig) && discoveredSupplyCompanies.length > 0) {
+        const aiMatches = await aiMatchSuppliers(
+          aiConfig,
+          {
+            companyName: result.companyName,
+            domain: result.domain,
+            signal: result.signalSummary || (detectedNiche?.actionVerb
+              ? `${detectedNiche.actionVerb}`
+              : `${result.jobCount || 1} active signals`),
+            industry: companyEnrichmentByDomain[result.domain]?.industry,
+          },
+          discoveredSupplyCompanies.map(s => ({
+            name: s.name,
+            domain: s.domain,
+            description: s.description,
+            specialty: s.specialty,
+          })),
+          5
+        );
+
+        // Convert AI matches back to SupplyCompany objects
+        matches = aiMatches
+          .map(m => discoveredSupplyCompanies.find(s => s.domain === m.domain))
+          .filter((s): s is SupplyCompany => !!s);
+
+        // Store AI match reasoning
+        if (aiMatches.length > 0) {
+          console.log('[SupplyMatch] AI matches:', aiMatches.map(m => `${m.name} (${m.reason})`).join(' | '));
+
+          // Create scored matches format for compatibility
+          const scoredMatches: ScoredSupplyMatch[] = aiMatches.map((m, i) => ({
+            supply: discoveredSupplyCompanies.find(s => s.domain === m.domain)!,
+            score: 100 - (i * 10), // AI ranks by relevance, so assign descending scores
+            factors: { aiMatched: true },
+            matchNarration: m.reason,
+            reasoning: m.reason,
+          })).filter(m => m.supply);
+
+          if (scoredMatches.length > 0) {
+            setAllScoredMatchesByDomain(prev => ({
+              ...prev,
+              [result.domain]: scoredMatches
+            }));
+            setSupplyMatchScoreByDomain(prev => ({
+              ...prev,
+              [result.domain]: scoredMatches[0].score
+            }));
+            setMatchReasoningByDemandDomain(prev => ({
+              ...prev,
+              [result.domain]: scoredMatches[0].reasoning
+            }));
+          }
+        }
+      }
 
       if (matches.length === 0) {
-        console.log('[SupplyEnrich] No supply companies discovered for category:', hireCategory);
-        // Show user-friendly message about empty supply
+        console.log('[SupplyEnrich] AI matching returned no results');
         if (discoveredSupplyCompanies.length === 0) {
-          showToast('info', 'No supply entities. Upload Supply dataset or confirm a supplier manually.');
+          showToast('info', 'No providers loaded. Add a Supply dataset in Settings to enable two-sided matching.');
         } else {
-          showToast('info', `No ${hireCategory} suppliers found. Try a different category or add suppliers.`);
+          showToast('info', 'Matching paused — check Settings');
         }
         return { contact: null, supply: null };
       }
 
-      selectedSupply = matches[0];
-      alternatives = matches.slice(1);
+      // Apply quality ranking when pressure is detected
+      if (pressureDetection?.pressureDetected) {
+        const rankedMatches = rankSupplyProviders(matches, {
+          pressureDetection,
+          demandCategory: hireCategory
+        });
+        matches = rankedMatches;
+        console.log('[SupplyEnrich] Ranked by quality:', matches.map(m => `${m.name} (${m.qualityScore})`).join(', '));
+
+        // Update trusted supply pools (fire-and-forget persist)
+        const roleType = pressureDetection.roleType;
+        const updatedPools = updatePoolForRole(trustedSupplyPools, roleType, rankedMatches);
+        setTrustedSupplyPools(updatedPools);
+
+        // Persist async (don't block UI)
+        (async () => {
+          try {
+            // GUEST: persist to localStorage
+            if (isGuest) {
+              localStorage.setItem('guest_trusted_supply_pools', JSON.stringify(updatedPools));
+              console.log('[TrustedPools] Saved to localStorage for guest');
+              return;
+            }
+            // AUTHED: persist to DB
+            await supabase
+              .from('operator_settings')
+              .update({ trusted_supply_pools: updatedPools })
+              .eq('user_id', user!.id);
+            console.log('[TrustedPools] Updated pool for', roleType, '- total:', updatedPools[roleType]?.providers.length || 0);
+          } catch (err) {
+            console.warn('[TrustedPools] Failed to persist:', err);
+          }
+        })();
+
+        // Apply tier-aware rotation to distribute intros
+        const eligibleDomains = rankedMatches.map(m => m.domain);
+        const rotationResult = getNextRotatedProvider(updatedPools, roleType, eligibleDomains);
+
+        if (rotationResult) {
+          // Find the matching company from ranked matches
+          const rotatedMatch = rankedMatches.find(m => m.domain === rotationResult.provider.domain);
+          if (rotatedMatch) {
+            selectedSupply = rotatedMatch;
+            alternatives = rankedMatches.filter(m => m.domain !== rotatedMatch.domain);
+            setRotationAppliedByDomain(prev => ({ ...prev, [companyDomain]: rotationResult.rotationApplied }));
+            console.log('[SupplyEnrich] Rotation:', rotationResult.reason);
+          } else {
+            // Fallback if rotation result not in matches
+            selectedSupply = matches[0];
+            alternatives = matches.slice(1);
+            setRotationAppliedByDomain(prev => ({ ...prev, [companyDomain]: false }));
+          }
+        } else {
+          // No rotation result, use first match
+          selectedSupply = matches[0];
+          alternatives = matches.slice(1);
+          setRotationAppliedByDomain(prev => ({ ...prev, [companyDomain]: false }));
+        }
+      } else {
+        // No pressure detected, use first match
+        selectedSupply = matches[0];
+        alternatives = matches.slice(1);
+        setRotationAppliedByDomain(prev => ({ ...prev, [companyDomain]: false }));
+      }
     }
 
     // Check if we have Apollo API key
-    const apolloKey = enrichmentConfig?.apolloApiKey || enrichmentConfig?.apiKey;
+    const apolloKey = enrichmentConfig?.apiKey;
     if (!apolloKey) {
       console.log('[SupplyEnrich] No Apollo API key, skipping supply enrichment');
       return { contact: null, supply: selectedSupply };
@@ -2114,8 +4468,7 @@ function MatchingEngineV3() {
 
     console.log(`[SupplyEnrich] Will try ${suppliesToTry.length} supply companies: ${suppliesToTry.map(s => s.name).join(' → ')}${specificSupply ? ' (explicit selection, no fallback)' : ''}`);
 
-    // Clear previous supply contact
-    setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: null }));
+    // Track enrichment status by demand domain (for UI state)
     setIsEnrichingSupplyByDomain(prev => ({ ...prev, [companyDomain]: true }));
 
     // === SUPPLY FALLBACK LOOP ===
@@ -2137,7 +4490,7 @@ function MatchingEngineV3() {
       console.log(`[SupplyEnrich] Trying supply: ${supply.name} (${supply.domain})`);
 
       // Update UI to show which supply company we're searching
-      setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: supply }));
+      setSelectedSupplyByDemandDomain(prev => ({ ...prev, [companyDomain]: supply }));
 
       try {
         // =====================================================================
@@ -2170,8 +4523,8 @@ function MatchingEngineV3() {
           // =====================================================================
           console.log(`[SupplyEnrich] Apify contact incomplete, enriching ${supply.name}...`);
 
-          // Get appropriate titles for this supply company's category
-          const searchTitles = getSupplyEnrichmentTitles(supply.hireCategory);
+          // Get appropriate titles for this supply company's category (niche-aware)
+          const searchTitles = getSupplyEnrichmentTitles(supply.hireCategory, detectedNiche);
 
           supplyContact = await findSupplyContact(
             apolloKey,
@@ -2238,8 +4591,10 @@ function MatchingEngineV3() {
     };
 
     if (foundContact && successfulSupply) {
-      setSupplyContactByDomain(prev => ({ ...prev, [companyDomain]: foundContact }));
-      setSelectedSupplyByDomain(prev => ({ ...prev, [companyDomain]: successfulSupply }));
+      // Phase 3: Use dual-write helper - store supply contact by SUPPLY domain
+      setSupplyContactForDomain(successfulSupply.domain, foundContact);
+      // Store selection by DEMAND domain (which demand maps to which supply)
+      setSelectedSupplyByDemandDomain(prev => ({ ...prev, [companyDomain]: successfulSupply }));
       // Show providers sorted by confidence (best matches first)
       const remainingAlternatives = sortByConfidence(
         discoveredSupplyCompanies.filter(s => s.domain !== successfulSupply!.domain)
@@ -2247,6 +4602,32 @@ function MatchingEngineV3() {
       setAlternativeSupplyByDomain(prev => ({ ...prev, [companyDomain]: remainingAlternatives }));
       const highConfCount = remainingAlternatives.filter(s => s.classification?.confidence === 'high').length;
       console.log(`[SupplyEnrich] === SUCCESS: ${foundContact.name} @ ${successfulSupply.name} (${highConfCount} perfect + ${remainingAlternatives.length - highConfCount} others) ===`);
+
+      // Mark provider as used for rotation tracking (fire-and-forget persist)
+      if (pressureDetection?.pressureDetected && pressureDetection.roleType !== 'unknown') {
+        const roleType = pressureDetection.roleType;
+        const updatedPools = markProviderUsed(trustedSupplyPools, roleType, successfulSupply.domain);
+        setTrustedSupplyPools(updatedPools);
+
+        // Persist async (don't block UI)
+        (async () => {
+          try {
+            // GUEST: persist to localStorage
+            if (isGuest) {
+              localStorage.setItem('guest_trusted_supply_pools', JSON.stringify(updatedPools));
+              return;
+            }
+            // AUTHED: persist to DB
+            await supabase
+              .from('operator_settings')
+              .update({ trusted_supply_pools: updatedPools })
+              .eq('user_id', user!.id);
+            console.log('[Rotation] Marked provider used:', successfulSupply.name);
+          } catch (err) {
+            console.warn('[Rotation] Failed to persist lastUsedAt:', err);
+          }
+        })();
+      }
     } else {
       console.log(`[SupplyEnrich] === FAILED: No supply contact found at any discovered company ===`);
       // Show providers sorted by confidence so user can try best matches first
@@ -2271,12 +4652,25 @@ function MatchingEngineV3() {
 
     console.log(`[SupplySwitch] Switching to ${newSupply.name} for ${companyDomain}`);
 
-    // Clear cached supply intro immediately
-    setSupplyIntroByDomain(prev => {
-      const updated = { ...prev };
-      delete updated[companyDomain];
-      return updated;
-    });
+    // === IMMEDIATE UI UPDATES ===
+    // Update selected provider immediately for instant UI feedback
+    setSelectedSupplyByDemandDomain(prev => ({ ...prev, [companyDomain]: newSupply }));
+
+    // Update score/reasoning immediately
+    const allMatches = allScoredMatchesByDomain[companyDomain] || [];
+    const matchForProvider = allMatches.find(m => m.supply.domain === newSupply.domain);
+    if (matchForProvider) {
+      setSupplyMatchScoreByDomain(prev => ({ ...prev, [companyDomain]: matchForProvider.score }));
+      setMatchReasoningByDemandDomain(prev => ({ ...prev, [companyDomain]: matchForProvider.reasoning }));
+    }
+
+    // NOTE: Don't clear supply contact - it's keyed by supply domain, not demand domain
+    // The old supply's contact is still valid for that supply company
+
+    // Clear BOTH intros immediately - demand intro mentions provider, so it must regenerate too
+    // Phase 3: Use dual-write helpers for clearing intros
+    setDemandIntro(companyDomain, null);
+    setSupplyIntro(companyDomain, null);
 
     // Enrich with new supply company - returns the contact directly (no stale state)
     const { contact: freshSupplyContact, supply: actualSupply } = await enrichSupplyContact(companyDomain, result, newSupply);
@@ -2287,46 +4681,111 @@ function MatchingEngineV3() {
       return;
     }
 
-    // Check if we have demand person data
-    const personData = personDataByDomain[companyDomain];
+    // Check if we have demand person data - Phase 2: Read from new state
+    const personData = getDemandState(companyDomain).contact;
     if (!personData?.name) {
       console.log('[SupplySwitch] No demand contact yet - skipping intro generation');
       return;
     }
 
     // Generate the new supply intro with FRESH data (not stale state)
+    // AI requires config (works for both guest + auth if keys are set)
+    if (!aiConfig || !isAIConfigured(aiConfig)) {
+      console.log('[SupplySwitch] AI not configured, skipping intro generation');
+      return;
+    }
+
     // Use the actual company name from the contact (from Apollo), not the selected supply company
     const actualProviderName = freshSupplyContact.company;
-    console.log(`[SupplySwitch] Generating intro for ${freshSupplyContact.name} at ${actualProviderName}`);
+    console.log(`[SupplySwitch] Generating BOTH intros for provider switch to ${actualProviderName}`);
 
-    const signalDetail = result.signalSummary || `${result.jobCount || 0} open roles`;
+    // Use niche-aware fallbacks
+    const nicheSignalFallback = detectedNiche?.actionVerb || 'showing momentum';
+    const nicheSpecialty = detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
+    const nicheFitReason = detectedNiche
+      ? `${result.companyName} is ${detectedNiche.actionVerb}`
+      : `${result.companyName} is showing activity`;
+
+    const signalDetail = result.signalSummary || nicheSignalFallback;
     const providerInfo = actualSupply || newSupply;
+    const firstName = personData.name.split(' ')[0];
 
+    // Provider info for demand intro
+    const provider = {
+      name: actualProviderName || providerInfo.name,
+      company: actualProviderName || providerInfo.name,
+      specialty: providerInfo.specialty || nicheSpecialty
+    };
+
+    // Determine hire category for supply intro (fallback for legacy code)
+    const hireCategory = extractHireCategory(
+      result.jobTitlesBeingHired?.map(t => ({ title: t })),
+      result.signalSummary
+    );
+
+    // Generate BOTH intros using anti-fragile approach (signal-based, no enrichment)
+    setIsGeneratingDemandIntro(true);
     setIsGeneratingSupplyIntro(true);
+
     try {
-      const supplyIntro = await generateSupplyIntro(
+      // Use unified anti-fragile intro generation for both demand and supply
+      const { demandIntro, supplyIntro, matchContext } = await generateIntrosAntifragile(
         aiConfig,
         {
-          company_name: result.companyName,
-          person_name: personData.name,
-          title: personData.title || 'decision maker'
+          companyName: result.companyName,
+          signalDetail,
+          contactFirstName: firstName,
+          contactName: personData.name,
+          contactTitle: personData.title || 'decision maker',
         },
         {
-          summary: signalDetail,
-          roleCount: result.jobCount || 1,
-          roleLabel: result.jobTitlesBeingHired?.[0] || '',
-          fitReason: `${result.companyName} is actively hiring`
-        },
-        { name: freshSupplyContact.name },
-        { name: actualProviderName, specialty: providerInfo.specialty }
+          providerName: provider.name,
+          providerSpecialty: provider.specialty,
+          contactFirstName: freshSupplyContact.name?.split(' ')[0] || 'there',
+        }
       );
 
-      setSupplyIntroByDomain(prev => ({ ...prev, [companyDomain]: supplyIntro }));
-      console.log(`[SupplySwitch] ✓ Intro generated for ${freshSupplyContact.name} at ${actualProviderName}`);
+      // Phase 3: Use dual-write helpers
+      setDemandIntro(companyDomain, demandIntro);
+      setSupplyIntro(companyDomain, supplyIntro);
+      console.log(`[SupplySwitch] ✓ BOTH intros regenerated for provider switch to ${actualProviderName} (context: ${matchContext})`);
     } catch (error) {
       console.error('[SupplySwitch] Intro generation failed:', error);
     } finally {
+      setIsGeneratingDemandIntro(false);
       setIsGeneratingSupplyIntro(false);
+    }
+  };
+
+  // Fetch company enrichment (pain points, competitors, customer profiles) from Instantly AI
+  const handleCompanyEnrichment = async (companyDomain: string) => {
+    // Already enriching or enriched?
+    if (isEnrichingCompanyByDomain[companyDomain] || companyEnrichmentByDomain[companyDomain]) {
+      return;
+    }
+
+    // Need Instantly API key for company intel (pain points, competitors)
+    if (!isCompanyIntelConfigured(instantlyConfig)) {
+      console.log('[CompanyIntel] Skip: Instantly API key not configured (need for pain points/competitors)');
+      return;
+    }
+
+    setIsEnrichingCompanyByDomain(prev => ({ ...prev, [companyDomain]: true }));
+
+    try {
+      const enrichment = await enrichDomain(
+        companyDomain,
+        instantlyConfig.apiKey,
+        user?.id
+      );
+
+      setCompanyEnrichmentByDomain(prev => ({ ...prev, [companyDomain]: enrichment }));
+
+      console.log(`[CompanyIntel] Enriched ${companyDomain} via Instantly — ${enrichment.painPoints.length} pain points, ${enrichment.competitors.length} competitors`);
+    } catch (err) {
+      console.error('[CompanyIntel] Failed for', companyDomain, ':', err);
+    } finally {
+      setIsEnrichingCompanyByDomain(prev => ({ ...prev, [companyDomain]: false }));
     }
   };
 
@@ -2335,6 +4794,9 @@ function MatchingEngineV3() {
       showToast('warning', 'Company info missing. Check signals first.');
       return;
     }
+
+    // Also trigger company enrichment in background (non-blocking)
+    handleCompanyEnrichment(companyDomain);
 
     // Normalize domain (strip https://, www., trailing slashes)
     const cleanDomain = normalizeDomain(companyDomain) || companyDomain;
@@ -2350,24 +4812,27 @@ function MatchingEngineV3() {
 
     try {
       // Check cache first (but don't block on errors - just skip cache if query fails)
+      // GUEST: Skip DB cache check - guests use localStorage cache via matching_engine_state_v1
       let cachedRecord: any = null;
-      try {
-        const { data, error } = await supabase
-          .from('signal_history')
-          .select('enriched_at, person_name, person_title, person_email, person_linkedin, target_titles')
-          .eq('company_domain', cleanDomain)
-          .not('enriched_at', 'is', null)
-          .order('enriched_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      if (!isGuest) {
+        try {
+          const { data, error } = await supabase
+            .from('signal_history')
+            .select('enriched_at, person_name, person_title, person_email, person_linkedin, target_titles')
+            .eq('company_domain', cleanDomain)
+            .not('enriched_at', 'is', null)
+            .order('enriched_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-        if (!error) {
-          cachedRecord = data;
-        } else {
-          console.log('[MatchingEngine] Cache query failed (will proceed to enrichment):', error.message);
+          if (!error) {
+            cachedRecord = data;
+          } else {
+            console.log('[MatchingEngine] Cache query failed (will proceed to enrichment):', error.message);
+          }
+        } catch (cacheError) {
+          console.log('[MatchingEngine] Cache check skipped:', cacheError);
         }
-      } catch (cacheError) {
-        console.log('[MatchingEngine] Cache check skipped:', cacheError);
       }
 
       // ONLY use cache if we have ACTUAL useful data (name OR email)
@@ -2396,7 +4861,8 @@ function MatchingEngineV3() {
               confidence: 90
             })
           };
-          setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: cachedPerson }));
+          // Phase 3: Use dual-write helper
+          setDemandContact(companyDomain, cachedPerson);
 
           // Show rewarding cache hit message (green toast)
           showToast('cache', 'We know this person already, no charge for you!');
@@ -2429,8 +4895,12 @@ function MatchingEngineV3() {
         }
       }
 
-      if (enrichmentConfig.provider === 'none' || !isEnrichmentConfigured(enrichmentConfig)) {
-        showToast('warning', 'Set up contact provider in Settings first.');
+      // Check if ANY enrichment method is configured (Apollo/PDL OR Anymail Finder)
+      const hasApolloOrPdl = isContactEnrichmentConfigured(enrichmentConfig);
+      const hasAnymailFinder = !!enrichmentConfig.anymailFinderApiKey;
+
+      if (!hasApolloOrPdl && !hasAnymailFinder) {
+        showToast('warning', 'Set up contact provider (Apollo/PDL) in Settings first.');
         setIsEnrichingDomain(null);
         return;
       }
@@ -2484,6 +4954,68 @@ function MatchingEngineV3() {
       const hireCategory = determineHireCategory();
       console.log(`[MatchingEngine] Determined hire category: ${hireCategory.toUpperCase()}`);
 
+      // ================================================================
+      // CHECK CACHE FIRST - Skip Apollo if we already have this contact
+      // Re-verify if stale (>30 days old)
+      // ================================================================
+      const cached = await getCachedContact(companyDomain);
+      if (cached?.email) {
+        const isStale = isVerificationStale(cached);
+
+        // If stale and we have Anymail key, re-verify
+        if (isStale && enrichmentConfig.anymailFinderApiKey) {
+          console.log(`[MatchingEngine] CACHE HIT (STALE) - re-verifying ${cached.email}`);
+          try {
+            const { verifyEmail } = await import('./services/AnymailFinderService');
+            const verifyResult = await verifyEmail(enrichmentConfig.anymailFinderApiKey, cached.email);
+            const newStatus = verifyResult.status === 'verified' ? 'verified'
+              : verifyResult.status === 'risky' ? 'risky'
+              : verifyResult.status === 'invalid' ? 'invalid'
+              : 'unverified';
+
+            // Update cache with fresh verification
+            await updateVerificationStatus(companyDomain, cached.email, newStatus as 'verified' | 'risky' | 'invalid');
+            console.log(`[MatchingEngine] Re-verified ${cached.email}: ${newStatus}`);
+
+            // Only use if still valid
+            if (newStatus === 'invalid') {
+              console.log(`[MatchingEngine] Cached email now invalid - proceeding to Apollo`);
+              // Continue to Apollo lookup below
+            } else {
+              // Use cached + re-verified contact - Phase 3: Use dual-write helper
+              setDemandContact(companyDomain, {
+                name: cached.name || '',
+                title: cached.title || '',
+                email: cached.email,
+                linkedin: cached.linkedin,
+                confidence: 0.9,
+                status: 'ready',
+              });
+              setIsEnrichingByDomain(prev => ({ ...prev, [companyDomain]: false }));
+              return;
+            }
+          } catch (err) {
+            console.warn(`[MatchingEngine] Re-verification failed, using cached:`, err);
+          }
+        }
+
+        // Fresh cache or no Anymail key - use as-is
+        if (!isStale || !enrichmentConfig.anymailFinderApiKey) {
+          console.log(`[MatchingEngine] ✓ CACHE HIT - skip Apollo for ${companyDomain}: ${cached.email}`);
+          // Phase 3: Use dual-write helper
+          setDemandContact(companyDomain, {
+            name: cached.name || '',
+            title: cached.title || '',
+            email: cached.email,
+            linkedin: cached.linkedin,
+            confidence: 0.9,
+            status: 'ready',
+          });
+          setIsEnrichingByDomain(prev => ({ ...prev, [companyDomain]: false }));
+          return;
+        }
+      }
+
       // Step 1: Try Work Owner Search first (if keywords configured)
       const workOwnerSettingsForApi: WorkOwnerSettings = {
         work_owner_departments: workOwnerSettings.departments.join(', '),
@@ -2526,6 +5058,7 @@ function MatchingEngineV3() {
         };
 
         person = await enrichPerson(companyDomain, result.targetTitles || [], enrichmentConfig, result.whoHasPressureRoles || [], enrichmentContext);
+        // Credit tracked later after verification
       }
 
       // === ANYMAIL FINDER FALLBACK FOR DEMAND CONTACTS ===
@@ -2544,7 +5077,9 @@ function MatchingEngineV3() {
             }
           );
 
-          if (anymailResult) {
+          if (anymailResult?.email) {
+            // Anymail Finder emails are pre-verified
+            trackCreditUsage(anymailResult.email, 'verified');
             console.log(`[DemandEnrich] ✓ Anymail Finder found: ${anymailResult.email}`);
 
             if (person) {
@@ -2583,7 +5118,8 @@ function MatchingEngineV3() {
           source: searchSource
         });
 
-        setPersonDataByDomain(prev => ({ ...prev, [companyDomain]: person }));
+        // Phase 3: Use dual-write helper
+        setDemandContact(companyDomain, person);
         setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: false }));
         const strategy = searchSource === 'work_owner' ? 'work_owner' : ((person as any).searchStrategy || 'primary');
         console.log('[MatchingEngine] Person enriched:', person.name, person.title, 'status:', person.status, 'source:', strategy);
@@ -2602,6 +5138,20 @@ function MatchingEngineV3() {
           showToast('success', `Found ${personName}${companyPart}${sourceLabel}`);
         }
 
+        // SAVE TO SHARED CACHE - All users benefit from this enrichment
+        if (person.email) {
+          saveToCache({
+            domain: companyDomain,
+            email: person.email,
+            name: person.name,
+            title: person.title,
+            linkedin: person.linkedin,
+            companyName: result.companyName,
+            source: searchSource === 'anymail_finder' ? 'anymailfinder' : 'apollo',
+          });
+          console.log(`[MatchingEngine] ✓ Saved to cache: ${person.email}`);
+        }
+
         if (person.title) {
           const pressureProfile = getContextualPressureProfile({
             personTitle: person.title,
@@ -2616,21 +5166,22 @@ function MatchingEngineV3() {
           console.log('[Pressure Profile] FRESH - Skipped (no title)');
         }
 
-        // Update the most recent signal_history record for this domain
+        // Update the most recent signal_history record for this domain (AUTHED ONLY)
         // Note: Supabase update doesn't support order/limit, so we update all matching records
-        await supabase
-          .from('signal_history')
-          .update({
-            person_name: person.name || null,
-            person_title: person.title || null,
-            person_email: person.email || null,
-            person_linkedin: person.linkedin || null,
-            target_titles: Array.isArray(result.targetTitles) ? result.targetTitles : [],
-            enriched_at: new Date().toISOString()
-          })
-          .eq('company_domain', cleanDomain);
-
-        console.log('[MatchingEngine] Saved enriched person data to database');
+        if (!isGuest) {
+          await supabase
+            .from('signal_history')
+            .update({
+              person_name: person.name || null,
+              person_title: person.title || null,
+              person_email: person.email || null,
+              person_linkedin: person.linkedin || null,
+              target_titles: Array.isArray(result.targetTitles) ? result.targetTitles : [],
+              enriched_at: new Date().toISOString()
+            })
+            .eq('company_domain', cleanDomain);
+          console.log('[MatchingEngine] Saved enriched person data to database');
+        }
 
         // Step 3: Also enrich supply contact (provider company contact)
         await enrichSupplyContact(cleanDomain, result);
@@ -2638,13 +5189,15 @@ function MatchingEngineV3() {
         setNoContactsFoundByDomain(prev => ({ ...prev, [companyDomain]: true }));
         showToast('warning', 'No contact found for this company');
 
-        // Mark as enriched even when no contact found (prevents re-attempts)
-        await supabase
-          .from('signal_history')
-          .update({
-            enriched_at: new Date().toISOString()
-          })
-          .eq('company_domain', cleanDomain);
+        // Mark as enriched even when no contact found (prevents re-attempts) - AUTHED ONLY
+        if (!isGuest) {
+          await supabase
+            .from('signal_history')
+            .update({
+              enriched_at: new Date().toISOString()
+            })
+            .eq('company_domain', cleanDomain);
+        }
       }
     } catch (error) {
       console.error('[MatchingEngine] Error enriching person:', error);
@@ -2658,7 +5211,7 @@ function MatchingEngineV3() {
     console.log('[Instantly] Button clicked');
 
     const result = matchingResults.find(r => r.domain === domain);
-    const personData = personDataByDomain[domain];
+    const personData = getDemandState(domain).contact;
     const finalIntro = finalIntroByDomain[domain];
 
     console.log('[Instantly] Person data:', personData);
@@ -2674,7 +5227,7 @@ function MatchingEngineV3() {
         hasEmail: !!personData?.email,
         hasFinalIntro: !!finalIntro
       });
-      showToast('error', 'Missing required data for Instantly lead creation');
+      showToast('error', 'Missing contact data for routing');
       return;
     }
 
@@ -2693,7 +5246,7 @@ function MatchingEngineV3() {
     // Validate required fields
     if (!personData.email) {
       console.error('[Instantly] Email is required when using campaign');
-      showToast('error', 'Email is required to send lead to Instantly');
+      showToast('error', 'Email required for routing');
       return;
     }
 
@@ -2736,8 +5289,8 @@ function MatchingEngineV3() {
         return;
       }
 
-      console.log('[Instantly] Lead sent successfully');
-      showToast('success', 'Lead sent to Instantly');
+      console.log('[Instantly] Contact routed successfully');
+      showToast('success', 'Routed to campaign');
     } catch (error) {
       console.error('[Instantly] Full error:', error);
       console.error('[Instantly] Error message:', (error as Error).message);
@@ -2757,11 +5310,11 @@ function MatchingEngineV3() {
     });
 
     const result = matchingResults.find(r => r.domain === domain);
-    const personData = personDataByDomain[domain]; // Demand contact (person at hiring company)
+    const personData = getDemandState(domain).contact; // Demand contact (person at hiring company)
 
     // For DEMAND: we need the demand contact's email
     if (type === 'DEMAND' && (!result || !personData || !personData.email)) {
-      showToast('error', 'Missing contact data for Demand lead');
+      showToast('error', 'Missing contact data for demand routing');
       return;
     }
 
@@ -2772,7 +5325,7 @@ function MatchingEngineV3() {
 
     if (type === 'SUPPLY') {
       // Step 1: Check if provider already selected
-      selectedProvider = selectedSupplyByDomain[domain];
+      selectedProvider = selectedSupplyByDemandDomain[domain];
 
       if (!selectedProvider) {
         showToast('error', 'No provider selected. Enrich contact first.');
@@ -2780,12 +5333,12 @@ function MatchingEngineV3() {
       }
       console.log(`[DualSend] Selected provider: ${selectedProvider.name} (${selectedProvider.domain})`);
 
-      // Step 2: Check if we already have an enriched supply contact
-      supplyContact = supplyContactByDomain[domain];
+      // Step 2: Check if we already have an enriched supply contact - Phase 2: Read from new state
+      supplyContact = getSupplyContactState(selectedProvider.domain).contact;
 
       if (!supplyContact) {
         // Step 3: Enrich supply contact using Apollo
-        const apolloKey = enrichmentConfig?.apolloApiKey;
+        const apolloKey = enrichmentConfig?.apiKey;
         if (!apolloKey) {
           showToast('error', 'Apollo API key required for supply enrichment. Set it in Settings.');
           return;
@@ -2831,7 +5384,8 @@ function MatchingEngineV3() {
           }
 
           if (supplyContact) {
-            setSupplyContactByDomain(prev => ({ ...prev, [domain]: supplyContact }));
+            // Phase 3: Use dual-write helper - store by supply domain (provider's domain)
+            setSupplyContactForDomain(selectedProvider.domain, supplyContact);
             console.log(`[DualSend] Found supply contact: ${supplyContact.name} (${supplyContact.title}) at ${supplyContact.company}`);
           }
         } catch (error) {
@@ -2847,45 +5401,58 @@ function MatchingEngineV3() {
       }
 
       // Step 4: Generate supply intro with actual supply contact name
-      // Use actual company name from the contact (from Apollo) - more accurate than selectedProvider
-      const actualProviderName = supplyContact.company;
-      console.log(`[DualSend] Generating supply intro for ${supplyContact.name} at ${actualProviderName}...`);
-      const supplyFirstName = supplyContact.name.split(' ')[0];
-      const demandFirstName = personData?.name?.split(' ')[0] || 'the contact';
-      const roleCount = result?.jobCount || 1;
-      const signalDetail = result?.signalSummary || `${roleCount} open roles`;
+      // GUEST GUARD + AI CONFIG GUARD: Skip AI for guests or when not configured
+      if (isGuest || !aiConfig || !isAIConfigured(aiConfig)) {
+        console.log('[DualSend] AI not available, using deterministic intro');
+        supplyIntroForSend = `hey ${supplyContact.name.split(' ')[0]} — i've got a live company that fits what you do. details?`;
+      } else {
+        // Use actual company name from the contact (from Apollo) - more accurate than selectedProvider
+        const actualProviderName = supplyContact.company;
+        console.log(`[DualSend] Generating supply intro for ${supplyContact.name} at ${actualProviderName}...`);
+        const supplyFirstName = supplyContact.name.split(' ')[0];
+        const roleCount = result?.jobCount || 1;
+        const signalDetail = result?.signalSummary || (detectedNiche?.actionVerb || `${roleCount} active signals`);
+        const providerSpecialty = selectedProvider?.specialty || detectedNiche?.introTemplates?.valueProposition || 'helps companies like yours';
 
-      try {
-        const freshSupplyIntro = await generateSupplyIntro(
-          aiConfig,
-          {
-            company_name: result?.companyName || '',
-            person_name: personData?.name || demandFirstName, // Full name for canonical template
-            title: personData?.title || 'decision maker'
-          },
-          {
-            summary: signalDetail,
-            roleCount: roleCount,
-            roleLabel: result?.jobTitlesBeingHired?.[0] || 'role',
-            hireCategory: result?.hireCategory || 'engineering' // Pass category for canonical template
-          },
-          {
-            name: supplyFirstName
-          },
-          // Pass actual provider name from Apollo contact - more accurate
-          {
-            name: actualProviderName,
-            specialty: selectedProvider?.specialty
-          }
-        );
-        setSupplyIntroByDomain(prev => ({ ...prev, [domain]: freshSupplyIntro }));
-        // Store the intro for immediate use (state won't update synchronously)
-        supplyIntroForSend = freshSupplyIntro;
-        console.log(`[DualSend] Fresh supply intro generated for ${supplyContact.name} at ${actualProviderName}:`, freshSupplyIntro);
-      } catch (error) {
-        console.error('[DualSend] Failed to generate supply intro:', error);
-        showToast('error', 'Failed to generate supply intro');
-        return;
+        try {
+          // Step 1: Detect match context (2-5 words)
+          const matchContext = await detectMatchContext(
+            aiConfig,
+            {
+              companyName: result?.companyName || '',
+              signalDetail
+            },
+            {
+              providerName: actualProviderName,
+              specialty: providerSpecialty
+            }
+          );
+
+          // Step 2: Generate supply intro using anti-fragile approach (signal-based, no enrichment)
+          const freshSupplyIntro = await generateSupplyIntroAntifragile(
+            aiConfig,
+            {
+              matchContext,
+              providerFirstName: supplyFirstName,
+              providerCompany: actualProviderName
+            },
+            {
+              companyName: result?.companyName || '',
+              contactName: personData?.name || 'the contact',
+              contactTitle: personData?.title || 'decision maker',
+              signalDetail
+            }
+          );
+          // Phase 3: Use dual-write helper
+          setSupplyIntro(domain, freshSupplyIntro);
+          // Store the intro for immediate use (state won't update synchronously)
+          supplyIntroForSend = freshSupplyIntro;
+          console.log(`[DualSend] Fresh supply intro generated for ${supplyContact.name} at ${actualProviderName} (context: ${matchContext}):`, freshSupplyIntro);
+        } catch (error) {
+          console.error('[DualSend] Failed to generate supply intro:', error);
+          showToast('error', 'Failed to generate supply intro');
+          return;
+        }
       }
     }
 
@@ -2909,10 +5476,11 @@ function MatchingEngineV3() {
     }
 
     // Use the correct intro based on send type
-    // For Supply, use the freshly generated intro (state update is async)
+    // Phase 2: Read from new state (single source of truth)
+    const state = getDemandState(domain);
     const aiGeneratedIntro = type === 'DEMAND'
-      ? (demandIntroByDomain[domain] || aiRewrittenIntroByDomain[domain])
-      : (supplyIntroForSend || supplyIntroByDomain[domain]);
+      ? (state.demandIntro || aiRewrittenIntroByDomain[domain])
+      : (supplyIntroForSend || state.supplyIntro);
 
     console.log(`[DualSend] Using ${type} intro:`, aiGeneratedIntro);
 
@@ -2941,7 +5509,12 @@ function MatchingEngineV3() {
         },
         contact_title: personData?.title,
         company_domain: result?.domain,
-        intro_text: aiGeneratedIntro
+        intro_text: aiGeneratedIntro,
+        // Scoring telemetry (separated)
+        operator_fit_score: result?.operatorFitScore,  // Demand → operator fit (0-100)
+        supply_match_score: supplyMatchScoreByDomain[domain],  // New: demand → supply fit
+        supply_match_reasoning: matchReasoningByDemandDomain[domain],
+        supply_domain: selectedSupplyByDemandDomain[domain]?.domain,  // Which provider
       };
     } else {
       // SUPPLY: Send to the enriched supply contact (person at provider company)
@@ -2972,7 +5545,12 @@ function MatchingEngineV3() {
         },
         contact_title: supplyContact!.title,
         company_domain: selectedProvider?.domain || '', // SUPPLY company domain
-        intro_text: aiGeneratedIntro
+        intro_text: aiGeneratedIntro,
+        // Scoring telemetry (separated)
+        operator_fit_score: result?.operatorFitScore,  // Demand → operator fit (0-100)
+        supply_match_score: supplyMatchScoreByDomain[domain],  // New: demand → supply fit
+        supply_match_reasoning: matchReasoningByDemandDomain[domain],
+        supply_domain: selectedProvider?.domain,  // Which provider
       };
 
       console.log(`[DualSend] SUPPLY recipient: ${supplyContact!.email} (${supplyContact!.name} @ ${selectedProvider?.name || supplyContact!.company})`);
@@ -2985,11 +5563,37 @@ function MatchingEngineV3() {
 
       if (sendResult.success) {
         console.log(`[DualSend] Successfully sent to ${type} campaign`);
-        showToast('success', `Lead sent to ${type === 'DEMAND' ? 'Demand' : 'Supply'} campaign`);
+        showToast('success', `Routed to ${type === 'DEMAND' ? 'demand' : 'supply'} campaign`);
 
         // Update status tracking - only on real success
         if (type === 'DEMAND') {
           setDemandStatusByDomain(prev => ({ ...prev, [domain]: 'sent' }));
+
+          // Mark demand as used for rotation tracking (fire-and-forget persist)
+          if (pressureDetection?.pressureDetected && pressureDetection.roleType !== 'unknown') {
+            const roleType = pressureDetection.roleType;
+            const updatedPools = markDemandUsed(trustedDemandPools, roleType, domain);
+            setTrustedDemandPools(updatedPools);
+
+            // Persist async (don't block UI)
+            (async () => {
+              try {
+                // GUEST: persist to localStorage
+                if (isGuest) {
+                  localStorage.setItem('guest_trusted_demand_pools', JSON.stringify(updatedPools));
+                  return;
+                }
+                // AUTHED: persist to DB
+                await supabase
+                  .from('operator_settings')
+                  .update({ trusted_demand_pools: updatedPools })
+                  .eq('user_id', user!.id);
+                console.log('[Rotation] Marked demand used:', result?.companyName);
+              } catch (err) {
+                console.warn('[Rotation] Failed to persist demand lastUsedAt:', err);
+              }
+            })();
+          }
         } else {
           setSupplyStatusByDomain(prev => ({ ...prev, [domain]: 'sent' }));
         }
@@ -3025,6 +5629,817 @@ function MatchingEngineV3() {
     ]);
 
     console.log('[SendBoth] done', results);
+  };
+
+  // =========================================================================
+  // BATCH SEND MODE (v2 - Consumes from PreEnrichedContactsPool only)
+  // =========================================================================
+
+  // V2 Preflight: Show confirmation modal with 10s cancel window
+  const startBatchSend = async () => {
+    if (!instantlyConfig?.apiKey) {
+      showToast('error', 'Instantly API key required');
+      return;
+    }
+
+    if (!pressureDetection?.pressureDetected) {
+      showToast('error', 'Pressure detection required for batch send');
+      return;
+    }
+
+    const roleType = pressureDetection.roleType;
+    if (roleType === 'unknown') {
+      showToast('error', 'Valid roleType required for batch send');
+      return;
+    }
+
+    // Get ready contacts from PreEnrichedContactsPool
+    const readyCount = getReadyCount(preEnrichedPools, roleType);
+    console.log(`[BatchSend] Ready contacts in pool for ${roleType}: ${readyCount}`);
+
+    if (readyCount === 0) {
+      // Check if worker is running
+      if (isWorkerRunning(roleType)) {
+        const progress = getWorkerProgress(roleType);
+        showToast('info', `Enrichment in progress (${progress?.succeeded || 0} ready). Try again shortly.`);
+      } else {
+        showToast('info', 'No ready contacts. Run enrichment first.');
+      }
+      return;
+    }
+
+    // Determine actual batch size (limited by pool and requested)
+    const actualBatchSize = Math.min(batchSize, readyCount);
+
+    // V2: Show preflight modal with 10s countdown
+    setPreflightSendCount(actualBatchSize);
+    setPreflightCountdown(10);
+    setShowBatchPreflight(true);
+
+    // Start countdown (executeBatchSendRef is kept updated on every render)
+    if (preflightTimerRef.current) clearInterval(preflightTimerRef.current);
+    preflightTimerRef.current = setInterval(() => {
+      setPreflightCountdown(prev => {
+        if (prev <= 1) {
+          // Countdown finished - execute send using ref (avoids stale closure)
+          if (preflightTimerRef.current) clearInterval(preflightTimerRef.current);
+          setShowBatchPreflight(false);
+          executeBatchSendRef.current?.();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // Cancel preflight countdown
+  const cancelBatchPreflight = () => {
+    if (preflightTimerRef.current) {
+      clearInterval(preflightTimerRef.current);
+      preflightTimerRef.current = null;
+    }
+    setShowBatchPreflight(false);
+    setPreflightCountdown(0);
+  };
+
+  // Execute batch send (called after preflight countdown or skip)
+  // NOTE: This function is stored in a ref to avoid stale closure issues
+  const executeBatchSend = async () => {
+    if (!pressureDetection?.pressureDetected) return;
+    const roleType = pressureDetection.roleType;
+    if (roleType === 'unknown') return;
+
+    const readyCount = getReadyCount(preEnrichedPools, roleType);
+    const actualBatchSize = Math.min(batchSize, readyCount);
+
+    console.log(`[BatchSend] Starting batch of ${actualBatchSize} from pool (requested ${batchSize}, available ${readyCount})`);
+
+    // Set routing progress IMMEDIATELY so UI shows progress state
+    setRoutingProgress({
+      total: actualBatchSize,
+      completed: 0,
+      startTime: Date.now()
+    });
+
+    // Create executor with progress callback for live UI updates
+    const executor = new BatchSendExecutor(
+      instantlyConfig.apiKey,
+      (progress) => setRoutingProgress(prev => prev ? {
+        ...prev,
+        completed: progress.completed
+      } : null)
+    );
+    batchExecutorRef.current = executor;
+
+    // GET contacts from pool (don't consume yet - only consume after successful send)
+    const poolContacts = getReadyContacts(preEnrichedPools, roleType, actualBatchSize);
+
+    console.log(`[BatchSend] Got ${poolContacts.length} ready contacts from pool`);
+
+    // Process each contact: generate intro, create batch item
+    const sendItems: Parameters<typeof executor.enqueue>[0] = [];
+    let processedCount = 0;
+
+    for (const contact of poolContacts) {
+      processedCount++;
+
+      try {
+        // Lookup matching result for job data (pool contacts don't have this)
+        const matchResult = matchingResults.find(r => r.domain === contact.domain);
+        const jobTitles = matchResult?.jobTitlesBeingHired || [];
+        const jobCount = matchResult?.jobCount || 1;
+
+        // Contact already has verified email from pool
+        const personData: PersonData = {
+          email: contact.email,
+          name: contact.name,
+          title: contact.title,
+          linkedin: contact.linkedin,
+          status: 'ready',
+        };
+
+        // Phase 3: Use dual-write helper for UI consistency
+        setDemandContact(contact.domain, personData);
+
+        // Get pre-generated intro (NO AI calls during send - too slow)
+        // Phase 2: Read from new state
+        const contactState = getDemandState(contact.domain);
+        let intro = contactState.demandIntro;
+        if (!intro) {
+          // Use simple fallback intro - AI intros should be pre-generated
+          const matchedSupplyDomain = contactState.selectedSupplyDomain;
+          const matchedSupply = matchedSupplyDomain
+            ? discoveredSupplyCompanies.find(s => s.domain === matchedSupplyDomain)
+            : discoveredSupplyCompanies[0];
+          const providerName = matchedSupply?.name || connectorProfile?.company_name || 'our network';
+          const [contactFirstName] = (contact.name || '').split(' ');
+
+          // Simple fallback intro (no AI call)
+          // GATE: Skip if no real company name (don't polish garbage)
+          if (!contact.companyName || contact.companyName.includes('.')) {
+            console.log(`[BatchSend] Skipping ${contact.domain} - no company name (data quality issue)`);
+            continue;
+          }
+          const { greeting: demandGreeting } = humanGreeting(contactFirstName);
+          intro = `${demandGreeting}, saw ${contact.companyName} is showing momentum - ${providerName} works with similar teams. Worth a quick intro?`;
+          console.log(`[BatchSend] Using fallback intro for ${contact.domain} (pre-generation missed)`);
+
+          // Save for consistency - Phase 3: Use dual-write helper
+          setDemandIntro(contact.domain, intro!);
+        }
+
+        // Create demand batch item
+        const [firstName, ...lastParts] = (contact.name || '').split(' ');
+        const lastName = lastParts.join(' ');
+
+        if (instantlyConfig.campaignDemand) {
+          sendItems.push(createDemandBatchItem(
+            contact.domain,
+            contact.email,
+            firstName || '',
+            lastName || '',
+            contact.companyName,
+            intro,
+            instantlyConfig.campaignDemand,
+            {
+              signal_type: contact.signalSummary,
+              signal_strength: contact.signalStrength
+            }
+          ));
+        }
+
+        // ========================================
+        // SUPPLY SENDING - Auto-match and send to provider
+        // ========================================
+        // SUPPLY ROUTING: AI-powered matching (no keyword restrictions)
+        console.log(`[BatchSend] Supply routing check for ${contact.domain}:`, {
+          hasCampaignSupply: !!instantlyConfig.campaignSupply,
+          supplyCount: discoveredSupplyCompanies.length,
+          willRoute: !!(instantlyConfig.campaignSupply && discoveredSupplyCompanies.length > 0)
+        });
+
+        // Route supply if campaign configured and suppliers available
+        if (instantlyConfig.campaignSupply && discoveredSupplyCompanies.length > 0) {
+          // Try to get pre-selected provider, or round-robin (NO AI - too slow)
+          let selectedProvider = selectedSupplyByDemandDomain[contact.domain];
+
+          // Round-robin fallback (no AI call - fast)
+          if (!selectedProvider) {
+            selectedProvider = discoveredSupplyCompanies[processedCount % discoveredSupplyCompanies.length];
+            console.log(`[BatchSend] Round-robin supply: ${selectedProvider.name} for ${contact.companyName}`);
+          }
+
+          if (selectedProvider) {
+            console.log(`[BatchSend] Have selectedProvider: ${selectedProvider.name} for ${contact.domain}`);
+            // Phase 2: Read from new state - use provider's domain, not demand domain
+            let supplyContact = getSupplyContactState(selectedProvider.domain).contact;
+
+            // FIX #2: Fallback to Apify existingContact if no enriched contact
+            if (!supplyContact && selectedProvider.existingContact?.email) {
+              supplyContact = {
+                email: selectedProvider.existingContact.email,
+                name: selectedProvider.existingContact.name || 'Contact',
+                title: selectedProvider.existingContact.title || '',
+                company: selectedProvider.name,
+                domain: selectedProvider.domain,
+                linkedin: selectedProvider.existingContact.linkedin,
+                confidence: 100, // Apify data is trusted
+              };
+              console.log(`[BatchSend] Using Apify existingContact for ${selectedProvider.name}: ${supplyContact.email}`);
+            }
+
+            // NO APOLLO CALLS DURING SEND - use pre-cached contacts only
+            // Apollo calls during batch send = 1323s for 246 deals (5+ seconds each)
+            // Pre-enrich supply contacts BEFORE batch send via the enrichment pipeline
+            if (!supplyContact) {
+              console.log(`[BatchSend] ⏭️ Skipping supply for ${selectedProvider.name} - no pre-cached contact (enrich before send)`);
+            }
+
+            if (supplyContact?.email) {
+              // Get pre-generated supply intro (NO AI calls during send)
+              // Phase 2: Read from new state
+              let supplyIntro = getDemandState(contact.domain).supplyIntro;
+              if (!supplyIntro) {
+                // GATE: Skip supply intro if no real company name (don't polish garbage)
+                if (!contact.companyName || contact.companyName.includes('.')) {
+                  console.log(`[BatchSend] Skipping supply intro for ${contact.domain} - no company name`);
+                } else {
+                  const [supplyFirstName] = (supplyContact.name || '').split(' ');
+                  const signalDescription = detectedNiche?.actionVerb
+                    ? `${detectedNiche.actionVerb}`
+                    : (jobTitles[0] ? `looking for ${jobTitles[0]}` : 'showing momentum');
+                  const { greeting: supplyGreeting } = humanGreeting(supplyFirstName);
+                  supplyIntro = `${supplyGreeting}, ${contact.companyName} is ${signalDescription} - interested in an intro?`;
+                  console.log(`[BatchSend] Using fallback supply intro for ${contact.domain}`);
+                  setSupplyIntro(contact.domain, supplyIntro!);
+                }
+              }
+
+              console.log(`[BatchSend] supplyIntro for ${contact.domain}:`, supplyIntro ? 'GENERATED' : 'MISSING');
+
+              if (supplyIntro) {
+                const [supplyFirstName, ...supplyLastParts] = (supplyContact.name || '').split(' ');
+                const supplyLastName = supplyLastParts.join(' ');
+
+                console.log(`[BatchSend] *** ADDING SUPPLY SEND: ${supplyContact.email} at ${selectedProvider.name} ***`);
+                sendItems.push(createSupplyBatchItem(
+                  contact.domain,
+                  selectedProvider.domain,
+                  supplyContact.email,
+                  supplyFirstName || '',
+                  supplyLastName || '',
+                  supplyContact.company || selectedProvider.name,
+                  supplyIntro,
+                  instantlyConfig.campaignSupply,
+                  {
+                    demand_company: contact.companyName,
+                    signal_type: contact.signalSummary
+                  }
+                ));
+                console.log(`[BatchSend] ✓ Added supply send: ${supplyContact.email} at ${selectedProvider.name}`);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`[BatchSend] Error preparing ${contact.domain}:`, error);
+      }
+    }
+
+    if (sendItems.length === 0) {
+      setRoutingProgress(null); // Clear progress since nothing to send
+      // Give specific reason
+      if (!instantlyConfig.campaignDemand) {
+        showToast('error', 'No demand campaign configured. Check Settings → Outreach.');
+      } else if (poolContacts.length === 0) {
+        showToast('info', 'No enriched contacts in pool. Run enrichment first.');
+      } else {
+        showToast('info', 'Nothing to route. Check Settings.');
+      }
+      console.log('[BatchSend] Nothing to route:', {
+        poolContactsCount: poolContacts.length,
+        hasDemandCampaign: !!instantlyConfig.campaignDemand,
+        hasSupplyCampaign: !!instantlyConfig.campaignSupply,
+        supplyCompaniesCount: discoveredSupplyCompanies.length
+      });
+      return;
+    }
+
+    // =========================================================================
+    // SUPPLY AGGREGATION: Group supply items by email for deal flow positioning
+    // Same recruiter matching 5 companies → 1 email showing abundance
+    // =========================================================================
+    const demandItems = sendItems.filter(item => item.type === 'DEMAND');
+    const supplyItems = sendItems.filter(item => item.type === 'SUPPLY');
+
+    // Group supply items by email
+    const supplyGroups = groupSupplyByEmail(
+      supplyItems,
+      (demandDomain) => {
+        // Get signal for this demand
+        const result = matchingResults.find(r => r.domain === demandDomain);
+        return result?.signalSummary || 'active opportunity';
+      },
+      (demandDomain) => {
+        // Get company name for this demand
+        const result = matchingResults.find(r => r.domain === demandDomain);
+        return result?.companyName || demandDomain;
+      }
+    );
+
+    // Process supply groups - aggregate 3+ matches, keep singles as-is
+    const processedSupplyItems: typeof supplyItems = [];
+
+    for (const group of supplyGroups) {
+      if (shouldUseAggregatedIntro(group)) {
+        // 3+ matches → generate aggregated intro
+        const signals = group.matches.map(m => m.signal);
+        const category = detectCommonCategory(signals);
+
+        console.log(`[BatchSend] 🎯 Aggregating ${group.matches.length} matches for ${group.email} (${category})`);
+
+        // Generate aggregated intro (or use fallback if AI not configured)
+        let aggregatedIntro = '';
+        if (aiConfig && isAIConfigured(aiConfig)) {
+          try {
+            aggregatedIntro = await generateAggregatedSupplyIntro(
+              aiConfig,
+              {
+                firstName: group.firstName,
+                company: group.companyName,
+                specialty: category,
+              },
+              group.matches,
+              category
+            );
+          } catch (err) {
+            console.warn('[BatchSend] Aggregated intro generation failed:', err);
+          }
+        }
+
+        // Fallback if AI failed or not configured
+        if (!aggregatedIntro) {
+          const { greeting: aggGreeting } = humanGreeting(group.firstName);
+          aggregatedIntro = `${aggGreeting}, I've got ${group.matches.length} companies actively looking for help in ${category} right now. A few are moving fast. Worth a quick look to see if any fit?`;
+        }
+
+        // Create ONE supply item with aggregated intro
+        processedSupplyItems.push(createSupplyBatchItem(
+          group.matches[0].demandDomain, // Use first demand as reference
+          group.supplyDomain,
+          group.email,
+          group.firstName,
+          group.lastName,
+          group.companyName,
+          aggregatedIntro,
+          instantlyConfig.campaignSupply,
+          {
+            aggregated: true,
+            match_count: group.matches.length,
+            demand_companies: group.matches.map(m => m.demandCompanyName).join(', '),
+            category
+          }
+        ));
+
+        console.log(`[BatchSend] ✓ Created aggregated supply send for ${group.email}: ${group.matches.length} companies in ${category}`);
+      } else {
+        // 1-2 matches → keep original items (find them in supplyItems)
+        for (const match of group.matches) {
+          const originalItem = supplyItems.find(
+            item => item.params.email?.toLowerCase() === group.email && item.demandDomain === match.demandDomain
+          );
+          if (originalItem) {
+            processedSupplyItems.push(originalItem);
+          }
+        }
+      }
+    }
+
+    // Combine demand + processed supply items
+    const finalSendItems = [...demandItems, ...processedSupplyItems];
+    console.log(`[BatchSend] Final items: ${demandItems.length} demand + ${processedSupplyItems.length} supply (from ${supplyItems.length} original)`);
+
+    // Update progress with actual send count (may differ from initial estimate)
+    setRoutingProgress(prev => prev ? { ...prev, total: finalSendItems.length } : null);
+
+    // Enqueue and execute
+    executor.enqueue(finalSendItems);
+    const result = await executor.start();
+
+    // Clear routing progress - modal takes over
+    setRoutingProgress(null);
+
+    // NOW consume contacts from pool (only after sends complete)
+    // This way if batch fails/cancelled, contacts stay in pool for retry
+    const sentDemandDomains = finalSendItems
+      .filter(item => item.type === 'DEMAND')
+      .map(item => item.demandDomain);
+
+    let updatedPools = preEnrichedPools;
+    for (const domain of sentDemandDomains) {
+      updatedPools = markContactConsumed(updatedPools, roleType, domain);
+    }
+    setPreEnrichedPools(updatedPools);
+    console.log(`[BatchSend] Consumed ${sentDemandDomains.length} contacts from pool`);
+
+    // Persist updated pools (fire-and-forget)
+    (async () => {
+      try {
+        // GUEST: persist to localStorage
+        if (isGuest) {
+          localStorage.setItem('guest_pre_enriched_pools', JSON.stringify(updatedPools));
+          return;
+        }
+        // AUTHED: persist to DB
+        await supabase
+          .from('operator_settings')
+          .update({ pre_enriched_pools: updatedPools })
+          .eq('user_id', user!.id);
+      } catch (err) {
+        console.warn('[BatchSend] Failed to persist pre-enriched pools:', err);
+      }
+    })();
+
+    // Mark sent domains
+    for (const item of finalSendItems) {
+      setDemandStatusByDomain(prev => ({ ...prev, [item.demandDomain]: 'sent' }));
+    }
+
+    batchExecutorRef.current = null;
+
+    // Track daily sends for operator dashboard
+    const newDailyTotal = dailySentToday + result.succeeded;
+    setDailySentToday(newDailyTotal);
+    localStorage.setItem('operator_sent_today', String(newDailyTotal));
+
+    // Count demand vs supply AFTER deduplication (mirrors executor logic)
+    const seenEmails = new Set<string>();
+    let demandCount = 0;
+    let supplyCount = 0;
+    for (const item of finalSendItems) {
+      const email = item.params.email?.toLowerCase();
+      if (email && !seenEmails.has(email)) {
+        seenEmails.add(email);
+        if (item.type === 'DEMAND') demandCount++;
+        else if (item.type === 'SUPPLY') supplyCount++;
+      }
+    }
+
+    // Check if cancelled - must account for skipped duplicates
+    // Batch is cancelled if: queue had items AND we didn't process them all
+    // result.skipped = duplicates filtered during enqueue (already excluded from total)
+    // So if total == succeeded + failed, batch completed (even if all failed)
+    const wasCancelled = result.total > 0 && result.total > (result.succeeded + result.failed);
+    const skippedCount = result.skipped; // Duplicates filtered during enqueue
+
+    // Build sexy batch summary
+    const batchSummary = [
+      `${result.succeeded} deals routed`,
+      demandCount > 0 ? `${demandCount} demand` : null,
+      supplyCount > 0 ? `${supplyCount} supply` : null,
+    ].filter(Boolean).join(' · ');
+
+    // Show batch result modal with full summary (no toast - modal handles it)
+    setBatchSummaryModal({
+      show: true,
+      succeeded: result.succeeded,
+      demandCount,
+      supplyCount,
+      dailyTotal: newDailyTotal,
+      durationMs: result.durationMs,
+      cancelled: wasCancelled,
+      skipped: skippedCount,
+    });
+  };
+
+  // Keep ref updated on every render so interval gets fresh state
+  executeBatchSendRef.current = executeBatchSend;
+
+  const cancelBatchSend = () => {
+    if (batchExecutorRef.current) {
+      batchExecutorRef.current.cancel();
+      showToast('info', 'Batch cancelled');
+    }
+  };
+
+  // =========================================================================
+  // BACKGROUND ENRICHMENT TRIGGER
+  // =========================================================================
+
+  /**
+   * Create enrichment function for BackgroundEnrichmentWorker
+   */
+  const createEnrichmentFunction = () => {
+    return async (domain: string, roleType: string) => {
+      // CHECK 1: Already have email? Use NEW STATE (single source of truth)
+      const demandState = getDemandState(domain);
+      if (demandState.contact?.email) {
+        console.log(`[BackgroundEnrichment] ✓ SKIP - already have email for ${domain}: ${demandState.contact.email}`);
+        return {
+          email: demandState.contact.email,
+          name: demandState.contact.name || '',
+          title: demandState.contact.title || '',
+          linkedin: demandState.contact.linkedin,
+          companyName: domain,
+          emailSource: 'apify' as const,
+        };
+      }
+
+      // Phase 4: Legacy fallback removed - new state is single source of truth
+
+      // CHECK 2: Check shared cache (all users' previous enrichments)
+      const cached = await getCachedContact(domain);
+      if (cached?.email) {
+        console.log(`[BackgroundEnrichment] ✓ CACHE HIT - skip Apollo for ${domain}: ${cached.email}`);
+        return {
+          email: cached.email,
+          name: cached.name || '',
+          title: cached.title || '',
+          linkedin: cached.linkedin,
+          companyName: cached.company_name || domain,
+          emailSource: cached.source as 'apollo' | 'anymailfinder' | 'apify',
+        };
+      }
+
+      // Determine hire category from roleType
+      let hireCategory: WorkOwnerHireCategory = 'engineering';
+      if (roleType === 'sales') hireCategory = 'sales';
+      else if (roleType === 'marketing') hireCategory = 'marketing';
+      else if (roleType === 'operations' || roleType === 'finance') hireCategory = 'operations';
+
+      // Try Work Owner first
+      const workOwnerSettingsForApi: WorkOwnerSettings = {
+        work_owner_departments: workOwnerSettings.departments.join(', '),
+        work_owner_keywords: workOwnerSettings.keywords.join(', '),
+      };
+
+      const workOwner = await findWorkOwnerByDomain(
+        domain,
+        workOwnerSettingsForApi,
+        enrichmentConfig.apiKey || '',
+        hireCategory
+      );
+
+      if (workOwner?.email) {
+        // SAVE TO SHARED CACHE - all users benefit
+        saveToCache({
+          domain,
+          email: workOwner.email,
+          name: workOwner.name,
+          title: workOwner.title,
+          linkedin: workOwner.linkedin,
+          companyName: domain,
+          source: 'apollo',
+        });
+        return {
+          email: workOwner.email,
+          name: workOwner.name,
+          title: workOwner.title,
+          linkedin: workOwner.linkedin,
+          companyName: domain,
+          emailSource: 'apollo' as const,
+        };
+      }
+
+      // Fall back to standard enrichment
+      const person = await enrichPerson(
+        domain,
+        [], // No specific titles
+        enrichmentConfig,
+        [], // No pressure roles
+        { signalType: 'jobs', companyName: domain }
+      );
+
+      if (person?.email) {
+        // SAVE TO SHARED CACHE - all users benefit
+        saveToCache({
+          domain,
+          email: person.email,
+          name: person.name || '',
+          title: person.title || '',
+          linkedin: person.linkedin,
+          companyName: domain,
+          source: 'apollo',
+        });
+        return {
+          email: person.email,
+          name: person.name || '',
+          title: person.title || '',
+          linkedin: person.linkedin,
+          companyName: domain,
+          emailSource: 'apollo' as const,
+        };
+      }
+
+      // Fallback to Anymailfinder if Apollo didn't find email
+      if (enrichmentConfig.anymailFinderApiKey) {
+        try {
+          const anymailResult = await findEmailWithFallback(
+            enrichmentConfig.anymailFinderApiKey,
+            {
+              domain,
+              hireCategory,
+            }
+          );
+
+          if (anymailResult?.email) {
+            console.log(`[BackgroundEnrichment] Anymailfinder found: ${anymailResult.email}`);
+            // SAVE TO SHARED CACHE - all users benefit
+            saveToCache({
+              domain,
+              email: anymailResult.email,
+              name: anymailResult.name || '',
+              title: anymailResult.title || '',
+              linkedin: anymailResult.linkedin,
+              companyName: domain,
+              source: 'anymailfinder',
+              verificationStatus: 'verified', // Anymailfinder is pre-verified
+            });
+            return {
+              email: anymailResult.email,
+              name: anymailResult.name || '',
+              title: anymailResult.title || '',
+              linkedin: anymailResult.linkedin,
+              companyName: domain,
+              emailSource: 'anymailfinder' as const,
+            };
+          }
+        } catch (err) {
+          console.warn(`[BackgroundEnrichment] Anymailfinder fallback failed for ${domain}:`, err);
+        }
+      }
+
+      return null;
+    };
+  };
+
+  /**
+   * Trigger background enrichment for current roleType
+   * Uses optimistic UI for immediate feedback
+   */
+  const triggerBackgroundEnrichment = () => {
+    console.log('[Enrichment] triggerBackgroundEnrichment called');
+    console.log('[Enrichment] pressureDetection:', pressureDetection);
+    console.log('[Enrichment] enrichmentConfig:', enrichmentConfig);
+
+    if (!pressureDetection?.pressureDetected) {
+      console.log('[Enrichment] BLOCKED: No pressure detected');
+      showToast('error', 'Pressure detection required');
+      return;
+    }
+
+    const roleType = pressureDetection.roleType;
+    if (roleType === 'unknown') {
+      console.log('[Enrichment] BLOCKED: roleType is unknown');
+      showToast('error', 'Valid roleType required');
+      return;
+    }
+
+    // Check if ANY enrichment method is configured (Apollo/PDL OR Anymail Finder)
+    const hasApolloOrPdl = isContactEnrichmentConfigured(enrichmentConfig);
+    const hasAnymailFinder = !!enrichmentConfig.anymailFinderApiKey;
+
+    if (!hasApolloOrPdl && !hasAnymailFinder) {
+      console.log('[Enrichment] BLOCKED: No enrichment configured (need Apollo, PDL, or Anymail Finder)');
+      showToast('info', 'Add enrichment API key in Settings');
+      return;
+    }
+
+    console.log('[Enrichment] Config:', { hasApolloOrPdl, hasAnymailFinder });
+
+    if (isWorkerRunning(roleType)) {
+      console.log('[Enrichment] BLOCKED: Worker already running');
+      showToast('info', 'Enrichment already running');
+      return;
+    }
+
+    console.log('[Enrichment] All checks passed, starting enrichment for', roleType);
+
+    // OPTIMISTIC UI: Set preparing state immediately
+    setIsPreparingPool(true);
+    setOptimisticProgress(0);
+    setPrevReadyCount(getReadyCount(preEnrichedPools, roleType));
+    setShowFirstContactPulse(false);
+
+    // Start long-wait timer (5s) for reassurance message
+    if (longWaitTimerRef.current) clearTimeout(longWaitTimerRef.current);
+    longWaitTimerRef.current = setTimeout(() => {
+      setShowLongWaitReassurance(true);
+    }, 5000);
+
+    // Start optimistic progress animation (advances to ~70% before real data)
+    if (optimisticIntervalRef.current) {
+      clearInterval(optimisticIntervalRef.current);
+    }
+    optimisticIntervalRef.current = setInterval(() => {
+      setOptimisticProgress(prev => {
+        // Ease out: slow down as we approach 70%
+        const remaining = 70 - prev;
+        const increment = Math.max(0.5, remaining * 0.08);
+        return Math.min(70, prev + increment);
+      });
+    }, 200);
+
+    const enrichFn = createEnrichmentFunction();
+
+    startBackgroundEnrichment(
+      roleType,
+      trustedDemandPools,
+      preEnrichedPools,
+      enrichFn,
+      enrichmentConfig.anymailFinderApiKey,
+      enrichmentConfig.ssmApiKey,
+      (updatedPools) => {
+        // Cancel long-wait timer when first contact arrives
+        if (longWaitTimerRef.current) {
+          clearTimeout(longWaitTimerRef.current);
+          longWaitTimerRef.current = null;
+        }
+
+        // Track newly ready domains for highlight animation
+        const currentReady = getReadyContacts(preEnrichedPools, roleType);
+        const newReady = getReadyContacts(updatedPools, roleType);
+        const currentDomains = new Set(currentReady.map(c => c.domain));
+        const newDomains = newReady.filter(c => !currentDomains.has(c.domain)).map(c => c.domain);
+
+        if (newDomains.length > 0) {
+          setNewlyReadyDomains(prev => {
+            const updated = new Set(prev);
+            newDomains.forEach(d => updated.add(d));
+            return updated;
+          });
+          // Remove highlight after 400ms
+          setTimeout(() => {
+            setNewlyReadyDomains(prev => {
+              const updated = new Set(prev);
+              newDomains.forEach(d => updated.delete(d));
+              return updated;
+            });
+          }, 400);
+        }
+
+        setPreEnrichedPools(updatedPools);
+
+        // Check for first contact arriving (trigger pulse animation)
+        const newReadyCount = getReadyCount(updatedPools, roleType);
+        if (prevReadyCount === 0 && newReadyCount > 0) {
+          setShowFirstContactPulse(true);
+          setTimeout(() => setShowFirstContactPulse(false), 1500);
+        }
+        setPrevReadyCount(newReadyCount);
+
+        // Persist (fire-and-forget)
+        (async () => {
+          try {
+            // GUEST: persist to localStorage
+            if (isGuest) {
+              localStorage.setItem('guest_pre_enriched_pools', JSON.stringify(updatedPools));
+              return;
+            }
+            // AUTHED: persist to DB
+            await supabase
+              .from('operator_settings')
+              .update({ pre_enriched_pools: updatedPools })
+              .eq('user_id', user!.id);
+          } catch (err) {
+            console.warn('[BackgroundEnrichment] Failed to persist:', err);
+          }
+        })();
+      },
+      (progress) => {
+        // Stop optimistic animation once real data arrives
+        if (optimisticIntervalRef.current && progress.enriched > 0) {
+          clearInterval(optimisticIntervalRef.current);
+          optimisticIntervalRef.current = null;
+        }
+
+        setEnrichmentWorkerProgress({
+          roleType: progress.roleType,
+          total: progress.totalToEnrich,
+          completed: progress.enriched,
+          succeeded: progress.succeeded,
+        });
+
+        // Worker finished
+        if (progress.enriched >= progress.totalToEnrich) {
+          setIsPreparingPool(false);
+          setOptimisticProgress(0);
+          setShowLongWaitReassurance(false);
+          if (longWaitTimerRef.current) {
+            clearTimeout(longWaitTimerRef.current);
+            longWaitTimerRef.current = null;
+          }
+        }
+      },
+      // onContactFound - for live feed
+      (contact) => {
+        setRecentlyFoundContacts(prev => {
+          const newContact = { ...contact, foundAt: Date.now() };
+          const updated = [newContact, ...prev].slice(0, maxRecentContacts);
+          return updated;
+        });
+      }
+    );
   };
 
   const formatLastSync = () => {
@@ -3114,21 +6529,56 @@ function MatchingEngineV3() {
             </div>
           </div>
         </div>
-        <Dock />
+        <Dock disabled={!!routingProgress} />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0E0E0E] to-[#0A0A0A] text-white px-8 py-12">
+      {/* Apple-style Toast Notification */}
       {toastNotification && (
-        <div className={`fixed top-6 right-6 px-5 py-3 rounded-2xl shadow-2xl z-50 animate-slide-in-right flex items-center gap-2 ${
-          toastNotification.type === 'cache' ? 'bg-emerald-500/90 text-white' :
-          toastNotification.type === 'success' ? 'bg-white/90 text-black' :
-          toastNotification.type === 'warning' ? 'bg-white/70 text-black' :
-          'bg-white/50 text-black'
-        }`}>
-          <span className="text-[13px] font-medium">{toastNotification.message}</span>
+        <div
+          className="fixed top-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-2 duration-300"
+          style={{ animationTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
+        >
+          <div className={`
+            px-4 py-3 rounded-[14px] shadow-lg backdrop-blur-xl flex items-center gap-3
+            border transition-all duration-300
+            ${toastNotification.type === 'cache'
+              ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-100'
+              : toastNotification.type === 'success'
+              ? 'bg-white/10 border-white/20 text-white'
+              : toastNotification.type === 'warning'
+              ? 'bg-amber-500/15 border-amber-500/25 text-amber-100'
+              : toastNotification.type === 'info'
+              ? 'bg-white/[0.06] border-white/[0.12] text-white/80'
+              : 'bg-red-500/15 border-red-500/25 text-red-100'
+            }
+          `}>
+            {/* Icon */}
+            <div className={`
+              w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0
+              ${toastNotification.type === 'cache'
+                ? 'bg-emerald-500/30'
+                : toastNotification.type === 'success'
+                ? 'bg-white/15'
+                : toastNotification.type === 'warning'
+                ? 'bg-amber-500/25'
+                : toastNotification.type === 'info'
+                ? 'bg-white/10'
+                : 'bg-red-500/25'
+              }
+            `}>
+              {toastNotification.type === 'cache' && <Sparkles size={14} className="text-emerald-300" />}
+              {toastNotification.type === 'success' && <CheckCircle size={14} className="text-white/90" />}
+              {toastNotification.type === 'warning' && <AlertCircle size={14} className="text-amber-300" />}
+              {toastNotification.type === 'info' && <Info size={14} className="text-white/60" />}
+              {toastNotification.type === 'error' && <XCircle size={14} className="text-red-300" />}
+            </div>
+            {/* Message */}
+            <span className="text-[13px] font-medium tracking-[-0.01em]">{toastNotification.message}</span>
+          </div>
         </div>
       )}
 
@@ -3165,486 +6615,1900 @@ function MatchingEngineV3() {
       )}
 
       <div className="max-w-[1400px] mx-auto">
-        <button
-          onClick={() => navigate('/launcher')}
-          className="flex items-center gap-2 mb-6 text-sm text-gray-400 hover:text-gray-200 transition-colors duration-200"
-        >
-          <ArrowLeft size={16} />
-          Back to Connector OS
-        </button>
-
-        <div className="mb-8 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-medium text-white/90 mb-1">Matching Engine</h1>
-            <p className="text-sm text-white/40">
-              Signal-driven prospecting
-            </p>
+        {/* Clean header - Apple restraint */}
+        <div className="flex items-center justify-between mb-10">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate('/launcher')}
+              className="p-2 -ml-2 rounded-lg hover:bg-white/[0.04] transition-colors"
+            >
+              <ArrowLeft size={18} className="text-white/40" />
+            </button>
+            <div>
+              <h1 className="text-[17px] font-medium text-white/90 tracking-[-0.01em]">Matching Engine</h1>
+              <p className="text-[13px] text-white/40 mt-0.5">Live opportunities</p>
+            </div>
           </div>
-          <button
-            onClick={() => navigate('/settings')}
-            className="flex items-center gap-2 px-4 py-2 bg-white/[0.02] border border-white/[0.06] rounded-xl hover:bg-white/[0.04] transition-all duration-300"
-          >
-            <SettingsIcon size={14} className="text-white/40" />
-            <span className="text-xs text-white/50">Settings</span>
-          </button>
+          <div className="flex items-center gap-3">
+            {(isPreparingPool || (pressureDetection?.roleType && pressureDetection.roleType !== 'unknown' && isWorkerRunning(pressureDetection.roleType))) && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08]">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400/70 animate-pulse" />
+                <span className="text-[11px] text-white/50 font-medium">Finding the right people...</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="grid lg:grid-cols-[280px_1fr] gap-6 mt-6">
-          <div>
-            <div className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.04]">
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xs font-medium text-white/50">Signals</h3>
-                  <div className="flex items-center gap-2">
-                    {isRefreshing && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-white/40 animate-pulse" />
-                    )}
-                    <button
-                      onClick={fetchSignals}
-                      disabled={isRefreshing}
-                      className="p-1.5 rounded-lg hover:bg-white/[0.04] transition-all duration-200 disabled:opacity-30"
-                      title="Refresh"
-                    >
-                      <RefreshCw
-                        size={12}
-                        className={`text-white/30 ${isRefreshing ? 'animate-spin' : ''}`}
-                      />
-                    </button>
-                  </div>
-                </div>
+        {/* AI Health Banner - shows when provider is disabled */}
+        <AIHealthBanner onFixConfig={() => navigate('/settings')} className="mb-6" />
 
-                {signals.error && (
-                  <div className="mb-4 p-3 bg-white/[0.02] border border-white/[0.06] rounded-xl">
-                    <div className="text-xs text-white/50">{signals.error}</div>
-                  </div>
-                )}
+        {/* V2 ENTRY SCREEN - Premium matching flow */}
+        {(() => {
+          const roleType = pressureDetection?.roleType;
+          const globalReadyCount = roleType ? getUniqueSendCount(preEnrichedPools, roleType) : 0;
 
-                {/* Signal Lines - Minimal */}
-                {isRefreshing ? (
-                  <div className="space-y-4">
-                    {[1, 2, 3, 4].map((i) => (
-                      <div key={i} className="space-y-1.5">
-                        <div className="h-2.5 w-16 bg-white/[0.04] rounded" />
-                        <div className="h-2 w-full bg-white/[0.02] rounded" />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {/* Jobs */}
-                    <div className="group">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-1 h-1 rounded-full ${hasJobs ? 'bg-white/50' : 'bg-white/20'}`} />
-                        <span className="text-xs text-white/50">Jobs</span>
-                      </div>
-                      <p className="text-xs text-white/30 leading-relaxed pl-3">
-                        {safeText(richJobsSignal?.operatorInsight || signals.jobs.value) || '–'}
-                      </p>
-                    </div>
+          // Stage 5: Pipeline is the system - snapshot drives UI
+          const uiState = pipelineSnapshot ? snapshotToUIState(pipelineSnapshot) : null;
+          const introCount = uiState ? uiState.readyCount : Object.values(demandStates).filter(s => s.demandIntro).length;
+          const companiesDetected = uiState ? uiState.matchingResults.length : matchingResults.length;
+          const snapshotDataHealth = pipelineSnapshot ? pipelineSnapshot.dataHealth : dataHealth;
 
-                    {/* Funding */}
-                    <div className="group">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-1 h-1 rounded-full ${hasFunding ? 'bg-white/50' : 'bg-white/20'}`} />
-                        <span className="text-xs text-white/50">Funding</span>
-                      </div>
-                      <p className="text-xs text-white/30 leading-relaxed pl-3">
-                        {safeText(richFundingSignal?.operatorInsight || signals.funding.value) || '–'}
-                      </p>
-                    </div>
+          // isWorking: true if preparing, worker running, OR progress incomplete
+          const workerAlreadyRunning = roleType ? isWorkerRunning(roleType) : false;
+          const isWorking = isPreparingPool || workerAlreadyRunning || (enrichmentWorkerProgress?.roleType === roleType && (enrichmentWorkerProgress?.completed ?? 0) < (enrichmentWorkerProgress?.total ?? 0));
+          const loadingCount = isWorking ? Math.max(0, (enrichmentWorkerProgress?.total || 0) - (enrichmentWorkerProgress?.completed || 0)) : 0;
+          const actualSendCount = Math.min(batchSize, globalReadyCount);
+          const hasValidRole = roleType && roleType !== 'unknown';
+          const rawDemandCount = signals.jobs.rawPayload?.data?.length || companiesDetected;
+          const roleLabel = companiesDetected > 0 ? `${companiesDetected} signals` : 'Signals';
+          const progressPercent = enrichmentWorkerProgress?.total ? Math.round(((enrichmentWorkerProgress?.completed ?? 0) / enrichmentWorkerProgress.total) * 100) : 0;
 
-                    {/* Layoffs */}
-                    <div className="group">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-1 h-1 rounded-full ${hasLayoffs ? 'bg-white/50' : 'bg-white/20'}`} />
-                        <span className="text-xs text-white/50">Layoffs</span>
-                      </div>
-                      <p className="text-xs text-white/30 leading-relaxed pl-3">
-                        {safeText(richLayoffsSignal?.operatorInsight || signals.layoffs.value) || '–'}
-                      </p>
-                    </div>
+          // ==============================================
+          // PREMIUM MATCHING FLOW - 5 States:
+          // 1. BEGIN: No data → "Begin matching"
+          // 2. MATCHING: isRefreshing → Animation + progress
+          // 3. RESULTS: Data loaded → "X matches" + preview
+          // 4. ENRICHING: isWorking → Live feed of contacts
+          // 5. READY: globalReadyCount > 0 → Route button
+          // ==============================================
 
-                    {/* Supply */}
-                    <div className="group pt-3 border-t border-white/[0.04]">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className={`w-1 h-1 rounded-full ${discoveredSupplyCompanies.length > 0 ? 'bg-white/50' : 'bg-white/20'}`} />
-                        <span className="text-xs text-white/50">Supply</span>
-                      </div>
-                      <p className="text-xs text-white/30 leading-relaxed pl-3">
-                        {supplyDiscoveryStatus === 'loading'
-                          ? 'Finding best matches...'
-                          : (() => {
-                              // Use alternatives for active result if available, otherwise global count
-                              const alternatives = activeResult ? (alternativeSupplyByDomain[activeResult.domain] || []) : discoveredSupplyCompanies;
-                              const bestMatches = alternatives.filter(s => s.classification?.confidence === 'high');
-                              const worthATry = alternatives.filter(s => s.classification?.confidence !== 'high');
+          // DEBUG: Log current state
+          console.log('[UI State]', {
+            hasValidRole,
+            roleType,
+            globalReadyCount,
+            isWorking,
+            companiesDetected,
+            isRefreshing,
+            pressureDetection: pressureDetection?.roleType
+          });
 
-                              if (bestMatches.length === 0 && worthATry.length === 0) {
-                                const globalBest = discoveredSupplyCompanies.filter(s => s.classification?.confidence === 'high').length;
-                                if (globalBest > 0) return `${globalBest} Best Matches`;
-                                return discoveredSupplyCompanies.length > 0 ? `${discoveredSupplyCompanies.length} providers` : '–';
-                              }
-                              if (bestMatches.length > 0 && worthATry.length > 0) {
-                                return `${bestMatches.length} Best + ${worthATry.length} more`;
-                              }
-                              if (bestMatches.length > 0) {
-                                return `${bestMatches.length} Best Match${bestMatches.length !== 1 ? 'es' : ''}`;
-                              }
-                              return `${worthATry.length} Worth a Try`;
-                            })()}
-                      </p>
-                    </div>
-                  </div>
-                )}
+          // ─────────────────────────────────────────────────────────────
+          // STATE 5a: ROUTING IN PROGRESS - Show live progress
+          // ─────────────────────────────────────────────────────────────
+          if (routingProgress) {
+            const elapsed = (Date.now() - routingProgress.startTime) / 1000;
+            const rate = routingProgress.completed > 0 ? routingProgress.completed / elapsed : 8; // 8/sec default
+            const remaining = Math.max(0, routingProgress.total - routingProgress.completed);
+            const secondsLeft = Math.ceil(remaining / rate);
+            const percent = routingProgress.total > 0
+              ? Math.round((routingProgress.completed / routingProgress.total) * 100)
+              : 0;
 
-                <JobTrendChart userId="default" onTrendChange={setTrendDirection} />
-
-              </div>
-            </div>
-
-            {/* Intro Cards - Clean, spacious */}
-            <div className="mt-6 space-y-4">
-              {/* TO COMPANY */}
-              <div className="group">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-white/25">To {activeResult?.companyName || 'company'}</span>
-                  {activeResult && demandIntroByDomain[activeResult.domain] && !isGeneratingDemandIntro && (
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(demandIntroByDomain[activeResult.domain]);
-                        showToast('success', 'Copied');
-                      }}
-                      className="text-[10px] text-white/20 hover:text-white/50 transition-colors opacity-0 group-hover:opacity-100"
-                    >
-                      Copy
-                    </button>
-                  )}
-                </div>
-                <div className={isGeneratingDemandIntro ? 'shimmer rounded-lg p-4' : ''}>
-                  {isGeneratingDemandIntro ? (
-                    <div className="space-y-2">
-                      <div className="h-3 w-full bg-white/[0.04] rounded" />
-                      <div className="h-3 w-4/5 bg-white/[0.04] rounded" />
-                    </div>
-                  ) : activeResult && demandIntroByDomain[activeResult.domain] ? (
-                    <p className="text-[13px] leading-[1.7] text-white/60">
-                      {demandIntroByDomain[activeResult.domain]}
-                    </p>
-                  ) : (
-                    <p className="text-[12px] text-white/20">–</p>
-                  )}
-                </div>
-              </div>
-
-              {/* TO PROVIDER */}
-              <div className="group">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-white/25">To {cleanCompanyName(selectedSupplyByDomain[activeResult?.domain || '']?.name || '') || 'provider'}</span>
-                  {activeResult && supplyIntroByDomain[activeResult.domain] && !isGeneratingSupplyIntro && (
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(supplyIntroByDomain[activeResult.domain]);
-                        showToast('success', 'Copied');
-                      }}
-                      className="text-[10px] text-white/20 hover:text-white/50 transition-colors opacity-0 group-hover:opacity-100"
-                    >
-                      Copy
-                    </button>
-                  )}
-                </div>
-                <div className={isGeneratingSupplyIntro ? 'shimmer rounded-lg p-4' : ''}>
-                  {isGeneratingSupplyIntro ? (
-                    <div className="space-y-2">
-                      <div className="h-3 w-full bg-white/[0.04] rounded" />
-                      <div className="h-3 w-4/5 bg-white/[0.04] rounded" />
-                    </div>
-                  ) : activeResult && supplyIntroByDomain[activeResult.domain] ? (
-                    <p className="text-[13px] leading-[1.7] text-white/60">
-                      {supplyIntroByDomain[activeResult.domain]}
-                    </p>
-                  ) : (
-                    <p className="text-[12px] text-white/20">–</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Regenerate - only show if at least one intro is missing */}
-              {activeResult && aiConfig && isAIConfigured(aiConfig) &&
-               !conversationStartedByDomain[activeResult.domain] &&
-               (!demandIntroByDomain[activeResult.domain] || !supplyIntroByDomain[activeResult.domain]) && (
-                <button
-                  onClick={() => handleRegenerateIntro(activeResult.domain)}
-                  disabled={isGeneratingDemandIntro || isGeneratingSupplyIntro}
-                  className="text-[10px] text-white/15 hover:text-white/40 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="max-w-md mx-auto pt-20 text-center"
+              >
+                {/* Animated routing icon */}
+                <motion.div
+                  className="w-20 h-20 mx-auto mb-6 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center"
+                  animate={{ scale: [1, 1.05, 1] }}
+                  transition={{ repeat: Infinity, duration: 1.5 }}
                 >
-                  {(isGeneratingDemandIntro || isGeneratingSupplyIntro) ? 'Generating...' : 'Regenerate'}
-                </button>
-              )}
-            </div>
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 2, ease: 'linear' }}
+                  >
+                    <ArrowUpRight className="w-8 h-8 text-emerald-400" />
+                  </motion.div>
+                </motion.div>
 
-          </div>
+                <motion.h1
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-[32px] font-semibold text-white mb-2"
+                >
+                  Routing {routingProgress.total} deals
+                </motion.h1>
 
-          <div>
-            <div className="flex gap-4">
-              <div className="w-56 flex-shrink-0">
-              <div className="bg-[#0a0a0a] rounded-2xl p-3 border border-white/[0.04] sticky top-4">
-                <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/[0.04]">
-                  <h3 className="text-[9px] uppercase tracking-wider text-white/30">
-                    {isRefreshing ? (
-                      <span className="flex items-center gap-1.5">
-                        Companies
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-white/20 animate-pulse" />
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.1 }}
+                  className="text-white/40 text-[15px] mb-8"
+                >
+                  {routingProgress.completed}/{routingProgress.total} • ~{secondsLeft}s left
+                </motion.p>
+
+                {/* Progress bar */}
+                <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden mb-4">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${percent}%` }}
+                    transition={{ duration: 0.3 }}
+                  />
+                </div>
+
+                {/* Percentage */}
+                <motion.p
+                  className="text-emerald-400 text-[13px] font-medium mb-6"
+                  key={percent}
+                  initial={{ opacity: 0.5 }}
+                  animate={{ opacity: 1 }}
+                >
+                  {percent}% complete
+                </motion.p>
+
+                {/* Cancel button */}
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  onClick={cancelBatchSend}
+                  className="px-4 py-2 text-[13px] text-white/50 hover:text-white/80 hover:bg-white/[0.04] rounded-lg transition-colors"
+                >
+                  Cancel
+                </motion.button>
+              </motion.div>
+            );
+          }
+
+          // ─────────────────────────────────────────────────────────────
+          // STATE 5: READY TO ROUTE - Contacts enriched and ready
+          // ─────────────────────────────────────────────────────────────
+          if (hasValidRole && globalReadyCount > 0 && !isWorking) {
+            // Local var for intro preview (intros generate during send, but show preview if any exist)
+            const hasIntros = introCount > 0;
+            // Phase 4: Get sample domains from new state
+            const sampleDomains = Object.keys(demandStates).filter(d => demandStates[d].demandIntro).slice(0, 5);
+
+            // Use detected niche if available, fallback to role-based label
+            const nicheLabel = detectedNiche?.niche || roleLabel;
+            const demandLabel = detectedNiche?.demandType || `${roleLabel} contacts`;
+            const supplyLabel = detectedNiche?.supplyType || 'providers';
+
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.5 }}
+                className="max-w-3xl mx-auto pt-6"
+              >
+                {/* Compact Header + Intro Preview in one view - NO SCROLLING NEEDED */}
+                <div className="grid grid-cols-[200px_1fr] gap-6">
+                  {/* Left: Compact stats */}
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.4 }}
+                    className="flex flex-col items-center justify-start pt-4"
+                  >
+                    {/* Niche badge */}
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.3 }}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 mb-4"
+                    >
+                      <motion.div
+                        animate={{ scale: [1, 1.2, 1] }}
+                        transition={{ repeat: Infinity, duration: 2 }}
+                        className="w-1.5 h-1.5 rounded-full bg-emerald-500"
+                      />
+                      <span className="text-[11px] font-medium text-emerald-400">
+                        {nicheLabel}
                       </span>
-                    ) : matchingResults.length > 0 ? (
-                      `Companies (${matchingResults.length})`
-                    ) : (
-                      'Companies'
-                    )}
-                  </h3>
-                </div>
-                <div className="max-h-[400px] overflow-y-auto no-scrollbar scroll-fade snap-list">
-                  {isRefreshing ? (
-                    <>
-                      {[1, 2, 3, 4, 5, 6].map((i) => (
-                        <div
-                          key={i}
-                          className="w-full px-3 py-2.5 snap-item"
-                        >
-                          <div className="h-3 w-24 bg-white/5 rounded animate-pulse mb-1.5" />
-                          <div className="h-2 w-16 bg-white/[0.03] rounded animate-pulse" />
-                        </div>
-                      ))}
-                    </>
-                  ) : (
-                    matchingResults.map((result, idx) => (
-                      <button
-                        key={result.id}
-                        onClick={() => setActiveResultIndex(idx)}
-                        className={`snap-item w-full text-left px-3 py-2.5 ${
-                          idx === activeResultIndex
-                            ? 'signal-row-active'
-                            : 'signal-row'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                              idx === activeResultIndex ? 'bg-white/60' : 'bg-white/30'
-                            }`}
-                          />
-                          <span className={`text-xs truncate ${
-                            idx === activeResultIndex ? 'text-white/90' : 'text-white/60'
-                          }`}>
-                            {result.companyName}
-                          </span>
-                        </div>
-                        <div className="text-[10px] text-white/25 mt-0.5 pl-3">
-                          {result.jobCount} {result.jobCount === 1 ? 'role' : 'roles'}
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
+                    </motion.div>
 
-            <div className="flex-1">
-              {matchingResults.length === 0 && connectorProfile && !isRefreshing && (
-                <div className="rounded-2xl border border-dashed border-white/[0.06] bg-[#0a0a0a] p-4 text-center">
-                  <div className="text-[11px] text-white/60 mb-2">
-                    No matches found.
-                  </div>
-                  <div className="text-[10px] text-white/40">
-                    Could not build company list from jobs response. Check console for details.
-                  </div>
-                </div>
-              )}
+                    <motion.h1
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.4, delay: 0.1 }}
+                      className="text-[48px] font-semibold tracking-tight text-white mb-1"
+                    >
+                      {globalReadyCount}
+                    </motion.h1>
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.3, delay: 0.2 }}
+                      className="text-[14px] text-white/40 mb-6"
+                    >
+                      ready to route
+                    </motion.p>
 
-              <div className="relative">
-                {/* Skeleton placeholder during refresh */}
-                {isRefreshing && matchingResults.length === 0 && (
-                  <div className="bg-[#0a0a0a] rounded-2xl p-4 border border-white/[0.04]">
-                    {/* Skeleton header */}
-                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/[0.04]">
-                      <div className="flex items-center gap-2">
-                        <div className="h-3.5 w-28 bg-white/5 rounded animate-pulse" />
-                        <div className="h-2.5 w-16 bg-white/[0.03] rounded animate-pulse" />
+                    {/* Premium stats - Linear/Vercel style */}
+                    <div className="w-full">
+                      {/* Context - subtle, not alarming */}
+                      <div className="flex items-center justify-center gap-2 text-[11px] text-white/30">
+                        {companiesDetected > 0 && (
+                          <>
+                            <span>{companiesDetected} signals</span>
+                            <span className="text-white/10">·</span>
+                          </>
+                        )}
+                        <span className="text-emerald-400/70">{globalReadyCount} enriched</span>
+                        {introCount > 0 && (
+                          <>
+                            <span className="text-white/10">·</span>
+                            <span className="text-emerald-400/70">{introCount} with intros</span>
+                          </>
+                        )}
                       </div>
-                      <div className="h-4 w-14 bg-white/[0.03] rounded animate-pulse" />
-                    </div>
 
-                    {/* Skeleton person card */}
-                    <div className="space-y-3">
-                      <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
-                        <div className="flex items-center gap-3 mb-2">
-                          <div className="h-8 w-8 bg-white/5 rounded-full animate-pulse" />
-                          <div className="flex-1 space-y-1.5">
-                            <div className="h-2.5 w-24 bg-white/5 rounded animate-pulse" />
-                            <div className="h-2 w-16 bg-white/[0.03] rounded animate-pulse" />
+                      {/* DATA HEALTH: Apple-style gate feedback (Stage 3: uses snapshot when available) */}
+                      {snapshotDataHealth && (snapshotDataHealth.demand.quality !== 'good' || snapshotDataHealth.supply.quality !== 'good') && (
+                        <div className="mt-3 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                          <div className="flex items-center gap-2 text-[11px] text-amber-400/80">
+                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <span>Data quality</span>
                           </div>
+                          <div className="mt-1.5 text-[10px] text-white/40 space-y-0.5">
+                            {snapshotDataHealth.demand.quality !== 'good' && (
+                              <p>Demand: {snapshotDataHealth.demand.withName}/{snapshotDataHealth.demand.total} have company names</p>
+                            )}
+                            {snapshotDataHealth.supply.quality !== 'good' && (
+                              <p>Supply: {snapshotDataHealth.supply.withName}/{snapshotDataHealth.supply.total} have company names</p>
+                            )}
+                          </div>
+                          <p className="mt-1.5 text-[10px] text-white/30">Better datasets → better intros</p>
                         </div>
-                        <div className="flex gap-2 mt-3">
-                          <div className="h-7 flex-1 bg-white/[0.03] rounded animate-pulse" />
-                          <div className="h-7 flex-1 bg-white/[0.03] rounded animate-pulse" />
-                        </div>
-                      </div>
-
-                      {/* Skeleton why now */}
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-10 bg-white/[0.02] rounded animate-pulse" />
-                        <div className="flex-1 h-2 bg-white/[0.03] rounded animate-pulse" />
-                      </div>
+                      )}
                     </div>
-                  </div>
-                )}
 
-                {matchingResults.map((result, resultIndex) => {
-                  if (resultIndex !== activeResultIndex) return null;
-                const personData = personDataByDomain[result.domain];
-                const personPressureProfile = personPressureProfileByDomain[result.domain];
-                const conversationStarted = conversationStartedByDomain[result.domain];
-                const isEnrichingPerson = isEnrichingDomain === result.domain;
-                const finalIntro = finalIntroByDomain[result.domain];
-                const isSendingInstantly = isSendingInstantlyByDomain[result.domain];
-                const outboundReadiness = calculateOutboundReadiness(personData);
+                    {/* Route button */}
+                    <motion.button
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.4 }}
+                      whileHover={{
+                        scale: 1.03,
+                        boxShadow: '0 0 60px rgba(52,211,153,0.3)',
+                      }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={startBatchSend}
+                      disabled={globalReadyCount === 0 || isWorking}
+                      className="mt-6 w-full py-3 text-[13px] font-semibold rounded-xl bg-white text-black disabled:opacity-30 disabled:cursor-not-allowed relative overflow-hidden group"
+                    >
+                      <motion.div
+                        className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-200/30 to-transparent"
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ repeat: Infinity, duration: 2, repeatDelay: 1 }}
+                      />
+                      <span className="relative">Route all</span>
+                    </motion.button>
+                  </motion.div>
 
-                return (
-                  <div key={result.id}>
-                    <div className="bg-[#0a0a0a] rounded-2xl p-4 border border-white/[0.04]">
-                      {/* Company Header */}
-                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/[0.04]">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <h3 className="text-[11px] font-medium text-white/90 truncate">
-                            {result.companyName}
-                          </h3>
-                          {result.domain && (
-                            <span className="text-[8px] text-white/30">
-                              {result.domain}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[9px] text-white/30">
-                          {result.jobCount} {result.jobCount === 1 ? 'role' : 'roles'}
-                        </span>
+                  {/* Right: Intro preview cards - THE MAIN CONTENT */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.4, delay: 0.2 }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <motion.div
+                          className="w-1.5 h-1.5 rounded-full bg-emerald-500"
+                          animate={{ scale: [1, 1.3, 1], opacity: [1, 0.7, 1] }}
+                          transition={{ repeat: Infinity, duration: 2 }}
+                        />
+                        <span className="text-[11px] font-medium text-white/40 uppercase tracking-wider">Intro preview</span>
                       </div>
+                      <span className="text-[11px] text-emerald-400/60">
+                        {introCount} ready
+                      </span>
+                    </div>
 
-                      <div className="space-y-3">
-                        {/* Match Narration - three-tier explanation (exact / related / unknown) */}
-                        {(() => {
-                          const selectedSupply = selectedSupplyByDomain[result.domain];
-                          if (!selectedSupply) return null;
-
-                          const demandCategory = extractHireCategory(
-                            result.jobTitlesBeingHired?.map(t => ({ title: t })),
-                            result.signalSummary
-                          );
-                          const supplyCategory = selectedSupply.hireCategory;
-                          const demandKnown = demandCategory && demandCategory !== 'unknown';
-                          const supplyKnown = supplyCategory && supplyCategory !== 'unknown';
-
-                          let narration: string;
-                          if (demandKnown && supplyKnown) {
-                            if (demandCategory === supplyCategory) {
-                              // EXACT MATCH - strongest explanation
-                              narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} specializes in ${readableCategory(supplyCategory)}`;
-                            } else {
-                              // RELATED MATCH - both known but different
-                              narration = `${result.companyName} is hiring for ${readableCategory(demandCategory)} roles → ${cleanCompanyName(selectedSupply.name)} has placed teams adjacent to this role`;
-                            }
-                          } else {
-                            // UNKNOWN - one or both categories missing
-                            narration = `Hiring activity detected → ${cleanCompanyName(selectedSupply.name)} identified based on active placement patterns`;
-                          }
+                    {hasIntros ? (
+                      <div className="space-y-2 max-h-[400px] overflow-y-auto no-scrollbar">
+                        {sampleDomains.map((domain, idx) => {
+                          // Phase 2: Read from new state (single source of truth)
+                          const state = getDemandState(domain);
+                          const intro = state.demandIntro;
+                          const result = matchingResults.find(r => r.domain === domain);
+                          const supplyIntro = state.supplyIntro;
+                          const narration = matchNarrations[domain];
+                          const stacked = stackedSignals[domain];
+                          const personData = state.contact;
 
                           return (
-                            <div className="px-2 py-1.5 bg-white/[0.02] rounded-lg border border-white/[0.04] mb-2">
-                              <p className="text-[9px] text-white/40 leading-relaxed">
-                                <span className="text-white/25">Why this match:</span>{' '}
-                                {narration}
+                            <motion.div
+                              key={domain}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.1 + idx * 0.08 }}
+                              whileHover={{ scale: 1.01, borderColor: 'rgba(52,211,153,0.3)' }}
+                              className="rounded-xl border border-white/[0.08] overflow-hidden cursor-default group"
+                              style={{ background: 'rgba(255,255,255,0.02)' }}
+                            >
+                              {/* Compact header with AI insight */}
+                              <div className="px-3 py-2 border-b border-white/[0.04] flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <motion.div
+                                    className="w-5 h-5 rounded-md bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/20 flex items-center justify-center"
+                                    whileHover={{ scale: 1.1 }}
+                                  >
+                                    <span className="text-[9px] font-bold text-emerald-400">
+                                      {(result?.companyName || domain).charAt(0).toUpperCase()}
+                                    </span>
+                                  </motion.div>
+                                  <div className="min-w-0">
+                                    <span className="text-[12px] font-medium text-white/80">{result?.companyName || domain}</span>
+                                    {/* AI Insight instead of boring "1 signal" */}
+                                    {narration ? (
+                                      <p className="text-[10px] text-emerald-400/70 truncate">{narration.headline}</p>
+                                    ) : stacked ? (
+                                      <p className="text-[10px] text-blue-400/70 truncate">{stacked.narrative}</p>
+                                    ) : (
+                                      <p className="text-[10px] text-white/30">
+                                        {result?.jobTitlesBeingHired?.[0] || `${result?.jobCount || 1} open role${(result?.jobCount || 1) > 1 ? 's' : ''}`}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Urgency/tier badge */}
+                                {narration?.urgency === 'hot' ? (
+                                  <motion.div
+                                    className="px-1.5 py-0.5 rounded text-[8px] font-medium bg-orange-500/20 text-orange-400"
+                                    animate={{ scale: [1, 1.05, 1] }}
+                                    transition={{ repeat: Infinity, duration: 1.5 }}
+                                  >
+                                    HOT
+                                  </motion.div>
+                                ) : stacked?.tier === 'A' ? (
+                                  <div className="px-1.5 py-0.5 rounded text-[8px] font-medium bg-emerald-500/20 text-emerald-400">A</div>
+                                ) : (
+                                  <motion.div
+                                    className="w-1.5 h-1.5 rounded-full bg-emerald-500/50"
+                                    animate={{ opacity: [0.5, 1, 0.5] }}
+                                    transition={{ repeat: Infinity, duration: 1.5 }}
+                                  />
+                                )}
+                              </div>
+
+                              {/* The actual intro message */}
+                              <div className="px-3 py-2">
+                                <p className="text-[12px] leading-relaxed text-white/60">{intro}</p>
+                              </div>
+
+                              {/* Supply intro if exists - collapsed */}
+                              {supplyIntro && (
+                                <div className="px-3 py-2 border-t border-white/[0.03] bg-violet-500/[0.02]">
+                                  <p className="text-[10px] text-violet-400/50 mb-1">→ Supply</p>
+                                  <p className="text-[11px] leading-relaxed text-white/50">{supplyIntro}</p>
+                                </div>
+                              )}
+                            </motion.div>
+                          );
+                        })}
+                        {introCount > 5 && (
+                          <p className="text-[11px] text-white/30 text-center py-2">
+                            +{introCount - 5} more intros ready
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-white/[0.06] p-6 text-center">
+                        <motion.div
+                          className="w-8 h-8 mx-auto mb-3 rounded-full border-2 border-white/10 border-t-emerald-400/60"
+                          animate={{ rotate: 360 }}
+                          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                        />
+                        <p className="text-[12px] text-white/40">
+                          {aiQueueStatus ? getQueueStatusMessage(aiQueueStatus) : 'Generating intros...'}
+                        </p>
+                        {aiQueueStatus?.mode !== 'normal' && aiQueueStatus?.mode && (
+                          <p className="text-[10px] text-white/25 mt-1" title={getQueueTooltip(aiQueueStatus)}>
+                            {aiQueueStatus.estimatedTimeRemaining} remaining
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </motion.div>
+                </div>
+
+                {/* Live Match Feed - Shows WHO matched with WHO */}
+                {recentlyFoundContacts.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, delay: 0.5 }}
+                    className="mb-10 px-4"
+                  >
+                    <motion.div
+                      className="p-5 rounded-2xl border border-white/[0.06] relative overflow-hidden"
+                      style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.01) 100%)' }}
+                    >
+                      {/* Animated background glow */}
+                      <motion.div
+                        className="absolute -top-20 -right-20 w-40 h-40 rounded-full bg-emerald-500/5 blur-3xl"
+                        animate={{
+                          scale: [1, 1.2, 1],
+                          opacity: [0.3, 0.5, 0.3]
+                        }}
+                        transition={{ repeat: Infinity, duration: 4 }}
+                      />
+                      <motion.div
+                        className="absolute -bottom-20 -left-20 w-40 h-40 rounded-full bg-blue-500/5 blur-3xl"
+                        animate={{
+                          scale: [1.2, 1, 1.2],
+                          opacity: [0.3, 0.5, 0.3]
+                        }}
+                        transition={{ repeat: Infinity, duration: 4, delay: 2 }}
+                      />
+
+                      <div className="flex items-center gap-2 mb-4 relative">
+                        <motion.div
+                          className="w-2 h-2 rounded-full bg-emerald-500"
+                          animate={{
+                            scale: [1, 1.5, 1],
+                            opacity: [1, 0.5, 1],
+                            boxShadow: ['0 0 0 0 rgba(52,211,153,0.4)', '0 0 0 8px rgba(52,211,153,0)', '0 0 0 0 rgba(52,211,153,0.4)']
+                          }}
+                          transition={{ repeat: Infinity, duration: 2 }}
+                        />
+                        <span className="text-[11px] font-medium text-emerald-400/70 uppercase tracking-wider">Matches found</span>
+                        <motion.span
+                          className="ml-auto text-[11px] text-white/30"
+                          animate={{ opacity: [0.3, 0.6, 0.3] }}
+                          transition={{ repeat: Infinity, duration: 2 }}
+                        >
+                          live
+                        </motion.span>
+                      </div>
+
+                      <div className="space-y-3 relative">
+                        <AnimatePresence mode="popLayout">
+                          {recentlyFoundContacts.slice(0, 4).map((contact, idx) => {
+                            // Get matched supply: prefer per-demand selection, fallback to index
+                            const matchedSupply = selectedSupplyByDemandDomain[contact.domain]
+                              || discoveredSupplyCompanies[idx % discoveredSupplyCompanies.length];
+
+                            return (
+                              <motion.div
+                                key={`${contact.domain}-${contact.foundAt}`}
+                                initial={{ opacity: 0, x: -30, scale: 0.9 }}
+                                animate={{ opacity: 1 - idx * 0.1, x: 0, scale: 1 }}
+                                exit={{ opacity: 0, x: 30, scale: 0.9 }}
+                                transition={{ duration: 0.4, type: 'spring', stiffness: 200 }}
+                                whileHover={{ scale: 1.02, backgroundColor: 'rgba(255,255,255,0.03)' }}
+                                className="flex items-center gap-2 p-3 rounded-xl border border-white/[0.04] cursor-default group"
+                              >
+                                {/* Demand side */}
+                                <motion.div
+                                  className="flex items-center gap-2 flex-1 min-w-0"
+                                  initial={{ x: -10 }}
+                                  animate={{ x: 0 }}
+                                  transition={{ delay: 0.1 + idx * 0.05 }}
+                                >
+                                  <motion.div
+                                    className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border border-blue-500/20 flex items-center justify-center flex-shrink-0"
+                                    whileHover={{ scale: 1.1, rotate: 5 }}
+                                  >
+                                    <span className="text-[9px] font-bold text-blue-400">
+                                      {contact.name.charAt(0).toUpperCase()}
+                                    </span>
+                                  </motion.div>
+                                  <div className="min-w-0">
+                                    <p className="text-[12px] text-white/80 truncate font-medium">
+                                      {contact.name.split(' ')[0]}
+                                    </p>
+                                    <p className="text-[10px] text-white/30 truncate">{contact.company}</p>
+                                  </div>
+                                </motion.div>
+
+                                {/* Animated arrow */}
+                                <motion.div
+                                  className="flex items-center gap-1 px-2"
+                                  animate={{ x: [0, 3, 0] }}
+                                  transition={{ repeat: Infinity, duration: 1.5, delay: idx * 0.2 }}
+                                >
+                                  <motion.div
+                                    className="w-1 h-1 rounded-full bg-emerald-500/50"
+                                    animate={{ scale: [1, 1.5, 1] }}
+                                    transition={{ repeat: Infinity, duration: 0.8, delay: 0 }}
+                                  />
+                                  <motion.div
+                                    className="w-1 h-1 rounded-full bg-emerald-500/70"
+                                    animate={{ scale: [1, 1.5, 1] }}
+                                    transition={{ repeat: Infinity, duration: 0.8, delay: 0.15 }}
+                                  />
+                                  <motion.div
+                                    className="w-1.5 h-1.5 rounded-full bg-emerald-500"
+                                    animate={{ scale: [1, 1.3, 1] }}
+                                    transition={{ repeat: Infinity, duration: 0.8, delay: 0.3 }}
+                                  />
+                                </motion.div>
+
+                                {/* Supply side */}
+                                <motion.div
+                                  className="flex items-center gap-2 flex-1 min-w-0"
+                                  initial={{ x: 10 }}
+                                  animate={{ x: 0 }}
+                                  transition={{ delay: 0.2 + idx * 0.05 }}
+                                >
+                                  <motion.div
+                                    className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500/20 to-purple-500/20 border border-violet-500/20 flex items-center justify-center flex-shrink-0"
+                                    whileHover={{ scale: 1.1, rotate: -5 }}
+                                  >
+                                    <span className="text-[9px] font-bold text-violet-400">
+                                      {matchedSupply ? (matchedSupply.name || matchedSupply.domain).charAt(0).toUpperCase() : '?'}
+                                    </span>
+                                  </motion.div>
+                                  <div className="min-w-0">
+                                    <p className="text-[12px] text-white/80 truncate font-medium">
+                                      {matchedSupply ? (matchedSupply.name || matchedSupply.domain).split(' ')[0] : 'Provider'}
+                                    </p>
+                                    <p className="text-[10px] text-white/30 truncate">
+                                      {matchedSupply?.nicheExpertise || matchedSupply?.specialty || 'can help'}
+                                    </p>
+                                  </div>
+                                </motion.div>
+
+                                {/* Match indicator */}
+                                <motion.div
+                                  className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"
+                                  animate={{
+                                    scale: [1, 1.3, 1],
+                                    opacity: [0.5, 1, 0.5]
+                                  }}
+                                  transition={{ repeat: Infinity, duration: 1.5, delay: idx * 0.3 }}
+                                />
+                              </motion.div>
+                            );
+                          })}
+                        </AnimatePresence>
+                      </div>
+
+                      {recentlyFoundContacts.length > 4 && (
+                        <motion.p
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="mt-4 text-[11px] text-white/30 text-center"
+                        >
+                          +{recentlyFoundContacts.length - 4} more matches
+                        </motion.p>
+                      )}
+                    </motion.div>
+                  </motion.div>
+                )}
+
+                {/* CTA button moved to left column in grid layout */}
+              </motion.div>
+            );
+          }
+
+          // ─────────────────────────────────────────────────────────────
+          // STATE 4: ENRICHING - Finding decision-makers (active work only)
+          // ─────────────────────────────────────────────────────────────
+          if (hasValidRole && isWorking) {
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.4 }}
+                className="max-w-xl mx-auto pt-12"
+              >
+                <motion.div
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.1 }}
+                  className="text-center mb-10"
+                >
+                  <h1 className="text-[36px] font-semibold tracking-tight text-white mb-2">
+                    Finding the right people
+                  </h1>
+                  <p className="text-[15px] text-white/40">
+                    {`${enrichmentWorkerProgress?.completed || 0} of ${enrichmentWorkerProgress?.total || companiesDetected} companies`}
+                  </p>
+                  {detectedNiche?.oneLiner && !aiQueueStatus?.mode && (
+                    <p className="mt-2 text-[12px] text-white/25">
+                      {detectedNiche.oneLiner}
+                    </p>
+                  )}
+                </motion.div>
+
+                {/* Progress bar */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.2 }}
+                  className="mb-10 px-8"
+                >
+                  <div className="h-[4px] bg-white/[0.06] rounded-full overflow-hidden">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progressPercent}%` }}
+                      transition={{ duration: 0.5, ease: 'easeOut' }}
+                      className="h-full rounded-full bg-gradient-to-r from-white/40 to-white/60"
+                    />
+                  </div>
+                  {/* Reassurance message - safe to leave */}
+                  <p className="text-center text-[11px] text-white/20 mt-3">
+                    Safe to leave — progress is saved
+                  </p>
+                </motion.div>
+
+                {/* Live feed of found contacts */}
+                <div className="space-y-3 px-4">
+                  <AnimatePresence mode="popLayout">
+                    {recentlyFoundContacts.length > 0 ? (
+                      recentlyFoundContacts.map((contact, idx) => (
+                        <motion.div
+                          key={`${contact.domain}-${contact.foundAt}`}
+                          initial={{ opacity: 0, x: -30, scale: 0.95 }}
+                          animate={{ opacity: 1 - (idx * 0.15), x: 0, scale: 1 }}
+                          exit={{ opacity: 0, x: 30 }}
+                          transition={{ duration: 0.3, type: 'spring', stiffness: 300 }}
+                          className="flex items-center gap-4 p-4 rounded-xl border border-white/[0.06]"
+                          style={{ background: 'rgba(255,255,255,0.02)' }}
+                        >
+                          <motion.div
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ delay: 0.1, type: 'spring' }}
+                            className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[14px] font-medium text-white truncate">
+                              {contact.name}
+                            </p>
+                            <p className="text-[12px] text-white/40 truncate">
+                              {contact.title} at {contact.company}
+                            </p>
+                          </div>
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.2 }}
+                            className="text-[11px] text-emerald-400/60 flex-shrink-0"
+                          >
+                            Located
+                          </motion.div>
+                        </motion.div>
+                      ))
+                    ) : (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="flex items-center justify-center gap-3 p-8 text-white/30"
+                      >
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                          className="w-5 h-5 border-2 border-white/20 border-t-white/50 rounded-full"
+                        />
+                        <span className="text-[14px]">Searching...</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* Found count */}
+                <AnimatePresence>
+                  {(enrichmentWorkerProgress?.succeeded ?? 0) > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      className="mt-8 text-center"
+                    >
+                      <p className="text-[13px] text-white/30">
+                        <span className="text-emerald-400 font-medium">{enrichmentWorkerProgress?.succeeded}</span> decision-makers located
+                      </p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            );
+          }
+
+          // ─────────────────────────────────────────────────────────────
+          // STATE 3: RESULTS - Matches found, show preview with match reasons
+          // ─────────────────────────────────────────────────────────────
+          if (hasValidRole && companiesDetected > 0) {
+            // Stage 5: Use pipeline snapshot data, fall back to legacy
+            // Dedupe by domain to avoid duplicate key warnings
+            const allDemand = uiState?.matchingResults || matchingResults;
+            const seenDomains = new Set<string>();
+            const dedupedDemand = allDemand.filter(m => {
+              if (!m.domain || seenDomains.has(m.domain)) return false;
+              seenDomains.add(m.domain);
+              return true;
+            });
+            const topDemand = dedupedDemand.slice(0, 4);
+            const topSupply = discoveredSupplyCompanies.slice(0, 4);
+            const hasSupply = topSupply.length > 0;
+
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.4 }}
+                className="max-w-3xl mx-auto pt-12"
+              >
+                {/* Header with both counts */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.1 }}
+                  className="text-center mb-10"
+                >
+                  {/* Niche badge - "Finding the match" animation → "Found" */}
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.3, delay: 0.1 }}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-5 transition-all duration-500 ${
+                      isDiscoveringMatch
+                        ? 'bg-amber-500/10 border border-amber-500/30'
+                        : 'bg-white/[0.04] border border-white/[0.08]'
+                    }`}
+                  >
+                    <motion.div
+                      className={`w-1.5 h-1.5 rounded-full ${isDiscoveringMatch ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                      animate={{ scale: [1, 1.3, 1] }}
+                      transition={{ repeat: Infinity, duration: isDiscoveringMatch ? 0.8 : 2 }}
+                    />
+                    <span className={`text-[11px] font-medium ${isDiscoveringMatch ? 'text-amber-300' : 'text-white/50'}`}>
+                      {isDiscoveringMatch ? 'Finding the match...' : `${getNicheDisplayLabel(detectedNiche, roleLabel)} • Found`}
+                    </span>
+                  </motion.div>
+
+                  {/* Two big numbers side by side */}
+                  <div className="flex items-center justify-center gap-8 mb-4">
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.5, delay: 0.2, type: 'spring' }}
+                      className="text-center"
+                    >
+                      <p className="text-[48px] font-semibold tracking-tight text-blue-400">{companiesDetected}</p>
+                      <p className="text-[13px] text-white/40">need help</p>
+                      {rawDemandCount > companiesDetected && (
+                        <p className="text-[10px] text-white/20 mt-0.5">of {rawDemandCount} contacts</p>
+                      )}
+                    </motion.div>
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ delay: 0.3 }}
+                      className="text-[32px] text-white/20"
+                    >
+                      →
+                    </motion.div>
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.5, delay: 0.4, type: 'spring' }}
+                      className="text-center"
+                    >
+                      <p className="text-[48px] font-semibold tracking-tight text-violet-400">{discoveredSupplyCompanies.length}</p>
+                      <p className="text-[13px] text-white/40">can help</p>
+                      {rawSupplyCount > discoveredSupplyCompanies.length && (
+                        <p className="text-[10px] text-white/20 mt-0.5">of {rawSupplyCount} contacts</p>
+                      )}
+                    </motion.div>
+                  </div>
+
+                </motion.div>
+
+                {/* Two columns: Demand | Supply */}
+                <div className="grid grid-cols-2 gap-6 mb-10 px-4">
+                  {/* DEMAND Column */}
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 }}
+                  >
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-2 h-2 rounded-full bg-blue-500" />
+                      <span className="text-[11px] font-medium text-blue-400/70 uppercase tracking-wider">
+                        Demand • Need help
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {topDemand.map((match, idx) => {
+                        const narration = matchNarrations[match.domain];
+                        const stacked = stackedSignals[match.domain];
+                        const dealScore = dealScores[match.domain];
+
+                        return (
+                          <motion.div
+                            key={match.domain || idx}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.4 + idx * 0.08 }}
+                            whileHover={{ scale: 1.02, borderColor: 'rgba(59,130,246,0.3)' }}
+                            className="p-3 rounded-xl border border-white/[0.06] cursor-default group relative overflow-hidden"
+                            style={{ background: narration ? 'rgba(59,130,246,0.05)' : 'rgba(59,130,246,0.03)' }}
+                          >
+                            {/* AI generating indicator */}
+                            {isGeneratingNarrations && !narration && (
+                              <motion.div
+                                className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500/10 to-transparent"
+                                animate={{ x: ['-100%', '100%'] }}
+                                transition={{ repeat: Infinity, duration: 1.5 }}
+                              />
+                            )}
+
+                            <div className="flex items-center gap-3 relative">
+                              <motion.div
+                                className="w-8 h-8 rounded-lg bg-blue-500/20 border border-blue-500/20 flex items-center justify-center flex-shrink-0"
+                                whileHover={{ scale: 1.1, rotate: 5 }}
+                              >
+                                <span className="text-[11px] font-bold text-blue-400">
+                                  {(match.companyName || match.domain).charAt(0).toUpperCase()}
+                                </span>
+                              </motion.div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[13px] font-medium text-white truncate">
+                                  {match.companyName || match.domain}
+                                </p>
+                                {/* AI Narration headline if available */}
+                                {narration ? (
+                                  <p className="text-[11px] text-blue-300/70 truncate">
+                                    {narration.headline}
+                                  </p>
+                                ) : (
+                                  <p className="text-[11px] text-white/30">
+                                    {match.jobCount || 1} signal{(match.jobCount || 1) > 1 ? 's' : ''}
+                                  </p>
+                                )}
+                              </div>
+                              {/* Urgency indicator from AI */}
+                              {narration?.urgency === 'hot' ? (
+                                <motion.div
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-orange-500/20 text-orange-400 border border-orange-500/20"
+                                  animate={{ scale: [1, 1.05, 1] }}
+                                  transition={{ repeat: Infinity, duration: 1.5 }}
+                                >
+                                  HOT
+                                </motion.div>
+                              ) : stacked?.tier === 'A' ? (
+                                <div className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">
+                                  A
+                                </div>
+                              ) : (
+                                <motion.div
+                                  className="w-1.5 h-1.5 rounded-full bg-blue-400/50"
+                                  animate={{ opacity: [0.3, 1, 0.3] }}
+                                  transition={{ repeat: Infinity, duration: 2, delay: idx * 0.2 }}
+                                />
+                              )}
+                            </div>
+
+                            {/* Expanded AI narration story (shows on hover) */}
+                            {narration && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                whileHover={{ height: 'auto', opacity: 1 }}
+                                className="overflow-hidden"
+                              >
+                                <p className="mt-2 pt-2 border-t border-white/[0.04] text-[10px] text-white/40 leading-relaxed">
+                                  {narration.story}
+                                </p>
+                              </motion.div>
+                            )}
+                          </motion.div>
+                        );
+                      })}
+                      {companiesDetected > 4 && (
+                        <p className="text-[11px] text-white/30 pt-2">+{companiesDetected - 4} more</p>
+                      )}
+                    </div>
+                  </motion.div>
+
+                  {/* SUPPLY Column */}
+                  <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.4 }}
+                  >
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-2 h-2 rounded-full bg-violet-500" />
+                      <span className="text-[11px] font-medium text-violet-400/70 uppercase tracking-wider">
+                        Supply • Can help
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {hasSupply ? topSupply.map((supply, idx) => (
+                        <motion.div
+                          key={supply.domain || idx}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.5 + idx * 0.08 }}
+                          whileHover={{ scale: 1.02, borderColor: 'rgba(139,92,246,0.3)' }}
+                          className="p-3 rounded-xl border border-white/[0.06] cursor-default group"
+                          style={{ background: 'rgba(139,92,246,0.03)' }}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-violet-500/20 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
+                              <span className="text-[11px] font-bold text-violet-400">
+                                {(supply.name || supply.domain).charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[13px] font-medium text-white truncate">
+                                {supply.name || supply.domain}
+                              </p>
+                              <p className="text-[11px] text-white/30 truncate">
+                                {supply.nicheExpertise || supply.specialty || 'Provider'}
                               </p>
                             </div>
-                          );
-                        })()}
-
-                        {/* Person Contact Card */}
-                        <PersonContactCard
-                          personData={personData}
-                          targetTitles={result.targetTitles || []}
-                          isEnriching={isEnrichingPerson}
-                          onEnrichClick={() => !conversationStarted && handleEnrichPerson(result.domain)}
-                          enrichmentConfigured={isEnrichmentConfigured(enrichmentConfig)}
-                          intro={getSuggestedIntro(result.domain)}
-                          onRefreshContact={!conversationStarted ? () => handleEnrichPerson(result.domain) : undefined}
-                          onConversationStarted={() => setConversationStartedByDomain(prev => ({ ...prev, [result.domain]: true }))}
-                          demandStatus={demandStatusByDomain[result.domain] || 'not_sent'}
-                          supplyStatus={supplyStatusByDomain[result.domain] || 'not_sent'}
-                          onSendToDemand={() => handleDualSend(result.domain, 'DEMAND')}
-                          onSendToSupply={() => handleDualSend(result.domain, 'SUPPLY')}
-                          onSendBoth={() => handleSendBoth(result.domain)}
-                          onSkip={() => setActiveResultIndex((activeResultIndex + 1) % matchingResults.length)}
-                          hasDemandCampaign={!!instantlyConfig?.campaignDemand}
-                          hasSupplyCampaign={!!instantlyConfig?.campaignSupply}
-                          isSendingDemand={isSendingInstantlyByDomain[`${result.domain}-DEMAND`] || false}
-                          isSendingSupply={isSendingInstantlyByDomain[`${result.domain}-SUPPLY`] || false}
-                          supplyContact={supplyContactByDomain[result.domain]}
-                          selectedSupply={selectedSupplyByDomain[result.domain]}
-                          alternativeSupply={alternativeSupplyByDomain[result.domain] || []}
-                          onSwitchSupply={(supply) => handleSwitchSupply(result.domain, supply)}
-                          isEnrichingSupply={isEnrichingSupplyByDomain[result.domain] || false}
-                          demandIntro={demandIntroByDomain[result.domain]}
-                          supplyIntro={supplyIntroByDomain[result.domain]}
-                          companyName={result.companyName}
-                          companyDomain={result.domain}
-                          onConfirmAsSupplier={
-                            // Only show if: contact has email, no supply exists, and title looks like decision-maker
-                            personData?.email && discoveredSupplyCompanies.length === 0 && looksLikeSupplierContact(personData?.title || '')
-                              ? () => setPendingSupplyConfirmation({
-                                  domain: result.domain,
-                                  companyName: result.companyName,
-                                  contactName: personData?.name || '',
-                                  contactEmail: personData?.email || '',
-                                  contactTitle: personData?.title || '',
-                                  hireCategory: extractHireCategory(result.jobTitlesBeingHired?.map(t => ({ title: t })), result.signalSummary),
-                                })
-                              : undefined
-                          }
-                        />
-
-                      </div>
+                            <motion.div
+                              className="w-1.5 h-1.5 rounded-full bg-violet-400/50"
+                              animate={{ opacity: [0.3, 1, 0.3] }}
+                              transition={{ repeat: Infinity, duration: 2, delay: idx * 0.2 }}
+                            />
+                          </div>
+                        </motion.div>
+                      )) : (
+                        <div className="p-4 rounded-xl border border-white/[0.04] text-center">
+                          <p className="text-[12px] text-white/30">No supply dataset yet</p>
+                          <button
+                            onClick={() => navigate('/settings')}
+                            className="mt-2 text-[11px] text-violet-400/70 hover:text-violet-400"
+                          >
+                            Add supply data →
+                          </button>
+                        </div>
+                      )}
+                      {hasSupply && discoveredSupplyCompanies.length > 4 && (
+                        <p className="text-[11px] text-white/30 pt-2">+{discoveredSupplyCompanies.length - 4} more</p>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
-                {currentStep === 'matching-engine' && matchingResults.length > 0 && (
-                  <TourTooltip
-                    step="Step 3 of 4"
-                    title="Your First Match"
-                    description="Here's your first match. This is where you see pressure, forecasting, and insights."
-                    onNext={nextStep}
-                    onSkip={skipOnboarding}
-                    position="bottom"
-                  />
-                )}
-              </div>
-
-              {/* Operator Summary */}
-              {!isRefreshing && matchingResults.length > 0 && (
-                <div className="mt-3 p-2 rounded-xl bg-white/[0.02] border border-white/[0.04]">
-                  <p className="text-[10px] text-white/40">{getOperatorCue()}</p>
+                  </motion.div>
                 </div>
-              )}
-            </div>
-            </div>
-          </div>
 
-        </div>
+                {/* Primary CTA - Premium "Prepare" button */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.8 }}
+                  className="text-center"
+                >
+                  <motion.button
+                    whileHover={{
+                      scale: 1.03,
+                      boxShadow: '0 0 80px rgba(59,130,246,0.3)',
+                    }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={triggerBackgroundEnrichment}
+                    className="relative px-14 py-5 text-[16px] font-semibold rounded-2xl bg-white text-black overflow-hidden group"
+                  >
+                    {/* Shimmer effect */}
+                    <motion.div
+                      className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-200/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"
+                    />
+                    <span className="relative">Find decision-makers</span>
+                  </motion.button>
+                  <motion.p
+                    className="mt-5 text-[12px] text-white/25"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 1 }}
+                  >
+                    System handles enrichment automatically
+                  </motion.p>
+
+                  <motion.button
+                    onClick={fetchSignals}
+                    disabled={isRefreshing}
+                    className="mt-6 text-[12px] text-white/30 hover:text-white/50 transition-colors disabled:opacity-30 inline-flex items-center gap-2"
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                  >
+                    <RefreshCw size={12} className={isRefreshing ? 'animate-spin' : ''} />
+                    <span>{isRefreshing ? 'Scanning...' : 'Rescan signals'}</span>
+                  </motion.button>
+                </motion.div>
+              </motion.div>
+            );
+          }
+
+          // ─────────────────────────────────────────────────────────────
+          // STATE 2: MATCHING - Premium scanning animation
+          // ─────────────────────────────────────────────────────────────
+          if (isRefreshing) {
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="max-w-md mx-auto pt-20"
+              >
+                <div className="text-center">
+                  {/* Animated radar/scan effect */}
+                  <motion.div
+                    className="relative w-24 h-24 mx-auto mb-8"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                  >
+                    <motion.div
+                      className="absolute inset-0 rounded-full border-2 border-blue-500/30"
+                      animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
+                      transition={{ repeat: Infinity, duration: 2 }}
+                    />
+                    <motion.div
+                      className="absolute inset-2 rounded-full border-2 border-blue-500/40"
+                      animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0, 0.6] }}
+                      transition={{ repeat: Infinity, duration: 2, delay: 0.3 }}
+                    />
+                    <motion.div
+                      className="absolute inset-4 rounded-full border-2 border-blue-500/50"
+                      animate={{ scale: [1, 1.2, 1], opacity: [0.7, 0.3, 0.7] }}
+                      transition={{ repeat: Infinity, duration: 2, delay: 0.6 }}
+                    />
+                    <motion.div
+                      className="absolute inset-0 flex items-center justify-center"
+                    >
+                      <motion.div
+                        className="w-3 h-3 rounded-full bg-blue-500"
+                        animate={{ scale: [1, 1.2, 1] }}
+                        transition={{ repeat: Infinity, duration: 1 }}
+                      />
+                    </motion.div>
+                  </motion.div>
+
+                  <motion.h1
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="text-[36px] font-semibold tracking-tight text-white mb-3"
+                  >
+                    Mapping the market
+                  </motion.h1>
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3 }}
+                    className="text-[15px] text-white/40 mb-8 max-w-sm mx-auto leading-relaxed"
+                  >
+                    Scanning for timing alignment
+                  </motion.p>
+
+                  {/* Premium two-sided indicator */}
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: 0.4 }}
+                    className="flex items-center justify-center gap-4 mb-10"
+                  >
+                    {/* Demand side */}
+                    <motion.div
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20"
+                      animate={{ opacity: [0.7, 1, 0.7] }}
+                      transition={{ repeat: Infinity, duration: 2 }}
+                    >
+                      <motion.div
+                        className="w-1.5 h-1.5 rounded-full bg-blue-400"
+                        animate={{ scale: [1, 1.3, 1] }}
+                        transition={{ repeat: Infinity, duration: 1 }}
+                      />
+                      <span className="text-[11px] text-blue-400/80">Demand</span>
+                    </motion.div>
+
+                    {/* Animated connection */}
+                    <div className="flex items-center gap-1">
+                      {[0, 1, 2].map(i => (
+                        <motion.div
+                          key={i}
+                          className="w-1 h-1 rounded-full bg-white/20"
+                          animate={{ opacity: [0.2, 0.6, 0.2], x: [0, 2, 0] }}
+                          transition={{ repeat: Infinity, duration: 1, delay: i * 0.15 }}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Supply side */}
+                    <motion.div
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20"
+                      animate={{ opacity: [0.7, 1, 0.7] }}
+                      transition={{ repeat: Infinity, duration: 2, delay: 0.5 }}
+                    >
+                      <motion.div
+                        className="w-1.5 h-1.5 rounded-full bg-violet-400"
+                        animate={{ scale: [1, 1.3, 1] }}
+                        transition={{ repeat: Infinity, duration: 1, delay: 0.5 }}
+                      />
+                      <span className="text-[11px] text-violet-400/80">Supply</span>
+                    </motion.div>
+                  </motion.div>
+
+                  {/* Progress bar with shimmer */}
+                  <div className="h-[4px] bg-white/[0.06] rounded-full overflow-hidden max-w-xs mx-auto">
+                    <motion.div
+                      className="h-full bg-gradient-to-r from-blue-500/50 via-emerald-400/80 to-violet-500/50 rounded-full"
+                      initial={{ x: '-100%' }}
+                      animate={{ x: '100%' }}
+                      transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            );
+          }
+
+          // ─────────────────────────────────────────────────────────────
+          // STATE 1: BEGIN - Premium "Start scanning" state
+          // ─────────────────────────────────────────────────────────────
+          if (hasValidRole) {
+            return (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="max-w-md mx-auto pt-20 relative"
+              >
+                {/* Floating ambient particles */}
+                <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                  {[...Array(6)].map((_, i) => (
+                    <motion.div
+                      key={i}
+                      className="absolute w-1 h-1 rounded-full bg-white/10"
+                      style={{
+                        left: `${20 + i * 12}%`,
+                        top: `${10 + (i % 3) * 25}%`,
+                      }}
+                      animate={{
+                        y: [0, -30, 0],
+                        opacity: [0.1, 0.3, 0.1],
+                        scale: [1, 1.5, 1],
+                      }}
+                      transition={{
+                        repeat: Infinity,
+                        duration: 3 + i * 0.5,
+                        delay: i * 0.4,
+                        ease: 'easeInOut',
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div className="text-center relative">
+                  {/* Niche badge with pulse */}
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ delay: 0.1, type: 'spring', stiffness: 200 }}
+                    whileHover={{ scale: 1.05 }}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] mb-6 cursor-default"
+                  >
+                    <motion.div
+                      className="w-1.5 h-1.5 rounded-full bg-white/40"
+                      animate={{ scale: [1, 1.3, 1], opacity: [0.4, 0.8, 0.4] }}
+                      transition={{ repeat: Infinity, duration: 2 }}
+                    />
+                    <span className="text-[11px] font-medium text-white/40">
+                      {roleLabel} • Ready
+                    </span>
+                  </motion.div>
+
+                  <motion.h1
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2, type: 'spring', stiffness: 100 }}
+                    className="text-[42px] font-semibold tracking-tight text-white mb-4"
+                  >
+                    <motion.span
+                      animate={{ opacity: [1, 0.9, 1] }}
+                      transition={{ repeat: Infinity, duration: 3 }}
+                    >
+                      Start scanning
+                    </motion.span>
+                  </motion.h1>
+                  <motion.p
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="text-[15px] text-white/40 mb-12 max-w-xs mx-auto leading-relaxed"
+                  >
+                    System will find companies with signals and route them to providers
+                  </motion.p>
+
+                  <motion.button
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4, type: 'spring', stiffness: 200 }}
+                    whileHover={{
+                      scale: 1.05,
+                      boxShadow: '0 0 100px rgba(255,255,255,0.25)',
+                    }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      console.log('🔴 BUTTON CLICKED - TEST');
+                      alert('Button works! Starting scan...');
+                      fetchSignals();
+                    }}
+                    className="relative px-14 py-5 text-[16px] font-semibold rounded-2xl bg-white text-black overflow-hidden group"
+                  >
+                    {/* Shimmer effect */}
+                    <motion.div
+                      className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                      animate={{ x: ['-100%', '100%'] }}
+                      transition={{ repeat: Infinity, duration: 2, ease: 'linear', repeatDelay: 1 }}
+                    />
+                    {/* Glow pulse */}
+                    <motion.div
+                      className="absolute inset-0 bg-gradient-to-r from-blue-400/10 via-transparent to-violet-400/10 opacity-0 group-hover:opacity-100"
+                      animate={{ opacity: [0, 0.5, 0] }}
+                      transition={{ repeat: Infinity, duration: 1.5 }}
+                    />
+                    <span className="relative">Scan for signals</span>
+                  </motion.button>
+
+                  {/* Subtle hint animation */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 1 }}
+                    className="mt-8 flex items-center justify-center gap-2"
+                  >
+                    <motion.div
+                      className="w-1 h-1 rounded-full bg-white/20"
+                      animate={{ y: [0, -5, 0] }}
+                      transition={{ repeat: Infinity, duration: 1.5, delay: 0 }}
+                    />
+                    <motion.div
+                      className="w-1 h-1 rounded-full bg-white/20"
+                      animate={{ y: [0, -5, 0] }}
+                      transition={{ repeat: Infinity, duration: 1.5, delay: 0.2 }}
+                    />
+                    <motion.div
+                      className="w-1 h-1 rounded-full bg-white/20"
+                      animate={{ y: [0, -5, 0] }}
+                      transition={{ repeat: Infinity, duration: 1.5, delay: 0.4 }}
+                    />
+                  </motion.div>
+                </div>
+              </motion.div>
+            );
+          }
+
+          // ─────────────────────────────────────────────────────────────
+          // STATE 0: SETUP - No dataset configured
+          // ─────────────────────────────────────────────────────────────
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="max-w-md mx-auto pt-20 relative"
+            >
+              {/* Subtle ambient glow */}
+              <motion.div
+                className="absolute top-10 left-1/2 -translate-x-1/2 w-64 h-64 rounded-full bg-blue-500/5 blur-3xl pointer-events-none"
+                animate={{
+                  scale: [1, 1.2, 1],
+                  opacity: [0.3, 0.5, 0.3],
+                }}
+                transition={{ repeat: Infinity, duration: 4 }}
+              />
+
+              <div className="text-center relative">
+                {/* Animated icon container */}
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: 'spring', stiffness: 200 }}
+                  whileHover={{ scale: 1.05, rotate: 5 }}
+                  className="w-16 h-16 mx-auto mb-8 rounded-2xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-center cursor-default relative overflow-hidden"
+                >
+                  {/* Pulse ring */}
+                  <motion.div
+                    className="absolute inset-0 rounded-2xl border border-white/10"
+                    animate={{
+                      scale: [1, 1.2, 1],
+                      opacity: [0.3, 0, 0.3],
+                    }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                  />
+                  <motion.div
+                    animate={{
+                      rotate: [0, 10, -10, 0],
+                      scale: [1, 1.05, 1],
+                    }}
+                    transition={{ repeat: Infinity, duration: 3 }}
+                  >
+                    <Radio className="w-7 h-7 text-white/30" />
+                  </motion.div>
+                </motion.div>
+
+                <motion.h1
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="text-[32px] font-semibold tracking-tight text-white mb-3"
+                >
+                  Connect your dataset
+                </motion.h1>
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="text-[15px] text-white/40 mb-10 max-w-xs mx-auto leading-relaxed"
+                >
+                  Add an Apify dataset in Settings to start detecting signals
+                </motion.p>
+
+                <motion.button
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4, type: 'spring', stiffness: 200 }}
+                  whileHover={{
+                    scale: 1.05,
+                    boxShadow: '0 0 60px rgba(255,255,255,0.15)',
+                  }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => navigate('/settings')}
+                  className="relative px-8 py-3.5 text-[14px] font-semibold rounded-xl bg-white text-black overflow-hidden group"
+                >
+                  {/* Shimmer */}
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
+                    animate={{ x: ['-100%', '100%'] }}
+                    transition={{ repeat: Infinity, duration: 2.5, ease: 'linear', repeatDelay: 0.5 }}
+                  />
+                  <span className="relative">Open Settings</span>
+                </motion.button>
+
+                {/* Connection dots animation */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.8 }}
+                  className="mt-10 flex items-center justify-center gap-8"
+                >
+                  <motion.div
+                    className="w-2 h-2 rounded-full bg-white/10"
+                    animate={{ scale: [1, 1.3, 1] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                  />
+                  <motion.div
+                    className="flex gap-1"
+                    animate={{ opacity: [0.3, 0.6, 0.3] }}
+                    transition={{ repeat: Infinity, duration: 1.5 }}
+                  >
+                    {[0, 1, 2].map(i => (
+                      <motion.div
+                        key={i}
+                        className="w-1 h-1 rounded-full bg-white/20"
+                        animate={{ x: [0, 3, 0] }}
+                        transition={{ repeat: Infinity, duration: 1, delay: i * 0.15 }}
+                      />
+                    ))}
+                  </motion.div>
+                  <motion.div
+                    className="w-2 h-2 rounded-full bg-white/10"
+                    animate={{ scale: [1, 1.3, 1] }}
+                    transition={{ repeat: Infinity, duration: 2, delay: 1 }}
+                  />
+                </motion.div>
+              </div>
+            </motion.div>
+          );
+        })()}
+
+        {/* EXPLORATION MODE REMOVED - See git history */}
+
+
 
       </div>
 
+      {/* V2 Batch Preflight Modal - 10s cancel window */}
+      <AnimatePresence>
+        {showBatchPreflight && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: -20 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="bg-[#0A0A0A] border border-white/[0.08] rounded-2xl p-8 max-w-md w-full mx-4"
+            >
+              {/* Countdown Circle with pulse animation */}
+              <div className="text-center mb-6">
+                <motion.div
+                  className="relative inline-flex items-center justify-center w-24 h-24 mb-4"
+                  animate={{ scale: [1, 1.02, 1] }}
+                  transition={{ repeat: Infinity, duration: 1 }}
+                >
+                  <svg className="w-24 h-24 transform -rotate-90">
+                    <circle
+                      cx="48"
+                      cy="48"
+                      r="44"
+                      fill="none"
+                      stroke="rgba(255,255,255,0.1)"
+                      strokeWidth="4"
+                    />
+                    <motion.circle
+                      cx="48"
+                      cy="48"
+                      r="44"
+                      fill="none"
+                      stroke="rgba(52,211,153,0.8)"
+                      strokeWidth="4"
+                      strokeDasharray={44 * 2 * Math.PI}
+                      strokeDashoffset={44 * 2 * Math.PI * (1 - preflightCountdown / 10)}
+                      strokeLinecap="round"
+                      initial={{ strokeDashoffset: 44 * 2 * Math.PI }}
+                      animate={{ strokeDashoffset: 44 * 2 * Math.PI * (1 - preflightCountdown / 10) }}
+                      transition={{ duration: 0.8, ease: 'easeOut' }}
+                    />
+                  </svg>
+                  <motion.span
+                    className="absolute text-4xl font-bold text-white"
+                    key={preflightCountdown}
+                    initial={{ scale: 1.3, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    {preflightCountdown}
+                  </motion.span>
+                </motion.div>
+                <motion.h2
+                  className="text-xl font-semibold text-white mb-2"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                >
+                  Routing {preflightSendCount} deal{preflightSendCount !== 1 ? 's' : ''}
+                </motion.h2>
+                <motion.p
+                  className="text-[13px] text-white/50"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.2 }}
+                >
+                  {getNicheDisplayLabel(
+                    detectedNiche,
+                    pressureDetection?.roleType && pressureDetection.roleType !== 'unknown'
+                      ? `${pressureDetection.roleType.charAt(0).toUpperCase() + pressureDetection.roleType.slice(1)}`
+                      : 'Signals detected'
+                  )} • Both sides
+                </motion.p>
+              </div>
+
+              {/* Deals Preview with staggered animation */}
+              {(() => {
+                const roleType = pressureDetection?.roleType;
+                if (!roleType || roleType === 'unknown') return null;
+                const sampleContacts = getReadyContacts(preEnrichedPools, roleType, 3);
+                if (sampleContacts.length === 0) return null;
+
+                return (
+                  <motion.div
+                    className="mb-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                  >
+                    <p className="text-[10px] text-white/40 uppercase tracking-wider mb-3">Deals in motion</p>
+                    <div className="space-y-2">
+                      {sampleContacts.slice(0, 3).map((contact, i) => (
+                        <motion.div
+                          key={`${contact.domain}-${i}`}
+                          className="flex items-center gap-2"
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: 0.4 + i * 0.1 }}
+                        >
+                          <motion.span
+                            className="w-5 h-5 rounded bg-emerald-500/20 flex items-center justify-center text-[9px] font-medium text-emerald-400"
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ delay: 0.5 + i * 0.1, duration: 0.3 }}
+                          >
+                            {i + 1}
+                          </motion.span>
+                          <span className="text-[12px] text-white/70 truncate">{contact.name}</span>
+                          <span className="text-[10px] text-white/30">@ {contact.companyName}</span>
+                        </motion.div>
+                      ))}
+                      {preflightSendCount > 3 && (
+                        <motion.p
+                          className="text-[10px] text-emerald-400/50 ml-7"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.7 }}
+                        >
+                          +{preflightSendCount - 3} more routes
+                        </motion.p>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })()}
+
+              {/* Cancel Button */}
+              <motion.button
+                onClick={cancelBatchPreflight}
+                className="w-full py-3 text-[14px] font-medium rounded-xl bg-white/[0.06] border border-white/[0.08] text-white/70 hover:bg-white/[0.1] hover:text-white transition-all"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                Cancel
+              </motion.button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* First-Run Overlay - Apple-style 3-step intro with visual examples */}
+      <AnimatePresence>
+        {showFirstRunOverlay && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              className="max-w-md w-full mx-4"
+            >
+              {/* Step Indicators */}
+              <div className="flex justify-center gap-2 mb-8">
+                {[1, 2, 3].map((step) => (
+                  <div
+                    key={step}
+                    className={`w-8 h-1 rounded-full transition-all duration-300 ${
+                      step === firstRunStep
+                        ? 'bg-white'
+                        : step < firstRunStep
+                        ? 'bg-white/40'
+                        : 'bg-white/10'
+                    }`}
+                  />
+                ))}
+              </div>
+
+              {/* Step Content with Visual Examples */}
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={firstRunStep}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  {firstRunStep === 1 && (
+                    <div className="text-center">
+                      <p className="text-[13px] text-white/40 uppercase tracking-wider mb-4">Step 1</p>
+                      <h2 className="text-[22px] font-semibold text-white mb-6 tracking-tight">
+                        This shows what's ready
+                      </h2>
+                      {/* Visual mockup of company list */}
+                      <div className="bg-[#0A0A0A] border border-white/[0.08] rounded-xl p-4 mb-6 text-left">
+                        <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3">Companies</p>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-white/[0.03] border border-emerald-500/20">
+                            <span className="text-[13px] text-white/80">Acme Corp</span>
+                            <span className="text-[10px] text-emerald-400 font-medium">Ready</span>
+                          </div>
+                          <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-white/[0.02]">
+                            <span className="text-[13px] text-white/50">TechStart Inc</span>
+                            <span className="text-[10px] text-white/30">Enriching...</span>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[13px] text-white/40">
+                        "Ready" means contact found + intro generated
+                      </p>
+                    </div>
+                  )}
+
+                  {firstRunStep === 2 && (
+                    <div className="text-center">
+                      <p className="text-[13px] text-white/40 uppercase tracking-wider mb-4">Step 2</p>
+                      <h2 className="text-[22px] font-semibold text-white mb-6 tracking-tight">
+                        This is the intro you're sending
+                      </h2>
+                      {/* Visual mockup of intro preview */}
+                      <div className="space-y-3 mb-6 text-left">
+                        <div className="bg-gradient-to-br from-blue-500/[0.08] to-transparent border border-blue-500/20 rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <ArrowRight className="w-3 h-3 text-blue-400" />
+                            <span className="text-[10px] text-blue-400/80 uppercase tracking-wider">To Company</span>
+                          </div>
+                          <p className="text-[12px] text-white/60 leading-relaxed">
+                            "Hey Sarah, saw you're scaling the engineering team at Acme. I know someone who places senior devs fast..."
+                          </p>
+                        </div>
+                        <div className="bg-gradient-to-br from-emerald-500/[0.08] to-transparent border border-emerald-500/20 rounded-xl p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <ArrowLeft className="w-3 h-3 text-emerald-400" />
+                            <span className="text-[10px] text-emerald-400/80 uppercase tracking-wider">To Provider</span>
+                          </div>
+                          <p className="text-[12px] text-white/60 leading-relaxed">
+                            "Hey Mike, Acme Corp has an active opportunity. Their decision maker is Sarah Chen..."
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-[13px] text-white/40">
+                        Both intros are personalized from the signal
+                      </p>
+                    </div>
+                  )}
+
+                  {firstRunStep === 3 && (
+                    <div className="text-center">
+                      <p className="text-[13px] text-white/40 uppercase tracking-wider mb-4">Step 3</p>
+                      <h2 className="text-[22px] font-semibold text-white mb-6 tracking-tight">
+                        One click routes both
+                      </h2>
+                      {/* Visual mockup of Route button */}
+                      <div className="mb-6">
+                        <div className="inline-block px-12 py-4 text-[15px] font-semibold rounded-xl bg-white text-black shadow-[0_0_40px_rgba(255,255,255,0.15)]">
+                          Route 300
+                        </div>
+                        <div className="mt-4 flex items-center justify-center gap-6 text-[11px] text-white/30">
+                          <span>To Company</span>
+                          <ArrowRight className="w-3 h-3" />
+                          <span>To Provider</span>
+                        </div>
+                      </div>
+                      <p className="text-[13px] text-white/40">
+                        Intros go to both sides simultaneously
+                      </p>
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+
+              {/* Action Button */}
+              <div className="mt-10">
+                <button
+                  onClick={advanceFirstRunStep}
+                  className="w-full py-4 text-[15px] font-semibold rounded-xl bg-white text-black hover:bg-white/90 active:scale-[0.98] transition-all"
+                >
+                  {firstRunStep < 3 ? 'Continue' : 'Got it — start routing'}
+                </button>
+
+                {/* Skip Link */}
+                {firstRunStep < 3 && (
+                  <button
+                    onClick={dismissFirstRunOverlay}
+                    className="w-full mt-3 py-2 text-[13px] text-white/30 hover:text-white/50 transition-colors"
+                  >
+                    Skip intro
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Batch Summary Modal - Premium connector language with CRAZY animations */}
+      <AnimatePresence>
+        {batchSummaryModal?.show && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm overflow-hidden"
+            onClick={() => setBatchSummaryModal(null)}
+          >
+            {/* Floating particles */}
+            {[...Array(12)].map((_, i) => (
+              <motion.div
+                key={i}
+                className={`absolute w-2 h-2 rounded-full ${
+                  i % 3 === 0 ? 'bg-emerald-400' : i % 3 === 1 ? 'bg-blue-400' : 'bg-purple-400'
+                }`}
+                style={{ left: `${10 + (i * 7)}%` }}
+                initial={{ opacity: 0, y: '100vh' }}
+                animate={{
+                  opacity: [0, 0.8, 0.8, 0],
+                  y: [100, -100],
+                }}
+                transition={{
+                  duration: 2.5,
+                  delay: i * 0.15,
+                  repeat: Infinity,
+                  repeatDelay: 1,
+                }}
+              />
+            ))}
+
+            <motion.div
+              initial={{ scale: 0.5, opacity: 0, y: 100, rotateX: 45 }}
+              animate={{ scale: 1, opacity: 1, y: 0, rotateX: 0 }}
+              exit={{ scale: 0.8, opacity: 0, y: -50 }}
+              transition={{ type: 'spring', damping: 20, stiffness: 200 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md mx-4 bg-[#0A0A0A] border border-white/[0.08] rounded-2xl p-8 shadow-2xl relative"
+            >
+              {/* Glow effect behind card */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.2, duration: 0.8 }}
+                className="absolute inset-0 -z-10 bg-gradient-to-r from-emerald-500/20 via-blue-500/20 to-purple-500/20 rounded-2xl blur-xl"
+              />
+
+              {/* Success Icon with pulse */}
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', damping: 10, stiffness: 200, delay: 0.1 }}
+                className="flex justify-center mb-6"
+              >
+                <motion.div
+                  animate={{
+                    boxShadow: [
+                      '0 0 0 0 rgba(52, 211, 153, 0.4)',
+                      '0 0 0 20px rgba(52, 211, 153, 0)',
+                    ],
+                  }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                  className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center"
+                >
+                  <motion.div
+                    initial={{ rotate: -180, opacity: 0 }}
+                    animate={{ rotate: 0, opacity: 1 }}
+                    transition={{ delay: 0.3, type: 'spring', stiffness: 200 }}
+                  >
+                    <CheckCircle className="w-8 h-8 text-emerald-400" />
+                  </motion.div>
+                </motion.div>
+              </motion.div>
+
+              {/* Header with stagger */}
+              <motion.h2
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="text-2xl font-semibold text-white text-center mb-2"
+              >
+                {batchSummaryModal.cancelled ? 'Routing Cancelled' : 'Deals Routed'}
+              </motion.h2>
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.3 }}
+                className="text-white/40 text-center text-sm mb-8"
+              >
+                {batchSummaryModal.cancelled
+                  ? `${batchSummaryModal.succeeded} sent, ${batchSummaryModal.skipped || 0} skipped`
+                  : `Batch complete in ${((batchSummaryModal.durationMs || 0) / 1000).toFixed(1)}s`}
+              </motion.p>
+
+              {/* Stats Grid with stagger */}
+              <div className="grid grid-cols-2 gap-4 mb-8">
+                <motion.div
+                  initial={{ opacity: 0, x: -30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.4, type: 'spring' }}
+                  className="bg-white/[0.03] rounded-xl p-4 text-center border border-white/[0.04]"
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ delay: 0.5, type: 'spring', stiffness: 200 }}
+                    className="text-3xl font-bold text-white mb-1"
+                  >
+                    {batchSummaryModal.succeeded}
+                  </motion.div>
+                  <div className="text-xs text-white/40 uppercase tracking-wider">
+                    Total Routed
+                  </div>
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, x: 30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.5, type: 'spring' }}
+                  className="bg-white/[0.03] rounded-xl p-4 text-center border border-white/[0.04]"
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ delay: 0.6, type: 'spring', stiffness: 200 }}
+                    className="text-3xl font-bold text-emerald-400 mb-1"
+                  >
+                    {batchSummaryModal.dailyTotal}
+                  </motion.div>
+                  <div className="text-xs text-white/40 uppercase tracking-wider">
+                    Today
+                  </div>
+                </motion.div>
+              </div>
+
+              {/* Breakdown with stagger */}
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.7 }}
+                className="flex justify-center gap-6 mb-8 text-sm"
+              >
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: 0.75, type: 'spring' }}
+                  className="flex items-center gap-2"
+                >
+                  <motion.div
+                    animate={{ scale: [1, 1.3, 1] }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                    className="w-2 h-2 rounded-full bg-blue-400"
+                  />
+                  <span className="text-white/60">{batchSummaryModal.demandCount} demand</span>
+                </motion.div>
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: 0.8, type: 'spring' }}
+                  className="flex items-center gap-2"
+                >
+                  <motion.div
+                    animate={{ scale: [1, 1.3, 1] }}
+                    transition={{ duration: 2, repeat: Infinity, delay: 0.5 }}
+                    className="w-2 h-2 rounded-full bg-purple-400"
+                  />
+                  <span className="text-white/60">{batchSummaryModal.supplyCount} supply</span>
+                </motion.div>
+              </motion.div>
+
+              {/* CTA with shimmer */}
+              <motion.button
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.9 }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setBatchSummaryModal(null)}
+                className="w-full py-4 text-[15px] font-semibold rounded-xl bg-white text-black relative overflow-hidden group"
+              >
+                <motion.div
+                  animate={{ x: ['-100%', '200%'] }}
+                  transition={{ duration: 2, repeat: Infinity, repeatDelay: 1 }}
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent skew-x-12"
+                />
+                <span className="relative">Ready for next batch</span>
+              </motion.button>
+
+              {/* Subtle hint */}
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1.1 }}
+                className="text-center text-white/20 text-xs mt-4"
+              >
+                Keep routing. The magic compounds.
+              </motion.p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AppHeader />
-      <Dock />
+      <Dock disabled={!!routingProgress} />
     </div>
   );
 }
 
 export default MatchingEngineV3;
+

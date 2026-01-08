@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { Check, Copy, Database, Users, Mail, Target, ChevronRight, Loader2, CircleDollarSign } from 'lucide-react';
 import type { DatasetHealth, CounterpartyFilters, MatchPrediction } from '../services/DatasetIntelligence';
-import { formatFiltersForScraper } from '../services/DatasetIntelligence';
+import { formatFiltersForScraper, formatFiltersForLeadsFinder } from '../services/DatasetIntelligence';
 
 interface DatasetHealthCardProps {
   title: string;
@@ -27,12 +27,20 @@ export function DatasetHealthCard({
 }: DatasetHealthCardProps) {
   const [showFilters, setShowFilters] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
 
   const copyFilters = () => {
     if (!counterpartyFilters) return;
     navigator.clipboard.writeText(formatFiltersForScraper(counterpartyFilters));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyLeadsFinderJson = () => {
+    if (!counterpartyFilters) return;
+    navigator.clipboard.writeText(formatFiltersForLeadsFinder(counterpartyFilters));
+    setCopiedJson(true);
+    setTimeout(() => setCopiedJson(false), 2000);
   };
 
   if (isLoading) {
@@ -174,23 +182,41 @@ export function DatasetHealthCard({
                 </div>
               </div>
 
-              {/* Copy Button - Linear style */}
-              <button
-                onClick={copyFilters}
-                className="w-full mt-2 h-8 bg-white/[0.04] hover:bg-white/[0.06] border border-white/[0.06] rounded-lg flex items-center justify-center gap-2 transition-all duration-200"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-white/70" />
-                    <span className="text-white/70 text-[12px]">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5 text-white/50" />
-                    <span className="text-white/50 text-[12px]">Copy filters</span>
-                  </>
-                )}
-              </button>
+              {/* Copy Buttons - Linear style */}
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={copyFilters}
+                  className="flex-1 h-8 bg-white/[0.04] hover:bg-white/[0.06] border border-white/[0.06] rounded-lg flex items-center justify-center gap-2 transition-all duration-200"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-white/70" />
+                      <span className="text-white/70 text-[12px]">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-white/50" />
+                      <span className="text-white/50 text-[12px]">Copy text</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={copyLeadsFinderJson}
+                  className="flex-1 h-8 bg-white/[0.04] hover:bg-white/[0.06] border border-white/[0.06] rounded-lg flex items-center justify-center gap-2 transition-all duration-200"
+                >
+                  {copiedJson ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-white/70" />
+                      <span className="text-white/70 text-[12px]">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 text-white/50" />
+                      <span className="text-white/50 text-[12px]">Leads Finder JSON</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           )}
         </div>

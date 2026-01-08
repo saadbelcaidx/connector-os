@@ -62,7 +62,16 @@ export interface AnymailResponse {
   linkedin?: string;
   error?: string;
   credits_used?: number;
+  // Verification fields
+  email_status?: 'valid' | 'risky' | 'invalid';
+  verification_status?: 'verified' | 'risky' | 'invalid';
 }
+
+export type EmailVerificationResult = {
+  status: 'verified' | 'risky' | 'invalid' | 'error';
+  email: string;
+  verifiedAt?: string;
+};
 
 /**
  * Find email for a specific person by name + domain
@@ -272,4 +281,83 @@ export async function findEmailWithFallback(
 
   console.log('[AnymailFinder] All strategies exhausted, no email found');
   return null;
+}
+
+/**
+ * Verify an email address using Anymailfinder's verify-email endpoint.
+ *
+ * IMPORTANT: This is called from the browser but proxied through Edge Function.
+ * The API key is sent to the Edge Function, NOT exposed in headers.
+ *
+ * Returns:
+ * - 'verified' if email_status === 'valid'
+ * - 'risky' if email_status === 'risky' (NOT sendable)
+ * - 'invalid' if email_status === 'invalid'
+ * - 'error' if API call fails (fail closed - treat as risky)
+ */
+export async function verifyEmail(
+  apiKey: string,
+  email: string
+): Promise<EmailVerificationResult> {
+  console.log(`[AnymailFinder] Verifying email: ${email}`);
+
+  if (!apiKey || !email) {
+    console.error('[AnymailFinder] Missing required parameters for verification');
+    return { status: 'error', email };
+  }
+
+  try {
+    const response = await fetch(ANYMAIL_PROXY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        type: 'verify_email',
+        apiKey,
+        email,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('[AnymailFinder] Verification API error:', response.status);
+      // Fail closed: API error = treat as risky
+      return { status: 'error', email };
+    }
+
+    const data: AnymailResponse = await response.json();
+
+    if (data.success && data.verification_status) {
+      const status = data.verification_status;
+      console.log(`[AnymailFinder] Email ${email} verification: ${status}`);
+      return {
+        status,
+        email,
+        verifiedAt: new Date().toISOString(),
+      };
+    }
+
+    // No clear status = fail closed
+    console.warn('[AnymailFinder] Verification returned no status, treating as error');
+    return { status: 'error', email };
+  } catch (error) {
+    console.error('[AnymailFinder] Verification error:', error);
+    // Fail closed: exception = treat as error
+    return { status: 'error', email };
+  }
+}
+
+/**
+ * Check if we should skip re-verification (within 30 days)
+ */
+export function shouldSkipVerification(emailVerifiedAt?: string): boolean {
+  if (!emailVerifiedAt) return false;
+
+  const verifiedDate = new Date(emailVerifiedAt);
+  const now = new Date();
+  const daysSinceVerification = (now.getTime() - verifiedDate.getTime()) / (1000 * 60 * 60 * 24);
+
+  // Skip if verified within 30 days
+  return daysSinceVerification < 30;
 }

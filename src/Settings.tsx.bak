@@ -1,0 +1,1183 @@
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Check, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import Dock from './Dock';
+import { supabase } from './lib/supabase';
+import type { ConnectorProfile } from './types';
+import { analyzeDataset, DatasetAnalysis } from './services/DatasetValidator';
+import { humanizeRoleType } from './services/PressureWiringService';
+import type { ScraperFilters } from './pressure/FilterSynthesizer';
+import type { PressureDetectionResult } from './pressure/PressureDetector';
+import type { RoleType } from './pressure/InversionTable';
+import {
+  TrustedSupplyPools,
+  getPoolStats,
+  getTopProviders,
+  getTierLabel,
+  getTierStyle,
+  createEmptyPools
+} from './services/TrustedSupplyPools';
+import {
+  TrustedDemandPools,
+  getDemandPoolStats,
+  createEmptyDemandPools
+} from './services/TrustedDemandPools';
+
+interface OperatorSettings {
+  // Signal APIs - Demand
+  jobsApiKey: string;
+  jobsQueryUrl: string;  // Apify dataset URL for demand (jobs)
+  // Signal APIs - Supply (NEW)
+  supplyQueryUrl: string;  // Apify dataset URL for supply discovery
+  // Signal APIs - Other
+  fundingApiKey: string;
+  fundingQueryUrl: string;
+  layoffsApiKey: string;
+  layoffsQueryUrl: string;
+  hiringApiKey: string;
+  hiringQueryUrl: string;
+  techApiKey: string;
+  techQueryUrl: string;
+  // Contact & AI
+  aiProvider: 'openai' | 'azure' | 'anthropic' | 'none';
+  aiOpenaiApiKey: string;
+  aiAzureApiKey: string;
+  aiAzureEndpoint: string;
+  aiAnthropicApiKey: string;
+  enrichmentApiKey: string;  // Apollo
+  anymailFinderApiKey: string;  // Anymail Finder (fallback)
+  // Work Owner Search
+  workOwnerDepartments: string;
+  workOwnerKeywords: string;
+  // Delivery
+  instantlyApiKey: string;
+  instantlyCampaignDemand: string;
+  instantlyCampaignSupply: string;
+}
+
+// Compact input component
+function Input({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  type?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+        {label}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full h-8 bg-black/40 text-white text-[11px] px-2.5 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors ${mono ? 'font-mono' : ''}`}
+      />
+    </div>
+  );
+}
+
+// Apify Signal Card - URL only, no API key needed, with dataset validation
+function ApifySignalCard({
+  title,
+  subtitle,
+  datasetUrl,
+  onUrlChange,
+  urlPlaceholder,
+  helpText,
+}: {
+  title: string;
+  subtitle?: string;
+  datasetUrl: string;
+  onUrlChange: (val: string) => void;
+  urlPlaceholder: string;
+  helpText?: string;
+}) {
+  const [isValidating, setIsValidating] = useState(false);
+  const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
+
+  const handleValidate = async () => {
+    if (!datasetUrl) return;
+    setIsValidating(true);
+    setAnalysis(null);
+    try {
+      const result = await analyzeDataset(datasetUrl);
+      setAnalysis(result);
+    } catch (error) {
+      setAnalysis({
+        isValid: false,
+        error: 'Failed to validate dataset',
+        totalRecords: 0,
+        sampleRecords: [],
+        detectedFields: [],
+        fieldMapping: { email: null, name: null, firstName: null, lastName: null, company: null, domain: null, title: null, linkedin: null },
+        coverage: { withEmail: 0, withName: 0, withCompany: 0, withDomain: 0, withTitle: 0, withLinkedin: 0 },
+        percentages: { email: 0, name: 0, company: 0, domain: 0 },
+        dataType: 'unknown',
+        nestedObjects: [],
+      });
+    }
+    setIsValidating(false);
+  };
+
+  // Clear analysis when URL changes
+  useEffect(() => {
+    setAnalysis(null);
+  }, [datasetUrl]);
+
+  const isLive = !!datasetUrl;
+
+  return (
+    <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-[11px] font-medium text-white/90">{title}</h2>
+          <div className="text-[8px] text-white/30 mt-0.5">{subtitle || 'Apify Dataset'}</div>
+        </div>
+        <div className={`text-[8px] px-1.5 py-0.5 rounded ${
+          analysis?.isValid
+            ? 'bg-emerald-500/20 text-emerald-400'
+            : analysis?.error
+              ? 'bg-red-500/20 text-red-400'
+              : isLive
+                ? 'bg-white/[0.08] text-white/70'
+                : 'bg-white/5 text-white/30'
+        }`}>
+          {analysis?.isValid ? `${analysis.totalRecords} records` : analysis?.error ? 'Error' : isLive ? 'Ready' : 'Not Configured'}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <Input
+              label="Apify Dataset URL"
+              value={datasetUrl}
+              onChange={onUrlChange}
+              placeholder={urlPlaceholder}
+              mono
+            />
+          </div>
+          <button
+            onClick={handleValidate}
+            disabled={!datasetUrl || isValidating}
+            className="mt-5 px-3 py-1.5 text-[9px] font-medium rounded bg-white/10 hover:bg-white/15 text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
+          >
+            {isValidating ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Checking...
+              </>
+            ) : (
+              'Validate'
+            )}
+          </button>
+        </div>
+
+        {/* Validation Results */}
+        {analysis && (
+          <div className={`mt-3 p-3 rounded-lg border ${
+            analysis.isValid
+              ? 'bg-emerald-500/5 border-emerald-500/20'
+              : 'bg-red-500/5 border-red-500/20'
+          }`}>
+            {analysis.isValid ? (
+              <div className="space-y-2">
+                {/* Header */}
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px] font-medium text-emerald-400">
+                    Valid Dataset - {analysis.totalRecords} records ({analysis.dataType})
+                  </span>
+                </div>
+
+                {/* Coverage Stats */}
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  <CoverageStat label="Email" count={analysis.coverage.withEmail} total={analysis.totalRecords} percent={analysis.percentages.email} />
+                  <CoverageStat label="Name" count={analysis.coverage.withName} total={analysis.totalRecords} percent={analysis.percentages.name} />
+                  <CoverageStat label="Company" count={analysis.coverage.withCompany} total={analysis.totalRecords} percent={analysis.percentages.company} />
+                  <CoverageStat label="Domain" count={analysis.coverage.withDomain} total={analysis.totalRecords} percent={analysis.percentages.domain} />
+                </div>
+
+                {/* Enrichment Note */}
+                {analysis.percentages.email < 100 && analysis.percentages.email > 0 && (
+                  <div className="text-[8px] text-white/40 mt-2">
+                    {analysis.totalRecords - analysis.coverage.withEmail} records need Apollo enrichment
+                  </div>
+                )}
+                {analysis.percentages.email === 0 && (
+                  <div className="text-[8px] text-amber-400/70 mt-2">
+                    No emails found - will use Apollo to find contacts
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                <span className="text-[10px] text-red-400">{analysis.error}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="text-[8px] text-white/30 mt-1">
+          {helpText || 'Works with any Apify scraper'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Coverage stat component
+function CoverageStat({ label, count, total, percent }: { label: string; count: number; total: number; percent: number }) {
+  const getColor = () => {
+    if (percent >= 80) return 'text-emerald-400';
+    if (percent >= 50) return 'text-amber-400';
+    return 'text-red-400';
+  };
+
+  return (
+    <div className="text-center">
+      <div className={`text-[11px] font-medium ${getColor()}`}>{percent}%</div>
+      <div className="text-[8px] text-white/40">{label}</div>
+      <div className="text-[7px] text-white/20">{count}/{total}</div>
+    </div>
+  );
+}
+
+// Field badge component
+function FieldBadge({ field, value }: { field: string; value: string }) {
+  return (
+    <div className="px-1.5 py-0.5 bg-white/5 rounded text-[7px] text-white/50">
+      <span className="text-white/70">{field}</span>
+      <span className="text-white/30 mx-1">→</span>
+      <span className="font-mono">{value}</span>
+    </div>
+  );
+}
+
+// Signal card component
+function SignalCard({
+  title,
+  provider,
+  apiKey,
+  queryUrl,
+  onApiKeyChange,
+  onQueryUrlChange,
+  urlPlaceholder,
+}: {
+  title: string;
+  provider: string;
+  apiKey: string;
+  queryUrl: string;
+  onApiKeyChange: (val: string) => void;
+  onQueryUrlChange: (val: string) => void;
+  urlPlaceholder: string;
+}) {
+  const isLive = !!apiKey && !!queryUrl;
+  const needsUrl = !!apiKey && !queryUrl;
+
+  return (
+    <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-[11px] font-medium text-white/90">{title}</h2>
+          <div className="text-[8px] text-white/30 mt-0.5">{provider}</div>
+        </div>
+        <div className={`text-[8px] px-1.5 py-0.5 rounded ${
+          isLive
+            ? 'bg-white/[0.08] text-white/70'
+            : needsUrl
+            ? 'bg-white/[0.06] text-white/50'
+            : 'bg-white/5 text-white/30'
+        }`}>
+          {isLive ? 'Live' : needsUrl ? 'URL Required' : 'Not Configured'}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Input
+          label="API Key"
+          value={apiKey}
+          onChange={onApiKeyChange}
+          placeholder="Your API key"
+          type="password"
+        />
+        <Input
+          label="Query URL"
+          value={queryUrl}
+          onChange={onQueryUrlChange}
+          placeholder={urlPlaceholder}
+          mono
+        />
+      </div>
+    </div>
+  );
+}
+
+// Auto-Reply Toggle (SSM feature - persisted to database)
+function AutoReplyToggle() {
+  const [enabled, setEnabled] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Load setting on mount
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const { data } = await supabase
+          .from('operator_settings')
+          .select('auto_reply_enabled')
+          .eq('user_id', 'default')
+          .maybeSingle();
+        if (data?.auto_reply_enabled !== undefined) {
+          setEnabled(data.auto_reply_enabled);
+        }
+      } catch (err) {
+        console.error('[AutoReply] Failed to load setting:', err);
+      }
+    };
+    load();
+  }, []);
+
+  // Toggle and persist
+  const handleToggle = async () => {
+    const newValue = !enabled;
+    setEnabled(newValue);
+    setSaving(true);
+    try {
+      await supabase
+        .from('operator_settings')
+        .update({ auto_reply_enabled: newValue })
+        .eq('user_id', 'default');
+    } catch (err) {
+      console.error('[AutoReply] Failed to save setting:', err);
+      setEnabled(!newValue); // Revert on error
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-4">
+      <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Reply Handling</div>
+      <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+        {/* Toggle Row */}
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[11px] font-medium text-white/90">Auto-reply first response</span>
+          <button
+            onClick={handleToggle}
+            disabled={saving}
+            className={`relative w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
+              enabled ? 'bg-emerald-500/30' : 'bg-white/10'
+            } ${saving ? 'opacity-50' : ''}`}
+          >
+            <div
+              className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${
+                enabled
+                  ? 'left-[22px] bg-emerald-400'
+                  : 'left-0.5 bg-white/50'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* 3 lines of copy */}
+        <div className="mt-3 space-y-2 text-[10px] text-white/35 leading-relaxed">
+          <p>Starts off to keep you in control. Most replies need a human eye first.</p>
+          <p>When on, the system replies once to clear "yes" messages only.</p>
+          <p>It never handles questions, pricing, objections, or follow-ups.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Settings() {
+  const navigate = useNavigate();
+  const [settings, setSettings] = useState<OperatorSettings>({
+    jobsApiKey: '',
+    jobsQueryUrl: '',
+    supplyQueryUrl: '',  // Supply discovery URL
+    fundingApiKey: '',
+    fundingQueryUrl: '',
+    layoffsApiKey: '',
+    layoffsQueryUrl: '',
+    hiringApiKey: '',
+    hiringQueryUrl: '',
+    techApiKey: '',
+    techQueryUrl: '',
+    aiProvider: 'none' as const,
+    aiOpenaiApiKey: '',
+    aiAzureApiKey: '',
+    aiAzureEndpoint: '',
+    aiAnthropicApiKey: '',
+    enrichmentApiKey: '',
+    anymailFinderApiKey: '',
+    workOwnerDepartments: '',
+    workOwnerKeywords: '',
+    instantlyApiKey: '',
+    instantlyCampaignDemand: '',
+    instantlyCampaignSupply: '',
+  });
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [connectorProfile, setConnectorProfile] = useState<ConnectorProfile>({
+    full_name: '',
+    email: '',
+    company_name: '',
+    services_offered: [],
+    industries_served: [],
+    solves_for_roles: [],
+    pain_points_solved: [],
+    ideal_company_size: '50-200',
+    geography: []
+  });
+
+  // Synthesized filters from PressureInversionEngine
+  const [synthesizedFilters, setSynthesizedFilters] = useState<ScraperFilters | null>(null);
+  const [pressureDetection, setPressureDetection] = useState<PressureDetectionResult | null>(null);
+
+  // Trusted supply pools
+  const [trustedSupplyPools, setTrustedSupplyPools] = useState<TrustedSupplyPools>(createEmptyPools());
+  const [expandedPoolRole, setExpandedPoolRole] = useState<RoleType | null>(null);
+
+  // Trusted demand pools (rotation memory for reuse-prevention)
+  const [trustedDemandPools, setTrustedDemandPools] = useState<TrustedDemandPools>(createEmptyDemandPools());
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      // Get authenticated user - required for RLS (defensive destructuring)
+      const authResult = await supabase.auth.getUser();
+      const user = authResult?.data?.user;
+      const userId = user?.id || 'default'; // Fallback for anonymous mode
+
+      const { data, error } = await supabase
+        .from('operator_settings')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setSettings({
+          jobsApiKey: data.jobs_api_key || '',
+          jobsQueryUrl: data.jobs_api_url || '',
+          supplyQueryUrl: data.supply_api_url || '',
+          fundingApiKey: data.funding_api_key || '',
+          fundingQueryUrl: data.funding_api_url || '',
+          layoffsApiKey: data.layoffs_api_key || '',
+          layoffsQueryUrl: data.layoffs_api_url || '',
+          hiringApiKey: data.hiring_api_key || '',
+          hiringQueryUrl: data.hiring_api_url || '',
+          techApiKey: data.tech_api_key || '',
+          techQueryUrl: data.tech_api_url || '',
+          aiProvider: data.ai_provider || 'none',
+          aiOpenaiApiKey: data.ai_openai_api_key || '',
+          aiAzureApiKey: data.ai_azure_api_key || '',
+          aiAzureEndpoint: data.ai_azure_endpoint || '',
+          aiAnthropicApiKey: data.ai_anthropic_api_key || '',
+          enrichmentApiKey: data.enrichment_api_key || '',
+          anymailFinderApiKey: data.anymail_finder_api_key || '',
+          workOwnerDepartments: data.work_owner_departments || '',
+          workOwnerKeywords: data.work_owner_keywords || '',
+          instantlyApiKey: data.instantly_api_key || '',
+          instantlyCampaignDemand: data.instantly_campaign_demand || '',
+          instantlyCampaignSupply: data.instantly_campaign_supply || '',
+        });
+
+        const rawProfile = (data.connector_profile ?? {}) as Partial<ConnectorProfile>;
+        setConnectorProfile({
+          full_name: rawProfile.full_name ?? '',
+          email: rawProfile.email ?? '',
+          company_name: rawProfile.company_name ?? '',
+          services_offered: rawProfile.services_offered ?? [],
+          industries_served: rawProfile.industries_served ?? [],
+          solves_for_roles: rawProfile.solves_for_roles ?? [],
+          pain_points_solved: rawProfile.pain_points_solved ?? [],
+          ideal_company_size: rawProfile.ideal_company_size ?? '50-200',
+          geography: rawProfile.geography ?? []
+        });
+
+        // Load synthesized filters from pressure detection
+        if (data.synthesized_filters) {
+          setSynthesizedFilters(data.synthesized_filters as ScraperFilters);
+        }
+        if (data.pressure_detection) {
+          setPressureDetection(data.pressure_detection as PressureDetectionResult);
+        }
+
+        // Load trusted supply pools
+        if (data.trusted_supply_pools) {
+          setTrustedSupplyPools(data.trusted_supply_pools as TrustedSupplyPools);
+        }
+
+        // Load trusted demand pools
+        if (data.trusted_demand_pools) {
+          setTrustedDemandPools(data.trusted_demand_pools as TrustedDemandPools);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveSettings = async () => {
+    setError(null);
+
+    try {
+      // Get authenticated user - required for RLS (defensive destructuring)
+      const authResult = await supabase.auth.getUser();
+      const user = authResult?.data?.user;
+      const userId = user?.id || 'default'; // Fallback for anonymous mode
+
+      const { error } = await supabase
+        .from('operator_settings')
+        .upsert(
+          {
+            user_id: userId,
+            // Jobs (Demand)
+            jobs_api_key: settings.jobsApiKey,
+            jobs_api_url: settings.jobsQueryUrl,
+            // Supply Discovery
+            supply_api_url: settings.supplyQueryUrl,
+            // Funding
+            funding_api_key: settings.fundingApiKey,
+            funding_api_url: settings.fundingQueryUrl,
+            // Layoffs
+            layoffs_api_key: settings.layoffsApiKey,
+            layoffs_api_url: settings.layoffsQueryUrl,
+            // Hiring
+            hiring_api_key: settings.hiringApiKey,
+            hiring_api_url: settings.hiringQueryUrl,
+            // Tech
+            tech_api_key: settings.techApiKey,
+            tech_api_url: settings.techQueryUrl,
+            // AI
+            ai_provider: settings.aiProvider,
+            ai_openai_api_key: settings.aiOpenaiApiKey,
+            ai_azure_api_key: settings.aiAzureApiKey,
+            ai_azure_endpoint: settings.aiAzureEndpoint,
+            ai_anthropic_api_key: settings.aiAnthropicApiKey,
+            // Enrichment
+            enrichment_api_key: settings.enrichmentApiKey,
+            enrichment_provider: 'apollo',
+            anymail_finder_api_key: settings.anymailFinderApiKey,
+            // Work Owner Search
+            work_owner_departments: settings.workOwnerDepartments,
+            work_owner_keywords: settings.workOwnerKeywords,
+            // Instantly
+            instantly_api_key: settings.instantlyApiKey,
+            instantly_campaign_demand: settings.instantlyCampaignDemand,
+            instantly_campaign_supply: settings.instantlyCampaignSupply,
+            // Profile
+            connector_profile: connectorProfile,
+            // Synthesized filters from PressureInversionEngine
+            synthesized_filters: synthesizedFilters,
+            pressure_detection: pressureDetection,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id' }
+        );
+
+      if (error) throw error;
+
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    } catch (err: any) {
+      console.error('Error saving settings:', err);
+      setError(`Failed to save: ${err.message || 'Unknown error'}`);
+    }
+  };
+
+  // Status checks
+  const jobsLive = !!settings.jobsQueryUrl;  // Apify only needs URL, no API key
+  const fundingLive = !!settings.fundingApiKey && !!settings.fundingQueryUrl;
+  const layoffsLive = !!settings.layoffsApiKey && !!settings.layoffsQueryUrl;
+  const hiringLive = !!settings.hiringApiKey && !!settings.hiringQueryUrl;
+  const techLive = !!settings.techApiKey && !!settings.techQueryUrl;
+  const contactsReady = !!settings.enrichmentApiKey;
+  const deliveryReady = !!settings.instantlyApiKey && !!settings.instantlyCampaignDemand;
+
+  const liveCount = [jobsLive, fundingLive, layoffsLive, hiringLive, techLive].filter(Boolean).length;
+
+  if (loading) {
+    return (
+      <div className="h-screen bg-[#0A0A0A] flex items-center justify-center">
+        <div className="text-white/40 text-sm">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen bg-[#0A0A0A] text-white overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-white/5 flex-shrink-0">
+        <div className="max-w-[1400px] mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate('/launcher')}
+              className="text-white/40 hover:text-white/70 transition-colors"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <div>
+              <h1 className="text-[14px] font-medium text-white">Connect Your APIs</h1>
+              <p className="text-[10px] text-white/40">Connector OS is free. Bring your own API access.</p>
+            </div>
+          </div>
+
+          {/* Status Summary */}
+          <div className="flex items-center gap-4 text-[9px]">
+            <span className="text-white/30">{liveCount}/5 signals</span>
+            <div className={`flex items-center gap-1 ${contactsReady ? 'text-white/70' : 'text-white/30'}`}>
+              <div className={`w-1 h-1 rounded-full ${contactsReady ? 'bg-white/70' : 'bg-white/20'}`} />
+              Apollo
+            </div>
+            <div className={`flex items-center gap-1 ${deliveryReady ? 'text-white/70' : 'text-white/30'}`}>
+              <div className={`w-1 h-1 rounded-full ${deliveryReady ? 'bg-white/70' : 'bg-white/20'}`} />
+              Instantly
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 px-6 py-4 overflow-auto">
+        <div className="max-w-[1400px] mx-auto">
+          {/* Signals Grid - 3 columns */}
+          <div className="mb-4">
+            <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Signal Sources</div>
+            <div className="grid grid-cols-3 gap-3">
+              <ApifySignalCard
+                title="Demand (Jobs)"
+                subtitle="Companies hiring"
+                datasetUrl={settings.jobsQueryUrl}
+                onUrlChange={(val) => setSettings({ ...settings, jobsQueryUrl: val })}
+                urlPlaceholder="https://api.apify.com/v2/datasets/DATASET_ID/items?format=json"
+                helpText="LinkedIn, Indeed, Wellfound job scrapers"
+              />
+              <ApifySignalCard
+                title="Supply (Providers)"
+                subtitle="Service providers"
+                datasetUrl={settings.supplyQueryUrl}
+                onUrlChange={(val) => setSettings({ ...settings, supplyQueryUrl: val })}
+                urlPlaceholder="https://api.apify.com/v2/datasets/DATASET_ID/items?format=json"
+                helpText="Clutch, G2, agency directory scrapers"
+              />
+              <SignalCard
+                title="Funding"
+                provider="Piloterr (Crunchbase)"
+                apiKey={settings.fundingApiKey}
+                queryUrl={settings.fundingQueryUrl}
+                onApiKeyChange={(val) => setSettings({ ...settings, fundingApiKey: val })}
+                onQueryUrlChange={(val) => setSettings({ ...settings, fundingQueryUrl: val })}
+                urlPlaceholder="https://piloterr.com/api/v2/crunchbase/funding_rounds?..."
+              />
+              <SignalCard
+                title="Layoffs"
+                provider="Intellizence / Custom"
+                apiKey={settings.layoffsApiKey}
+                queryUrl={settings.layoffsQueryUrl}
+                onApiKeyChange={(val) => setSettings({ ...settings, layoffsApiKey: val })}
+                onQueryUrlChange={(val) => setSettings({ ...settings, layoffsQueryUrl: val })}
+                urlPlaceholder="https://api.intellizence.com/v1/layoffs?..."
+              />
+              <SignalCard
+                title="Hiring Velocity"
+                provider="Custom API"
+                apiKey={settings.hiringApiKey}
+                queryUrl={settings.hiringQueryUrl}
+                onApiKeyChange={(val) => setSettings({ ...settings, hiringApiKey: val })}
+                onQueryUrlChange={(val) => setSettings({ ...settings, hiringQueryUrl: val })}
+                urlPlaceholder="https://your-api.com/hiring?..."
+              />
+              <SignalCard
+                title="Tech Stack"
+                provider="BuiltWith / Custom"
+                apiKey={settings.techApiKey}
+                queryUrl={settings.techQueryUrl}
+                onApiKeyChange={(val) => setSettings({ ...settings, techApiKey: val })}
+                onQueryUrlChange={(val) => setSettings({ ...settings, techQueryUrl: val })}
+                urlPlaceholder="https://api.builtwith.com/v1/lookup?..."
+              />
+
+              {/* Contact & Delivery in same row */}
+              <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-[11px] font-medium text-white/90">Contact Enrichment</h2>
+                    <div className="text-[8px] text-white/30 mt-0.5">Apollo + Anymail Finder fallback</div>
+                  </div>
+                  <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.enrichmentApiKey ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
+                    {settings.enrichmentApiKey ? 'Ready' : 'Not Configured'}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <Input
+                    label="Apollo API Key (Primary)"
+                    value={settings.enrichmentApiKey}
+                    onChange={(val) => setSettings({ ...settings, enrichmentApiKey: val })}
+                    placeholder="Your Apollo key"
+                    type="password"
+                  />
+                  <Input
+                    label="Anymail Finder API Key (Fallback)"
+                    value={settings.anymailFinderApiKey}
+                    onChange={(val) => setSettings({ ...settings, anymailFinderApiKey: val })}
+                    placeholder="Optional - used when Apollo fails"
+                    type="password"
+                  />
+                  {settings.anymailFinderApiKey && (
+                    <div className="text-[8px] text-emerald-400/70">
+                      Fallback enabled: If Apollo fails, will try Anymail Finder
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* AI Provider */}
+              <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h2 className="text-[11px] font-medium text-white/90">AI Provider</h2>
+                    <div className="text-[8px] text-white/30 mt-0.5">For intro generation</div>
+                  </div>
+                  <div className={`text-[8px] px-1.5 py-0.5 rounded ${settings.aiProvider !== 'none' ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
+                    {settings.aiProvider !== 'none' ? settings.aiProvider.toUpperCase() : 'Not Configured'}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {/* Provider Selection */}
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1.5 block">Provider</label>
+                    <div className="flex gap-1.5">
+                      {(['none', 'openai', 'azure', 'anthropic'] as const).map((provider) => (
+                        <button
+                          key={provider}
+                          onClick={() => setSettings({ ...settings, aiProvider: provider })}
+                          className={`px-2.5 py-1 text-[10px] rounded border transition-all ${
+                            settings.aiProvider === provider
+                              ? 'border-white/30 bg-white/[0.08] text-white/80'
+                              : 'border-white/10 bg-white/5 text-white/50 hover:bg-white/10'
+                          }`}
+                        >
+                          {provider === 'none' ? 'None' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure' : 'Anthropic'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* OpenAI Fields */}
+                  {settings.aiProvider === 'openai' && (
+                    <Input
+                      label="OpenAI API Key"
+                      value={settings.aiOpenaiApiKey}
+                      onChange={(val) => setSettings({ ...settings, aiOpenaiApiKey: val })}
+                      placeholder="sk-..."
+                      type="password"
+                    />
+                  )}
+
+                  {/* Azure Fields */}
+                  {settings.aiProvider === 'azure' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        label="Azure OpenAI Key"
+                        value={settings.aiAzureApiKey}
+                        onChange={(val) => setSettings({ ...settings, aiAzureApiKey: val })}
+                        placeholder="Your Azure key"
+                        type="password"
+                      />
+                      <Input
+                        label="Azure Endpoint"
+                        value={settings.aiAzureEndpoint}
+                        onChange={(val) => setSettings({ ...settings, aiAzureEndpoint: val })}
+                        placeholder="https://your-resource.openai.azure.com"
+                      />
+                    </div>
+                  )}
+
+                  {/* Anthropic Fields */}
+                  {settings.aiProvider === 'anthropic' && (
+                    <Input
+                      label="Anthropic API Key"
+                      value={settings.aiAnthropicApiKey}
+                      onChange={(val) => setSettings({ ...settings, aiAnthropicApiKey: val })}
+                      placeholder="sk-ant-..."
+                      type="password"
+                    />
+                  )}
+
+                  {settings.aiProvider === 'none' && (
+                    <div className="text-[10px] text-white/40 bg-white/5 px-3 py-2 rounded">
+                      AI is optional. Without it, intros use simple templates.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Pressure Summary - Read-only display when pressure detected */}
+          {pressureDetection?.pressureDetected && (
+            <div className="mb-4">
+              <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">📊 What We Found</div>
+              <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+                <div className="text-[9px] text-white/40 mb-3">
+                  This updates automatically. You don't need to touch it.
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-[8px] uppercase tracking-wider text-white/30 mb-1">Role Type</div>
+                    <div className="text-[12px] font-medium text-white/80">{humanizeRoleType(pressureDetection.roleType)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[8px] uppercase tracking-wider text-white/30 mb-1">Volume</div>
+                    <div className="text-[12px] font-medium text-white/80">
+                      {pressureDetection.confidence === 'high' ? '3+ roles' : pressureDetection.confidence === 'medium' ? '2 roles' : '1 role'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[8px] uppercase tracking-wider text-white/30 mb-1">Confidence</div>
+                    <div className={`text-[12px] font-medium ${
+                      pressureDetection.confidence === 'high' ? 'text-emerald-400' :
+                      pressureDetection.confidence === 'medium' ? 'text-amber-400' :
+                      'text-white/50'
+                    }`}>
+                      {pressureDetection.confidence.charAt(0).toUpperCase() + pressureDetection.confidence.slice(1)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[8px] uppercase tracking-wider text-white/30 mb-1">Source</div>
+                    <div className="text-[12px] font-medium text-white/80">Live job postings</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Supply Scraper Filters - Editable when pressure detected, pre-filled from synthesizedFilters */}
+          {pressureDetection?.pressureDetected && synthesizedFilters && (
+            <div className="mb-4">
+              <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">🎯 Who We Look For</div>
+              <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+                {/* Pre-fill narration */}
+                <div className="text-[9px] text-white/40 mb-3">
+                  We filled this in for you. Edit only if you know better.
+                </div>
+
+                {/* Editable filter inputs */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Target Titles */}
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+                      Target Titles
+                    </label>
+                    <textarea
+                      value={synthesizedFilters.jobTitlesInclude.join(', ')}
+                      onChange={(e) => setSynthesizedFilters(prev => prev ? {
+                        ...prev,
+                        jobTitlesInclude: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      } : prev)}
+                      placeholder="technical recruiter, engineering recruiter"
+                      rows={2}
+                      className="w-full bg-black/40 text-white text-[11px] px-2.5 py-2 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors resize-none"
+                    />
+                  </div>
+
+                  {/* Keywords */}
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+                      Keywords
+                    </label>
+                    <textarea
+                      value={synthesizedFilters.keywordsInclude.join(', ')}
+                      onChange={(e) => setSynthesizedFilters(prev => prev ? {
+                        ...prev,
+                        keywordsInclude: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      } : prev)}
+                      placeholder="staffing, recruiting, talent acquisition"
+                      rows={2}
+                      className="w-full bg-black/40 text-white text-[11px] px-2.5 py-2 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors resize-none"
+                    />
+                  </div>
+
+                  {/* Industries */}
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+                      Industries
+                    </label>
+                    <textarea
+                      value={synthesizedFilters.industriesInclude.join(', ')}
+                      onChange={(e) => setSynthesizedFilters(prev => prev ? {
+                        ...prev,
+                        industriesInclude: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      } : prev)}
+                      placeholder="staffing, recruiting, consulting"
+                      rows={2}
+                      className="w-full bg-black/40 text-white text-[11px] px-2.5 py-2 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors resize-none"
+                    />
+                  </div>
+
+                  {/* Company Size */}
+                  <div>
+                    <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+                      Company Size
+                    </label>
+                    <textarea
+                      value={synthesizedFilters.companySizeInclude.join(', ')}
+                      onChange={(e) => setSynthesizedFilters(prev => prev ? {
+                        ...prev,
+                        companySizeInclude: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                      } : prev)}
+                      placeholder="11-50, 51-200, 201-500"
+                      rows={2}
+                      className="w-full bg-black/40 text-white text-[11px] px-2.5 py-2 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors resize-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Trusted Supply Pools - Read-only display */}
+          {(() => {
+            const stats = getPoolStats(trustedSupplyPools);
+            const roleTypes: RoleType[] = ['engineering', 'sales', 'marketing', 'operations', 'finance', 'compliance'];
+            const hasAnyPools = roleTypes.some(r => stats[r].total > 0);
+
+            if (!hasAnyPools) return null;
+
+            return (
+              <div className="mb-4">
+                <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Trusted Supply Pools</div>
+                <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+                  <div className="text-[9px] text-white/40 mb-3">
+                    Supply providers ranked and tiered from pressure-driven discovery
+                  </div>
+
+                  <div className="space-y-2">
+                    {roleTypes.map(role => {
+                      const roleStat = stats[role];
+                      if (roleStat.total === 0) return null;
+
+                      const isExpanded = expandedPoolRole === role;
+                      const topProviders = isExpanded ? getTopProviders(trustedSupplyPools, role, 10) : [];
+
+                      return (
+                        <div key={role} className="border border-white/[0.06] rounded-lg overflow-hidden">
+                          <button
+                            onClick={() => setExpandedPoolRole(isExpanded ? null : role)}
+                            className="w-full flex items-center justify-between px-3 py-2 hover:bg-white/[0.02] transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-medium text-white/80">
+                                {humanizeRoleType(role)}
+                              </span>
+                              <span className="text-[9px] text-white/40">
+                                {roleStat.total} provider{roleStat.total !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[8px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400/80 rounded">
+                                T1: {roleStat.tier1}
+                              </span>
+                              <span className="text-[8px] px-1.5 py-0.5 bg-blue-500/10 text-blue-400/80 rounded">
+                                T2: {roleStat.tier2}
+                              </span>
+                              <span className="text-[8px] px-1.5 py-0.5 bg-white/5 text-white/50 rounded">
+                                T3: {roleStat.tier3}
+                              </span>
+                              <span className="text-white/30 text-[10px]">{isExpanded ? '▲' : '▼'}</span>
+                            </div>
+                          </button>
+
+                          {isExpanded && topProviders.length > 0 && (
+                            <div className="border-t border-white/[0.06] bg-black/20">
+                              <div className="px-3 py-1.5 text-[8px] uppercase tracking-wider text-white/30">
+                                Top 10 by Quality Score
+                              </div>
+                              <div className="max-h-[200px] overflow-y-auto">
+                                {topProviders.map((provider, idx) => (
+                                  <div
+                                    key={provider.domain}
+                                    className="px-3 py-2 border-t border-white/[0.03] hover:bg-white/[0.02]"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[9px] text-white/50 w-4">{idx + 1}.</span>
+                                        <span className="text-[10px] text-white/80">{provider.name}</span>
+                                        <span className={`text-[7px] px-1 py-0.5 rounded ${getTierStyle(provider.tier)}`}>
+                                          {getTierLabel(provider.tier)}
+                                        </span>
+                                      </div>
+                                      <span className="text-[9px] text-white/40">
+                                        Score: {provider.qualityScore}
+                                      </span>
+                                    </div>
+                                    {provider.rankingReason.length > 0 && (
+                                      <div className="text-[8px] text-white/30 mt-1 pl-6">
+                                        {provider.rankingReason.slice(0, 2).join(' • ')}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Demand rotation memory - minimal status only */}
+          {(() => {
+            const stats = getDemandPoolStats(trustedDemandPools);
+            const totalTracked = Object.values(stats).reduce((sum, s) => sum + s.total, 0);
+            if (totalTracked === 0) return null;
+
+            return (
+              <div className="text-[9px] text-white/25 mb-4">
+                Rotation memory: {totalTracked} demand companies tracked
+              </div>
+            );
+          })()}
+
+          {/* Work Owner Targeting */}
+          <div className="mb-4">
+            <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">👤 Find the Right Person</div>
+            <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+              <div className="text-[9px] text-white/40 mb-3">
+                Skip this if you're not sure. Defaults work fine.
+              </div>
+              <div className="text-[10px] text-white/50 mb-3 leading-relaxed">
+                We find people who do the work, not just have the title.
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+                    Departments
+                  </label>
+                  <textarea
+                    value={settings.workOwnerDepartments}
+                    onChange={(e) => setSettings({ ...settings, workOwnerDepartments: e.target.value })}
+                    placeholder="finance, fp&a, operations, strategy"
+                    rows={2}
+                    className="w-full bg-black/40 text-white text-[11px] px-2.5 py-2 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[9px] uppercase tracking-wider text-white/40 mb-1 block">
+                    Keywords
+                  </label>
+                  <textarea
+                    value={settings.workOwnerKeywords}
+                    onChange={(e) => setSettings({ ...settings, workOwnerKeywords: e.target.value })}
+                    placeholder="forecast, financial model, budget, variance"
+                    rows={2}
+                    className="w-full bg-black/40 text-white text-[11px] px-2.5 py-2 rounded-md border border-white/10 hover:border-white/20 focus:border-blue-500/50 focus:outline-none transition-colors resize-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+
+          {/* Delivery Row */}
+          <div>
+            <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Send Emails</div>
+            <div className="bg-[#111] rounded-lg border border-white/5 p-4">
+              <div className="text-[9px] text-white/40 mb-3">
+                This is required. Emails go out through Instantly.
+              </div>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h2 className="text-[11px] font-medium text-white/90">Instantly.ai</h2>
+                  <div className="text-[8px] text-white/30 mt-0.5">Your emails go here</div>
+                </div>
+                <div className={`text-[8px] px-1.5 py-0.5 rounded ${deliveryReady ? 'bg-white/[0.08] text-white/70' : 'bg-white/5 text-white/30'}`}>
+                  {deliveryReady ? 'Ready' : 'Setup Required'}
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <Input
+                  label="Instantly API Key"
+                  value={settings.instantlyApiKey}
+                  onChange={(val) => setSettings({ ...settings, instantlyApiKey: val })}
+                  placeholder="Your Instantly key"
+                  type="password"
+                />
+                <Input
+                  label="Demand Campaign ID"
+                  value={settings.instantlyCampaignDemand}
+                  onChange={(val) => setSettings({ ...settings, instantlyCampaignDemand: val })}
+                  placeholder="Companies that need help"
+                />
+                <Input
+                  label="Supply Campaign ID"
+                  value={settings.instantlyCampaignSupply}
+                  onChange={(val) => setSettings({ ...settings, instantlyCampaignSupply: val })}
+                  placeholder="Providers you connect"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Auto-Reply Toggle */}
+          <AutoReplyToggle />
+        </div>
+      </div>
+
+      {/* Footer Action Bar */}
+      <div className="px-6 py-3 border-t border-white/5 flex-shrink-0">
+        <div className="max-w-[1400px] mx-auto flex items-center justify-between">
+          <div className="text-[9px] text-white/30">
+            {error && <span className="text-white/50">{error}</span>}
+            {!error && 'URLs used verbatim • No query modification'}
+          </div>
+          <button
+            onClick={saveSettings}
+            className={`px-4 py-1.5 rounded-md text-[11px] font-medium transition-all ${
+              saveSuccess
+                ? 'bg-white/20 text-white/80 border border-white/30'
+                : 'bg-white text-black hover:bg-white/90'
+            }`}
+          >
+            {saveSuccess ? (
+              <span className="flex items-center gap-1.5">
+                <Check size={12} />
+                Saved
+              </span>
+            ) : (
+              'Save Settings'
+            )}
+          </button>
+        </div>
+      </div>
+
+      <Dock />
+    </div>
+  );
+}
+
+export default Settings;

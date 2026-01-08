@@ -11,6 +11,15 @@ import {
 import type { SupplyContact } from './services/ApolloSupplyEnrichmentService';
 import type { SupplyCompany } from './services/SupplySignalsClient';
 import { cleanCompanyName } from './services/IntroBuilder';
+import type { PressureDetectionResult } from './pressure/PressureDetector';
+import { humanizeRoleType } from './services/PressureWiringService';
+import {
+  TrustedSupplyPools,
+  getPoolEntry,
+  getTierLabel,
+  getTierStyle
+} from './services/TrustedSupplyPools';
+import type { TrustedDemandPools } from './services/TrustedDemandPools';
 
 type OutboundChannel = 'email' | 'linkedin' | 'manual';
 type SendState = 'not_sent' | 'sent' | 'replied';
@@ -48,6 +57,16 @@ interface PersonContactCardProps {
   onConfirmAsSupplier?: () => void;
   companyName?: string;
   companyDomain?: string;
+  // Pressure detection for contextual narration
+  pressureDetection?: PressureDetectionResult | null;
+  // Trusted supply pools for tier display
+  trustedSupplyPools?: TrustedSupplyPools;
+  // Trusted demand pools for tier display
+  trustedDemandPools?: TrustedDemandPools;
+  // Rotation applied - when provider was rotated to avoid overuse
+  rotationApplied?: boolean;
+  // Hide individual send buttons when batch mode is active
+  hideSendButtons?: boolean;
 }
 
 function getStatusBadge(status: EnrichmentStatus) {
@@ -111,14 +130,19 @@ export function PersonContactCard({
   demandIntro,
   onConfirmAsSupplier,
   companyName,
-  companyDomain
+  companyDomain,
+  pressureDetection,
+  trustedSupplyPools,
+  trustedDemandPools,
+  rotationApplied = false,
+  hideSendButtons = false
 }: PersonContactCardProps) {
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<OutboundChannel>('email');
   const [sendState, setSendState] = useState<SendState>('not_sent');
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [showProviderPicker, setShowProviderPicker] = useState(false);
+  // Provider selection now handled by Route To cards in MatchingEngineV3
 
   useEffect(() => {
     if (personData?.email) {
@@ -224,12 +248,12 @@ export function PersonContactCard({
           {/* DEMAND CONTACT - person at hiring company */}
           <div className="bg-white/[0.02] rounded-lg p-2.5 border border-white/[0.04]">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[9px] uppercase tracking-wider text-white/35">Company</span>
+              <span className="text-[9px] uppercase tracking-wider text-white/40">Company</span>
               {outboundReadiness === 'ready' && (
-                <span className="text-[8px] px-1.5 py-0.5 rounded text-white/50 bg-white/[0.04]">●</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded text-white/50 bg-white/[0.04]">●</span>
               )}
               {outboundReadiness === 'needs_review' && (
-                <span className="text-[8px] px-1.5 py-0.5 rounded text-white/50 bg-white/[0.06]">◐</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded text-white/50 bg-white/[0.06]">◐</span>
               )}
             </div>
             {personData.name ? (
@@ -246,27 +270,52 @@ export function PersonContactCard({
           {/* SUPPLY CONTACT - person at provider company */}
           <div className="bg-white/[0.02] rounded-lg p-2.5 border border-white/[0.04] relative">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[9px] uppercase tracking-wider text-white/35">Provider</span>
+              <span className="text-[9px] uppercase tracking-wider text-white/40">Provider</span>
               {isEnrichingSupply && (
-                <span className="text-[8px] px-1.5 py-0.5 rounded text-white/40 bg-white/[0.04]">...</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded text-white/40 bg-white/[0.04]">...</span>
               )}
               {supplyContact?.email && !isEnrichingSupply && (
-                <span className="text-[8px] px-1.5 py-0.5 rounded text-white/50 bg-white/[0.04]">●</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded text-white/50 bg-white/[0.04]">●</span>
               )}
             </div>
 
-            {/* Provider selector - shows matched provider */}
+            {/* Provider selector - shows matched provider (selection via Route To cards above) */}
             {selectedSupply && (
               <div className="mb-1.5 relative">
-                <button
-                  onClick={() => alternativeSupply.length > 0 && setShowProviderPicker(!showProviderPicker)}
-                  className={`text-[9px] text-white/60 truncate block text-left ${alternativeSupply.length > 0 ? 'hover:text-white/80 cursor-pointer' : ''}`}
-                >
-                  {cleanCompanyName(supplyContact?.company || selectedSupply.name)}
-                  {alternativeSupply.length > 0 && <span className="text-white/25 ml-1">▾</span>}
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-white/60 truncate block text-left">
+                    {cleanCompanyName(supplyContact?.company || selectedSupply.name)}
+                  </span>
+                  {/* Strong match label - shown when quality ranked */}
+                  {selectedSupply.qualityScore !== undefined && (
+                    <span
+                      className="text-[9px] px-1 py-0.5 bg-emerald-500/10 text-emerald-400/80 rounded whitespace-nowrap"
+                      title={selectedSupply.rankingReason?.join(' • ') || 'Strong match for this role'}
+                    >
+                      Strong match
+                    </span>
+                  )}
+                  {/* Trusted badge + tier - shown for pool members */}
+                  {(() => {
+                    const roleType = pressureDetection?.roleType;
+                    const poolEntry = roleType && trustedSupplyPools
+                      ? getPoolEntry(trustedSupplyPools, roleType, selectedSupply.domain)
+                      : null;
+                    if (!poolEntry) return null;
+                    return (
+                      <>
+                        <span className="text-[9px] px-1 py-0.5 bg-white/5 text-white/50 rounded whitespace-nowrap">
+                          trusted
+                        </span>
+                        <span className={`text-[9px] px-1 py-0.5 rounded whitespace-nowrap ${getTierStyle(poolEntry.tier)}`}>
+                          {getTierLabel(poolEntry.tier)}
+                        </span>
+                      </>
+                    );
+                  })()}
+                </div>
                 {/* Show why matched - category label (clean, consistent) */}
-                <div className="text-[8px] text-white/40 truncate mt-0.5">
+                <div className="text-[9px] text-white/40 truncate mt-0.5">
                   {selectedSupply.hireCategory !== 'unknown'
                     ? `${selectedSupply.hireCategory.charAt(0).toUpperCase() + selectedSupply.hireCategory.slice(1)} staffing`
                     : /recruit|staffing|talent/i.test(selectedSupply.name)
@@ -276,92 +325,19 @@ export function PersonContactCard({
                         : 'Service Provider'
                   }
                 </div>
-
-                {/* Provider dropdown - TWO clear sections */}
-                {showProviderPicker && alternativeSupply.length > 0 && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-40"
-                      onClick={() => setShowProviderPicker(false)}
-                    />
-                    <div className="absolute left-0 top-full mt-1 w-60 bg-[#0a0a0a] border border-white/[0.08] rounded-lg shadow-2xl z-50 max-h-[300px] overflow-hidden flex flex-col">
-                      {(() => {
-                        // Split by confidence: high = Best Matches, medium/low = Worth a Try
-                        const bestMatches = alternativeSupply.filter(s => s.classification?.confidence === 'high');
-                        const otherOptions = alternativeSupply.filter(s => s.classification?.confidence !== 'high');
-
-                        return (
-                          <>
-                            {/* SECTION 1: Best Matches */}
-                            {bestMatches.length > 0 && (
-                              <div className="flex-shrink-0">
-                                <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-emerald-400/70 bg-emerald-500/5 border-b border-white/[0.06] font-medium sticky top-0">
-                                  Best Matches ({bestMatches.length})
-                                </div>
-                                <div className="max-h-[120px] overflow-y-auto custom-scroll">
-                                  {bestMatches.map((supply) => (
-                                    <button
-                                      key={supply.domain}
-                                      onClick={() => {
-                                        onSwitchSupply?.(supply);
-                                        setShowProviderPicker(false);
-                                      }}
-                                      className="w-full text-left px-3 py-2 hover:bg-white/[0.06] transition-colors border-b border-white/[0.02]"
-                                    >
-                                      <div className="text-[10px] text-white/80 truncate">{cleanCompanyName(supply.name)}</div>
-                                      <div className="text-[8px] text-white/35 truncate">
-                                        {supply.hireCategory !== 'unknown'
-                                          ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
-                                          : 'Service Provider'}
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* SECTION 2: Worth a Try - Purple theme, clearly separated */}
-                            {otherOptions.length > 0 && (
-                              <div className="flex-shrink-0">
-                                {/* Strong visual divider */}
-                                <div className="h-[2px] bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
-                                <div className="px-3 py-2 text-[9px] uppercase tracking-wider text-purple-400/70 bg-purple-500/5 border-b border-purple-500/10 font-medium sticky top-0">
-                                  Worth a Try ({otherOptions.length})
-                                </div>
-                                <div className="max-h-[120px] overflow-y-auto custom-scroll bg-purple-500/[0.02]">
-                                  {otherOptions.map((supply) => (
-                                    <button
-                                      key={supply.domain}
-                                      onClick={() => {
-                                        onSwitchSupply?.(supply);
-                                        setShowProviderPicker(false);
-                                      }}
-                                      className="w-full text-left px-3 py-2 hover:bg-purple-500/[0.08] transition-colors border-b border-purple-500/[0.04]"
-                                    >
-                                      <div className="text-[10px] text-purple-200/60 truncate">{cleanCompanyName(supply.name)}</div>
-                                      <div className="text-[8px] text-purple-300/30 truncate">
-                                        {supply.hireCategory !== 'unknown'
-                                          ? `${supply.hireCategory.charAt(0).toUpperCase() + supply.hireCategory.slice(1)} staffing`
-                                          : 'Service Provider'}
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Edge case: No providers at all */}
-                            {bestMatches.length === 0 && otherOptions.length === 0 && (
-                              <div className="px-3 py-4 text-[10px] text-white/30 text-center">
-                                No alternative providers
-                              </div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </>
+                {/* Pressure-based selection narration */}
+                {pressureDetection?.pressureDetected && (
+                  <div className="text-[9px] text-white/25 truncate mt-0.5">
+                    Matched to {humanizeRoleType(pressureDetection.roleType).toLowerCase()} pressure
+                  </div>
                 )}
+                {/* Rotation narration - shown when provider was rotated */}
+                {rotationApplied && (
+                  <div className="text-[9px] text-amber-400/50 truncate mt-0.5">
+                    Rotated to avoid overusing the same provider
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -615,8 +591,8 @@ export function PersonContactCard({
 
         </div>
 
-        {/* Deploy Section */}
-        {(hasDemandCampaign || hasSupplyCampaign) && (
+        {/* Deploy Section - hidden when batch mode active */}
+        {!hideSendButtons && (hasDemandCampaign || hasSupplyCampaign) && (
           <div className="mt-3 pt-3 border-t border-white/[0.04]">
             <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Send</div>
 
@@ -712,7 +688,7 @@ export function PersonContactCard({
     return (
       <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[9px] uppercase tracking-wider text-white/35">
+          <span className="text-[9px] uppercase tracking-wider text-white/40">
             Contact
           </span>
           <span className="text-[9px] text-white/40 flex items-center gap-1.5">
@@ -754,7 +730,7 @@ export function PersonContactCard({
             {onRetryWithAlternateTitles && (
               <button
                 onClick={onRetryWithAlternateTitles}
-                className="flex-1 text-[11px] px-3 py-2 rounded-xl bg-white/[0.08] text-white/70 hover:bg-white/[0.12] transition-all duration-350 font-medium"
+                className="flex-1 text-[11px] px-3 py-2 rounded-xl bg-white/[0.08] text-white/70 hover:bg-white/[0.12] transition-all duration-200 font-medium"
               >
                 Try other titles
               </button>
@@ -762,7 +738,7 @@ export function PersonContactCard({
             {onRefreshContact && (
               <button
                 onClick={onRefreshContact}
-                className="flex-1 text-[11px] px-3 py-2 rounded-xl bg-white/10 text-white/70 hover:bg-white/15 transition-all duration-350"
+                className="flex-1 text-[11px] px-3 py-2 rounded-xl bg-white/10 text-white/70 hover:bg-white/15 transition-all duration-200"
               >
                 Retry enrichment
               </button>
@@ -776,7 +752,7 @@ export function PersonContactCard({
   return (
     <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[9px] uppercase tracking-wider text-white/35">
+        <span className="text-[9px] uppercase tracking-wider text-white/40">
           Contact
         </span>
         {!enrichmentConfigured && (

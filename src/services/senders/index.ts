@@ -5,11 +5,11 @@
  * Called once at start of send flow.
  */
 
-export { SenderAdapter, SenderConfig, SendLeadParams, SendResult, SenderId } from './SenderAdapter';
+export type { SenderAdapter, SenderConfig, SendLeadParams, SendResult, SenderId } from './SenderAdapter';
 export { InstantlySender } from './InstantlySender';
 export { PlusvibeSender } from './PlusvibeSender';
 
-import { SenderAdapter, SenderId, SenderConfig } from './SenderAdapter';
+import type { SenderAdapter, SenderId, SenderConfig } from './SenderAdapter';
 import { InstantlySender } from './InstantlySender';
 import { PlusvibeSender } from './PlusvibeSender';
 

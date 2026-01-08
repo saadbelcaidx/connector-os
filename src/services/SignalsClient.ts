@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { processJobsDatasetForPressure } from './PressureWiringService';
 export { supabase };
 
 // =============================================================================
@@ -35,6 +36,38 @@ export function safeText(v: unknown): string {
     return safeText(o.name ?? o.title ?? o.value ?? o.label ?? "");
   }
   return "";
+}
+
+// =============================================================================
+// CSV DATA SUPPORT
+// =============================================================================
+
+const CSV_DEMAND_KEY = 'csv_demand_data';
+const CSV_SUPPLY_KEY = 'csv_supply_data';
+
+/**
+ * Get CSV data from localStorage if available
+ * Returns null if no CSV data exists
+ */
+export function getCsvData(type: 'demand' | 'supply'): any[] | null {
+  try {
+    const key = type === 'demand' ? CSV_DEMAND_KEY : CSV_SUPPLY_KEY;
+    const stored = localStorage.getItem(key);
+    if (!stored) return null;
+    const data = JSON.parse(stored);
+    if (!Array.isArray(data) || data.length === 0) return null;
+    console.log(`[CSV] Found ${data.length} ${type} records in localStorage`);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if CSV data is available for a given type
+ */
+export function hasCsvData(type: 'demand' | 'supply'): boolean {
+  return getCsvData(type) !== null;
 }
 
 // =============================================================================
@@ -80,15 +113,60 @@ export function normalizeToItems(payload: any): any[] {
  * Universal job field extractor - handles ANY job/company object shape from any Apify scraper
  * Works with: LinkedIn, Indeed, Wellfound, Glassdoor, ZipRecruiter, etc.
  */
+/**
+ * Detect if dataset is a curated contacts list vs a jobs/signals dataset.
+ * Curated list = has email + first_name (contacts to reach out to)
+ * Jobs list = has job_posted_date or apply_link (hiring signals)
+ */
+export function detectDatasetType(items: any[]): 'curated_list' | 'jobs_dataset' {
+  if (!items || items.length === 0) return 'jobs_dataset';
+
+  // Sample first 5 items
+  const sample = items.slice(0, 5);
+
+  let hasContactFields = 0;
+  let hasJobFields = 0;
+
+  for (const item of sample) {
+    // Contact indicators
+    if (item.email || item.personal_email) hasContactFields++;
+    if (item.first_name || item.firstName) hasContactFields++;
+    if (item.last_name || item.lastName) hasContactFields++;
+    if (item.linkedin && !item.job_posted_date) hasContactFields++;
+
+    // Job/signal indicators
+    if (item.job_posted_date || item.postedDate || item.datePosted) hasJobFields++;
+    if (item.apply_link || item.applyUrl || item.applicationUrl) hasJobFields++;
+    if (item.salary || item.salaryRange) hasJobFields++;
+    if (item.job_description && item.job_description.length > 200) hasJobFields++;
+  }
+
+  // If more contact indicators than job indicators, it's a curated list
+  const isCurated = hasContactFields > hasJobFields && hasContactFields >= sample.length;
+
+  console.log('[DatasetType] Detection:', { hasContactFields, hasJobFields, isCurated });
+
+  return isCurated ? 'curated_list' : 'jobs_dataset';
+}
+
 export function extractJobLikeFields(item: any): {
   companyName: string;
   companyUrl: string;
   title: string;
   locationText: string;
+  industry: string;
+  description: string;
+  techStack: string[];
+  existingContact?: {
+    email?: string;
+    name?: string;
+    title?: string;
+    linkedin?: string;
+  };
   raw: any;
 } {
   if (!item || typeof item !== "object") {
-    return { companyName: "", companyUrl: "", title: "", locationText: "", raw: item };
+    return { companyName: "", companyUrl: "", title: "", locationText: "", industry: "", description: "", techStack: [], raw: item };
   }
 
   // Company name candidates (order matters - most specific first)
@@ -151,11 +229,96 @@ export function extractJobLikeFields(item: any): {
     ? locationRaw.map(l => safeText(l)).filter(Boolean).join(", ")
     : safeText(locationRaw);
 
+  // Industry candidates
+  const industry = safeText(
+    item.industry ??
+    item.company_industry ??
+    item.companyIndustry ??
+    item.sector ??
+    item.category ??
+    item.vertical ??
+    item.company?.industry ??
+    ""
+  );
+
+  // Description candidates
+  const description = safeText(
+    item.description ??
+    item.company_description ??
+    item.companyDescription ??
+    item.about ??
+    item.summary ??
+    item.overview ??
+    item.company?.description ??
+    ""
+  );
+
+  // Tech stack candidates
+  const techRaw = item.tech_stack ?? item.techStack ?? item.technologies ?? item.tech ?? item.stack ?? [];
+  const techStack = Array.isArray(techRaw)
+    ? techRaw.map(t => safeText(t)).filter(Boolean)
+    : safeText(techRaw).split(',').map(t => t.trim()).filter(Boolean);
+
+  // =================================================================
+  // EXISTING CONTACT - Extract email/name if dataset already has them
+  // This saves API calls by using pre-existing contact data
+  // =================================================================
+  const contactEmail = safeText(
+    item.email ??
+    item.personal_email ??
+    item.personalEmail ??
+    item.work_email ??
+    item.workEmail ??
+    item.contact_email ??
+    item.contactEmail ??
+    ""
+  );
+
+  const firstName = safeText(item.first_name ?? item.firstName ?? "");
+  const lastName = safeText(item.last_name ?? item.lastName ?? "");
+  const fullName = (firstName && lastName) ? `${firstName} ${lastName}` : (firstName || lastName || safeText(
+    item.full_name ??
+    item.fullName ??
+    item.contact_name ??
+    item.contactName ??
+    item.name ??
+    ""
+  ));
+
+  const contactTitle = safeText(
+    item.contact_title ??
+    item.contactTitle ??
+    item.person_title ??
+    item.personTitle ??
+    ""
+  );
+
+  const linkedin = safeText(
+    item.linkedin ??
+    item.linkedin_url ??
+    item.linkedinUrl ??
+    item.person_linkedin_url ??
+    item.personLinkedinUrl ??
+    ""
+  );
+
+  // Only include existingContact if we have at least an email
+  const existingContact = contactEmail ? {
+    email: contactEmail,
+    name: fullName || undefined,
+    title: contactTitle || undefined,
+    linkedin: linkedin || undefined,
+  } : undefined;
+
   return {
     companyName: companyName.trim() || "Unknown Company",
     companyUrl: companyUrl.trim(),
     title: title.trim() || "Role",
     locationText: locationText.trim(),
+    industry: industry.trim(),
+    description: description.trim(),
+    techStack,
+    existingContact,
     raw: item
   };
 }
@@ -185,14 +348,36 @@ export interface SignalData {
   rawPayload?: any;
 }
 
+// =============================================================================
+// PAGINATION
+// =============================================================================
+
+/**
+ * Batch sizes for "load more" functionality
+ * No default cap - users control their own datasets
+ */
+export const FETCH_LIMITS = {
+  JOBS_BATCH: 50,         // Each "load more" batch
+  SUPPLY_BATCH: 50,       // Each "load more" for supply
+} as const;
+
+export interface FetchOptions {
+  limit?: number;
+  offset?: number;
+}
+
 export interface SignalsConfig {
   apiKey: string;
+  // Apify
+  apifyToken?: string;  // Apify API token for authentication
   // Demand - Jobs (Apify)
-  jobsApiUrl?: string;  // Apify dataset URL for demand companies
+  demandDatasetId?: string;  // Apify dataset ID for demand companies
+  jobsApiUrl?: string;  // DEPRECATED: Full URL (backwards compat)
   jobRoleFilter?: string;
   jobIndustryFilter?: string;
   // Supply - Providers (Apify)
-  supplyApiUrl?: string;  // Apify dataset URL for supply discovery
+  supplyDatasetId?: string;  // Apify dataset ID for supply discovery
+  supplyApiUrl?: string;  // DEPRECATED: Full URL (backwards compat)
   // Piloterr Funding
   piloterrApiKey?: string;
   fundingApiKey?: string;
@@ -224,22 +409,65 @@ const MOCK_DATA = {
 
 export async function loadSignalsConfig(): Promise<SignalsConfig> {
   try {
+    // Get authenticated user - required for RLS (defensive destructuring)
+    const authResult = await supabase.auth.getUser();
+    const user = authResult?.data?.user;
+
+    // Guest mode: read from localStorage instead of DB
+    if (!user?.id) {
+      const cached = localStorage.getItem('guest_settings');
+      console.log('[SignalsConfig] Guest mode, cached settings:', cached ? 'found' : 'NOT FOUND');
+      if (cached) {
+        const { settings } = JSON.parse(cached);
+        console.log('[SignalsConfig] Guest dataset config:', {
+          apifyToken: settings?.apifyToken ? 'SET' : 'MISSING',
+          demandDatasetId: settings?.demandDatasetId || 'MISSING',
+          supplyDatasetId: settings?.supplyDatasetId || 'MISSING',
+        });
+        return {
+          apiKey: '',
+          apifyToken: settings?.apifyToken || '',
+          demandDatasetId: settings?.demandDatasetId || '',
+          jobsApiUrl: '',
+          jobRoleFilter: '',
+          jobIndustryFilter: '',
+          supplyDatasetId: settings?.supplyDatasetId || '',
+          supplyApiUrl: '',
+          piloterrApiKey: '',
+          fundingApiKey: settings?.fundingApiKey || '',
+          fundingDaysSince: 30,
+          fundingInvestmentTypes: ['series_a', 'series_b'],
+          layoffsApiUrl: settings?.layoffsQueryUrl || '',
+          layoffsApiKey: settings?.layoffsApiKey || '',
+          hiringApiUrl: settings?.hiringQueryUrl || '',
+          hiringApiKey: settings?.hiringApiKey || '',
+          techApiUrl: settings?.techQueryUrl || '',
+          techApiKey: settings?.techApiKey || '',
+        };
+      }
+      console.log('[SignalsConfig] Guest mode with NO cached settings - returning empty config');
+    }
+
     const { data, error } = await supabase
       .from('operator_settings')
       .select('*')
-      .eq('user_id', 'default')
+      .eq('user_id', user?.id || '00000000-0000-0000-0000-000000000000')
       .maybeSingle();
 
     if (error) throw error;
 
     return {
       apiKey: data?.signals_api_key || '',
+      // Apify
+      apifyToken: data?.apify_token || '',
       // Demand - Jobs (Apify)
-      jobsApiUrl: data?.jobs_api_url || '',
+      demandDatasetId: data?.demand_dataset_id || '',
+      jobsApiUrl: data?.jobs_api_url || '',  // DEPRECATED: backwards compat
       jobRoleFilter: data?.job_role_filter || '',
       jobIndustryFilter: data?.job_industry_filter || '',
       // Supply - Providers (Apify)
-      supplyApiUrl: data?.supply_api_url || '',
+      supplyDatasetId: data?.supply_dataset_id || '',
+      supplyApiUrl: data?.supply_api_url || '',  // DEPRECATED: backwards compat
       // Funding
       piloterrApiKey: data?.piloterr_api_key || '',
       fundingApiKey: data?.funding_api_key || data?.piloterr_api_key || '',
@@ -257,9 +485,12 @@ export async function loadSignalsConfig(): Promise<SignalsConfig> {
     console.error('Error loading signals config:', error);
     return {
       apiKey: '',
+      apifyToken: '',
+      demandDatasetId: '',
       jobsApiUrl: '',
       jobRoleFilter: '',
       jobIndustryFilter: '',
+      supplyDatasetId: '',
       supplyApiUrl: '',
       piloterrApiKey: '',
       fundingApiKey: '',
@@ -276,19 +507,160 @@ export async function loadSignalsConfig(): Promise<SignalsConfig> {
 }
 
 // =============================================================================
+// APIFY URL BUILDER
+// =============================================================================
+
+/**
+ * Build Apify dataset URL from ID + token
+ * Backwards compatible - if already a full URL, returns as-is
+ */
+export function buildApifyUrl(datasetIdOrUrl: string, token?: string): string {
+  const input = (datasetIdOrUrl || '').trim();
+  if (!input) return '';
+
+  // If already a full URL, return as-is (backwards compatible)
+  if (input.startsWith('http://') || input.startsWith('https://')) {
+    return input;
+  }
+
+  // Construct URL from dataset ID
+  const base = `https://api.apify.com/v2/datasets/${input}/items`;
+  return token ? `${base}?token=${token}` : base;
+}
+
+// =============================================================================
 // APIFY JOBS FETCHER (Universal - works with ANY Apify scraper)
 // =============================================================================
 
 /**
- * Fetch jobs from ANY Apify dataset URL
- * Handles any JSON structure - LinkedIn, Indeed, Wellfound, etc.
+ * Build URL with pagination parameters for Apify
+ * Apify datasets support: ?limit=N&offset=M
  */
-export async function fetchJobSignals(config: SignalsConfig, providerNiche?: string): Promise<SignalData> {
-  const url = config.jobsApiUrl;
+function buildPaginatedUrl(baseUrl: string, options?: FetchOptions): string {
+  const url = new URL(baseUrl);
 
-  console.log('[Jobs][Apify] URL:', url || '(none)');
+  // Apify defaults to ~250 records if no limit specified - we want ALL records by default
+  // Use a high limit to get everything unless explicitly paginating
+  if (options?.limit) {
+    url.searchParams.set('limit', String(options.limit));
+  } else if (!options?.offset) {
+    // No limit and no offset = fetch ALL (use very high number)
+    url.searchParams.set('limit', '100000');
+  }
 
-  if (!url || url.trim() === '') {
+  if (options?.offset) {
+    url.searchParams.set('offset', String(options.offset));
+  }
+  return url.toString();
+}
+
+/**
+ * Process CSV data through the same pipeline as Apify data
+ * Reuses extractJobLikeFields and buildJobInsight
+ */
+function processCsvJobData(
+  csvData: any[],
+  config: SignalsConfig,
+  providerNiche?: string
+): SignalData & { hasMore?: boolean; totalAvailable?: number } {
+  try {
+    // Detect dataset type
+    const datasetType = detectDatasetType(csvData);
+    console.log('[Jobs][CSV] Dataset type:', datasetType);
+
+    // Extract job fields from each CSV row
+    const jobs = csvData.map(item => extractJobLikeFields(item));
+
+    // Apply filters if configured
+    let filteredJobs = jobs;
+
+    if (config.jobRoleFilter && config.jobRoleFilter.trim()) {
+      const filterKeywords = safeLower(config.jobRoleFilter).split(/[,\s]+/).filter(k => k.length > 0);
+      filteredJobs = filteredJobs.filter(job => {
+        const titleLower = safeLower(job.title);
+        return filterKeywords.some(kw => titleLower.includes(kw));
+      });
+      if (filteredJobs.length === 0) filteredJobs = jobs;
+    }
+
+    if (config.jobIndustryFilter && config.jobIndustryFilter.trim()) {
+      const filterKeywords = safeLower(config.jobIndustryFilter).split(/[,\s]+/).filter(k => k.length > 0);
+      const beforeFilter = filteredJobs.length;
+      filteredJobs = filteredJobs.filter(job => {
+        const combined = safeLower(job.companyName) + ' ' + safeLower(job.title);
+        return filterKeywords.some(kw => combined.includes(kw));
+      });
+      if (filteredJobs.length === 0) filteredJobs = jobs.slice(0, beforeFilter);
+    }
+
+    // Build insight from extracted data
+    const insight = buildJobInsight(filteredJobs, providerNiche);
+
+    console.log('[Jobs][CSV] Processed:', filteredJobs.length, 'records from CSV');
+
+    // Transform to format MatchingEngineV3 expects
+    const normalizedJobs = filteredJobs.map(job => ({
+      company: { name: job.companyName, url: job.companyUrl },
+      company_name: job.companyName,
+      employer_name: job.companyName,
+      job_title: job.title,
+      title: job.title,
+      location: job.locationText,
+      industry: job.industry,
+      description: job.description,
+      tech_stack: job.techStack,
+      existingContact: job.existingContact,
+      raw: job.raw,
+    }));
+
+    return {
+      value: `${filteredJobs.length} records from CSV`,
+      isLive: true,
+      lastUpdated: new Date().toISOString(),
+      metadata: insight,
+      rawPayload: { data: normalizedJobs, original: csvData, datasetType, source: 'csv' },
+    };
+  } catch (error) {
+    console.error('[Jobs][CSV] Processing failed:', error);
+    return {
+      value: `CSV Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      isLive: false,
+      rawPayload: null,
+    };
+  }
+}
+
+/**
+ * Fetch jobs from ANY Apify dataset URL OR CSV upload
+ * Handles any JSON structure - LinkedIn, Indeed, Wellfound, etc.
+ * Priority: CSV data > Apify dataset
+ */
+export async function fetchJobSignals(
+  config: SignalsConfig,
+  providerNiche?: string,
+  options?: FetchOptions
+): Promise<SignalData & { hasMore?: boolean; totalAvailable?: number }> {
+  // Check for CSV data first (takes priority over Apify)
+  const csvData = getCsvData('demand');
+  if (csvData && csvData.length > 0) {
+    console.log('[Jobs][CSV] Using CSV data:', csvData.length, 'records');
+    return processCsvJobData(csvData, config, providerNiche);
+  }
+
+  // Build URL from dataset ID + token, or use legacy URL
+  const baseUrl = config.demandDatasetId
+    ? buildApifyUrl(config.demandDatasetId, config.apifyToken)
+    : config.jobsApiUrl;
+
+  // Only apply limit/offset if explicitly specified
+  const effectiveOptions: FetchOptions = {
+    limit: options?.limit,
+    offset: options?.offset ?? 0,
+  };
+
+  console.log('[Jobs][Apify] URL:', baseUrl || '(none)', 'Limit:', effectiveOptions.limit || 'all', 'Offset:', effectiveOptions.offset);
+
+  if (!baseUrl || baseUrl.trim() === '') {
     console.log('[Jobs][Apify] No URL configured');
     return {
       value: MOCK_DATA.jobs,
@@ -298,25 +670,120 @@ export async function fetchJobSignals(config: SignalsConfig, providerNiche?: str
   }
 
   try {
+    const url = buildPaginatedUrl(baseUrl, effectiveOptions);
     console.log('[Jobs][Apify] Fetching:', url);
 
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      console.error(`[Jobs][Apify] HTTP ${response.status}`);
+    let response;
+    try {
+      response = await fetch(url);
+    } catch (fetchErr) {
+      console.warn('[Jobs][Apify] Fetch failed (network error):', fetchErr);
       return {
-        value: `Error: HTTP ${response.status}`,
+        value: 'Network error fetching jobs',
         isLive: false,
         rawPayload: null,
       };
     }
 
-    const rawData = await response.json();
-    console.log('[Jobs][Apify] Response received');
+    if (!response || !response.ok) {
+      console.error(`[Jobs][Apify] HTTP ${response?.status || 'unknown'}`);
+      return {
+        value: `Error: HTTP ${response?.status || 'unknown'}`,
+        isLive: false,
+        rawPayload: null,
+      };
+    }
 
-    // Normalize to array of items
-    const items = normalizeToItems(rawData);
+    // Defensive JSON parsing
+    let rawData;
+    try {
+      rawData = await response.json();
+    } catch (jsonErr) {
+      console.warn('[Jobs][Apify] JSON parse failed:', jsonErr);
+      return {
+        value: 'Invalid JSON response from Apify',
+        isLive: false,
+        rawPayload: null,
+      };
+    }
+
+    console.log('[Jobs][Apify] Response received, type:', typeof rawData);
+
+    // Defensive normalization - never crash
+    let items: any[] = [];
+    try {
+      items = normalizeToItems(rawData);
+      if (!Array.isArray(items)) {
+        console.warn('[Jobs][Apify] normalizeToItems returned non-array, using []');
+        items = [];
+      }
+    } catch (normErr) {
+      console.warn('[Jobs][Apify] Normalization failed:', normErr);
+      items = [];
+    }
+
     console.log('[Jobs][Apify] Normalized items:', items.length);
+
+    // Detect dataset type (curated contacts list vs jobs/signals)
+    const datasetType = detectDatasetType(items);
+    console.log('[Jobs][Apify] Dataset type:', datasetType);
+
+    // === PRESSURE DETECTION WIRING ===
+    // Run ONCE after real job items exist - MUST NOT block or break job fetch
+    if (items.length > 0) {
+      try {
+        console.log('[Pressure] ran with', items.length, 'jobs');
+        const pressureResult = processJobsDatasetForPressure(items);
+        console.log('[Jobs][Apify] Pressure detection:', {
+          detected: pressureResult.detection.pressureDetected,
+          roleType: pressureResult.detection.roleType,
+          confidence: pressureResult.detection.confidence
+        });
+
+        // Fire-and-forget Supabase persist - ultra-defensive, never crashes
+        (async () => {
+          try {
+            // Get authenticated user - required for RLS (ultra-defensive)
+            let userId = 'default';
+            try {
+              const authResult = await supabase.auth.getUser();
+              userId = authResult?.data?.user?.id || '00000000-0000-0000-0000-000000000000';
+            } catch (authErr) {
+              console.warn('[Pressure] Auth check failed, using default:', authErr);
+            }
+
+            // Wrap Supabase call in its own try-catch
+            let updateResult;
+            try {
+              updateResult = await supabase
+                .from('operator_settings')
+                .update({
+                  synthesized_filters: pressureResult.filters,
+                  pressure_detection: pressureResult.detection,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('user_id', userId);
+            } catch (updateErr) {
+              console.warn('[Pressure] Supabase update threw:', updateErr);
+              return;
+            }
+
+            // Defensive access to result
+            const error = updateResult?.error;
+            if (error) {
+              console.warn('[Pressure] Failed to persist:', error?.message || String(error));
+            } else {
+              console.log('[Pressure] Persisted to Supabase for user:', userId);
+            }
+          } catch (e) {
+            console.warn('[Pressure] Unexpected persistence error:', e);
+          }
+        })();
+      } catch (pressureError) {
+        console.warn('[Pressure] Detection failed (non-fatal):', pressureError);
+      }
+    }
+    // === END PRESSURE DETECTION WIRING ===
 
     if (items.length === 0) {
       return {
@@ -360,6 +827,7 @@ export async function fetchJobSignals(config: SignalsConfig, providerNiche?: str
     console.log('[Jobs][Apify] Processed:', filteredJobs.length, 'jobs from', insight.companySummary);
 
     // Transform to format MatchingEngineV3 expects
+    // IMPORTANT: Include existingContact, industry, description, techStack - these save API calls
     const normalizedJobs = filteredJobs.map(job => ({
       company: { name: job.companyName, url: job.companyUrl },
       company_name: job.companyName,
@@ -367,6 +835,11 @@ export async function fetchJobSignals(config: SignalsConfig, providerNiche?: str
       job_title: job.title,
       title: job.title,
       location: job.locationText,
+      industry: job.industry,
+      description: job.description,
+      tech_stack: job.techStack,
+      // Pre-extracted contact from dataset - skip enrichment if available
+      existingContact: job.existingContact,
       raw: job.raw,
     }));
 
@@ -375,7 +848,7 @@ export async function fetchJobSignals(config: SignalsConfig, providerNiche?: str
       isLive: true,
       lastUpdated: new Date().toISOString(),
       metadata: insight,
-      rawPayload: { data: normalizedJobs, original: rawData },
+      rawPayload: { data: normalizedJobs, original: rawData, datasetType },
     };
   } catch (error) {
     console.error('[Jobs][Apify] Fetch failed:', error);

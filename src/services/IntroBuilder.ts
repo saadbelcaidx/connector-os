@@ -12,8 +12,17 @@ import type { SupplyCompany } from './SupplySignalsClient';
 
 /**
  * Clean company name for professional appearance in intros
- * Removes: LLC, Inc, Corp, Ltd, Co, Limited, Corporation, etc.
- * Also removes HTML tags, special characters, and malformed text
+ *
+ * Strategy:
+ * - ABBREVIATE: "Limited Partners" → "LP", "Limited Partnership" → "LP"
+ * - REMOVE: LLC, Corp, Corporation, Company, PLC, GmbH (noise)
+ * - KEEP SHORT: If already short (LP, Inc, Ltd), keep as-is
+ *
+ * Examples:
+ * - "MyoProcess Limited Partners" → "MyoProcess LP"
+ * - "Acme Corporation LLC" → "Acme"
+ * - "TechFlow Inc." → "TechFlow"
+ * - "Global Solutions Limited" → "Global Solutions"
  */
 export function cleanCompanyName(name: string): string {
   if (!name) return name;
@@ -27,26 +36,53 @@ export function cleanCompanyName(name: string): string {
   cleaned = cleaned.replace(/Pro\/source/gi, '');
   cleaned = cleaned.replace(/\s*\/\s*source/gi, '');
 
-  // Remove common business suffixes (case-insensitive)
-  const suffixes = [
+  // STEP 1: Abbreviate long forms FIRST (before removal)
+  const abbreviations: [RegExp, string][] = [
+    // "Limited Partners" or "Limited Partnership" → "LP"
+    [/,?\s*Limited\s+Partner(s|ship)?\.?$/i, ' LP'],
+    // "General Partners" or "General Partnership" → "GP"
+    [/,?\s*General\s+Partner(s|ship)?\.?$/i, ' GP'],
+    // "Professional Limited Liability Company" → remove (too long)
+    [/,?\s*Professional\s+Limited\s+Liability\s+Company\.?$/i, ''],
+    // "Limited Liability Partnership" → "LLP"
+    [/,?\s*Limited\s+Liability\s+Partnership\.?$/i, ' LLP'],
+    // "Limited Liability Company" → remove (same as LLC)
+    [/,?\s*Limited\s+Liability\s+Company\.?$/i, ''],
+  ];
+
+  for (const [pattern, replacement] of abbreviations) {
+    cleaned = cleaned.replace(pattern, replacement);
+  }
+
+  // STEP 2: Remove noise suffixes completely
+  const removeCompletely = [
     /,?\s*(LLC|L\.L\.C\.|L\.L\.C)\.?$/i,
     /,?\s*(Inc|INC|Incorporated)\.?$/i,
     /,?\s*(Corp|Corporation|CORP)\.?$/i,
     /,?\s*(Ltd|LTD|Limited)\.?$/i,
     /,?\s*(Co|CO|Company)\.?$/i,
-    /,?\s*(LP|L\.P\.|LLP|L\.L\.P\.)\.?$/i,
     /,?\s*(PLC|plc)\.?$/i,
-    /,?\s*(GmbH|AG|S\.A\.|SA)\.?$/i,
-    /,?\s*(Pty|PTY)\.?$/i,
+    /,?\s*(GmbH|AG|S\.A\.|SA|S\.A|BV|B\.V\.)\.?$/i,
+    /,?\s*(Pty|PTY|Pty\s*Ltd)\.?$/i,
     /,?\s*(PLLC|P\.L\.L\.C\.)\.?$/i,
+    /,?\s*(N\.V\.|NV)\.?$/i,
+    /,?\s*(Holdings?)\.?$/i,
+    /,?\s*(Group)\.?$/i,
+    /,?\s*(International|Intl)\.?$/i,
   ];
 
-  for (const suffix of suffixes) {
+  for (const suffix of removeCompletely) {
     cleaned = cleaned.replace(suffix, '');
   }
 
+  // STEP 3: Keep LP, LLP, GP if they're meaningful (already abbreviated)
+  // These were added in step 1, so they stay
+
   // Clean up multiple spaces and trim
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  // Remove trailing punctuation
+  cleaned = cleaned.replace(/[,.\-_]+$/, '').trim();
 
   // If name became empty or too short after cleaning, return original
   if (cleaned.length < 2) {

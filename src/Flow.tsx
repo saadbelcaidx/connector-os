@@ -11,6 +11,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Workflow, ArrowLeft } from 'lucide-react';
 import Dock from './Dock';
+import { useAuth } from './AuthContext';
+import { supabase } from './lib/supabase';
 
 // New architecture
 import { validateDataset, normalizeDataset, NormalizedRecord, Schema } from './schemas';
@@ -217,70 +219,112 @@ export default function Flow() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const abortRef = useRef(false);
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
 
-  // Load settings from localStorage (guest mode)
+  // Load settings (auth-aware: Supabase for logged-in, localStorage for guests)
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('guest_settings');
-      if (!stored) {
-        console.log('[Flow] No settings found');
+    const loadSettings = async () => {
+      try {
+        // Helper to build AIConfig from raw settings
+        const buildAIConfig = (s: any): AIConfig | null => {
+          if (s.azureApiKey && s.azureEndpoint) {
+            return {
+              enabled: true,
+              provider: 'azure',
+              model: s.azureDeployment || 'gpt-4o-mini',
+              apiKey: s.azureApiKey,
+              endpoint: s.azureEndpoint,
+              deployment: s.azureDeployment,
+            };
+          } else if (s.openaiApiKey) {
+            return {
+              enabled: true,
+              provider: 'openai',
+              model: s.aiModel || 'gpt-4o-mini',
+              apiKey: s.openaiApiKey,
+            };
+          } else if (s.claudeApiKey) {
+            return {
+              enabled: true,
+              provider: 'anthropic',
+              model: s.aiModel || 'claude-3-haiku-20240307',
+              apiKey: s.claudeApiKey,
+            };
+          }
+          return null;
+        };
+
+        // AUTHENTICATED: Load from Supabase + localStorage for AI keys
+        if (isAuthenticated && user?.id) {
+          console.log('[Flow] Loading settings from Supabase (authenticated)');
+
+          const { data } = await supabase
+            .from('operator_settings')
+            .select('*')
+            .eq('user_id', user.id)
+            .maybeSingle();
+
+          // AI settings always from localStorage (sensitive keys)
+          const aiSettings = localStorage.getItem('ai_settings');
+          const ai = aiSettings ? JSON.parse(aiSettings) : {};
+
+          const aiConfig = buildAIConfig(ai);
+
+          setSettings({
+            apifyToken: data?.apify_token || '',
+            demandDatasetId: data?.demand_dataset_id || '',
+            supplyDatasetId: data?.supply_dataset_id || '',
+            apolloApiKey: data?.enrichment_api_key || '',
+            anymailApiKey: data?.anymail_finder_api_key || '',
+            ssmApiKey: data?.ssm_api_key || '',
+            instantlyApiKey: data?.instantly_api_key || '',
+            demandCampaignId: data?.instantly_campaign_demand || '',
+            supplyCampaignId: data?.instantly_campaign_supply || '',
+            aiConfig,
+          });
+
+          console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
+          return;
+        }
+
+        // GUEST: Load from localStorage (existing behavior)
+        console.log('[Flow] Loading settings from localStorage (guest)');
+        const stored = localStorage.getItem('guest_settings');
+        if (!stored) {
+          console.log('[Flow] No settings found');
+          setSettings({ aiConfig: null });
+          return;
+        }
+
+        const parsed = JSON.parse(stored);
+        const s = parsed.settings || parsed || {};
+
+        console.log('[Flow] Loaded settings:', Object.keys(s));
+
+        const aiConfig = buildAIConfig(s);
+
+        setSettings({
+          apifyToken: s.apifyToken,
+          demandDatasetId: s.demandDatasetId,
+          supplyDatasetId: s.supplyDatasetId,
+          apolloApiKey: s.apolloApiKey,
+          anymailApiKey: s.anymailApiKey,
+          ssmApiKey: s.ssmApiKey,
+          instantlyApiKey: s.instantlyApiKey,
+          demandCampaignId: s.instantlyCampaignDemand,
+          supplyCampaignId: s.instantlyCampaignSupply,
+          aiConfig,
+        });
+
+        console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
+      } catch (e) {
+        console.error('[Flow] Settings load error:', e);
         setSettings({ aiConfig: null });
-        return;
       }
+    };
 
-      const parsed = JSON.parse(stored);
-      const s = parsed.settings || parsed || {};
-
-      console.log('[Flow] Loaded settings:', Object.keys(s));
-
-      // Build AIConfig from settings (matches Settings.tsx key names)
-      let aiConfig: AIConfig | null = null;
-
-      // Check which AI provider is configured
-      if (s.azureApiKey && s.azureEndpoint) {
-        aiConfig = {
-          enabled: true,
-          provider: 'azure',
-          model: s.azureDeployment || 'gpt-4o-mini',
-          apiKey: s.azureApiKey,
-          endpoint: s.azureEndpoint,
-          deployment: s.azureDeployment,
-        };
-      } else if (s.openaiApiKey) {
-        aiConfig = {
-          enabled: true,
-          provider: 'openai',
-          model: s.aiModel || 'gpt-4o-mini',
-          apiKey: s.openaiApiKey,
-        };
-      } else if (s.claudeApiKey) {
-        aiConfig = {
-          enabled: true,
-          provider: 'anthropic',
-          model: s.aiModel || 'claude-3-haiku-20240307',
-          apiKey: s.claudeApiKey,
-        };
-      }
-
-      setSettings({
-        apifyToken: s.apifyToken,
-        demandDatasetId: s.demandDatasetId,
-        supplyDatasetId: s.supplyDatasetId,
-        apolloApiKey: s.apolloApiKey,
-        anymailApiKey: s.anymailApiKey,
-        ssmApiKey: s.ssmApiKey,
-        instantlyApiKey: s.instantlyApiKey,
-        demandCampaignId: s.instantlyCampaignDemand,
-        supplyCampaignId: s.instantlyCampaignSupply,
-        aiConfig,
-      });
-
-      console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
-    } catch (e) {
-      console.error('[Flow] Settings parse error:', e);
-      setSettings({ aiConfig: null });
-    }
-  }, []);
+    loadSettings();
+  }, [isAuthenticated, user?.id]);
 
   // Auto-start when coming from Connector Hub (ref to avoid dependency issues)
   const hubAutoStartRef = useRef(false);
@@ -1091,6 +1135,7 @@ export default function Flow() {
       {/* Main content */}
       <div className="flex-1 flex items-center justify-center pb-24">
         <div className="w-full max-w-[520px] px-6">
+
           <AnimatePresence mode="wait">
 
           {/* UPLOAD / START */}

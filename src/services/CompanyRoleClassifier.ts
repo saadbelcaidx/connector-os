@@ -10,10 +10,67 @@
  */
 
 import { safeLower } from './SignalsClient';
+import type { DetectedNiche } from './AIService';
 
 export type CompanyRole = 'demand' | 'supply';
 
+/**
+ * @deprecated Prefer using DetectedNiche for niche-agnostic matching.
+ * HireCategory is maintained for backward compatibility with existing code.
+ */
 export type HireCategory = 'engineering' | 'sales' | 'marketing' | 'operations' | 'finance' | 'unknown';
+
+/**
+ * Adapter function to extract a HireCategory from DetectedNiche.
+ * Use this when calling legacy functions that still require HireCategory.
+ *
+ * @deprecated Prefer updating legacy functions to accept DetectedNiche directly.
+ */
+export function hireCategoryFromNiche(niche: DetectedNiche | null | undefined): HireCategory {
+  if (!niche?.niche) return 'unknown';
+
+  const nicheLower = niche.niche.toLowerCase();
+
+  // Map common niches to legacy categories
+  if (nicheLower.includes('recruit') || nicheLower.includes('hiring') || nicheLower.includes('talent')) {
+    // For recruiting, try to extract category from demandType
+    const demandLower = (niche.demandType || '').toLowerCase();
+    if (demandLower.includes('engineer') || demandLower.includes('developer') || demandLower.includes('tech')) {
+      return 'engineering';
+    }
+    if (demandLower.includes('sales') || demandLower.includes('revenue') || demandLower.includes('account')) {
+      return 'sales';
+    }
+    if (demandLower.includes('market') || demandLower.includes('growth')) {
+      return 'marketing';
+    }
+    if (demandLower.includes('ops') || demandLower.includes('operation') || demandLower.includes('hr')) {
+      return 'operations';
+    }
+    if (demandLower.includes('finance') || demandLower.includes('account') || demandLower.includes('cfo')) {
+      return 'finance';
+    }
+    return 'engineering'; // Default for recruiting niches
+  }
+
+  if (nicheLower.includes('venture') || nicheLower.includes('funding') || nicheLower.includes('investor')) {
+    return 'finance';
+  }
+
+  if (nicheLower.includes('sales') || nicheLower.includes('b2b') || nicheLower.includes('service')) {
+    return 'sales';
+  }
+
+  if (nicheLower.includes('tech') || nicheLower.includes('saas') || nicheLower.includes('software')) {
+    return 'engineering';
+  }
+
+  if (nicheLower.includes('real estate') || nicheLower.includes('property')) {
+    return 'operations';
+  }
+
+  return 'unknown';
+}
 
 export interface ClassificationResult {
   role: CompanyRole;

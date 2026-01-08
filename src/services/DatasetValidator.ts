@@ -49,6 +49,14 @@ export interface DatasetAnalysis {
 
   // Nested objects detected (e.g., hiring_contact)
   nestedObjects: string[];
+
+  // Enrichment cost estimation (Apollo: $59/mo = 2,500 credits, 1 credit = 1 verified email)
+  enrichmentEstimate: {
+    recordsNeedingEnrichment: number;
+    creditsRequired: number;
+    percentOfMonthlyBudget: number;  // Based on 2,500 credits/month
+    estimatedCost: number;           // Based on $0.024/credit ($59/2500)
+  };
 }
 
 // Field name patterns for auto-detection
@@ -303,6 +311,7 @@ export async function analyzeDataset(url: string): Promise<DatasetAnalysis> {
     percentages: { email: 0, name: 0, company: 0, domain: 0 },
     dataType: 'unknown',
     nestedObjects: [],
+    enrichmentEstimate: { recordsNeedingEnrichment: 0, creditsRequired: 0, percentOfMonthlyBudget: 0, estimatedCost: 0 },
   };
 
   // Basic URL validation
@@ -389,16 +398,33 @@ export async function analyzeDataset(url: string): Promise<DatasetAnalysis> {
     // Detect nested objects like hiring_contact
     const nestedObjects = detectNestedObjects(sampleRecords);
 
+    // Calculate enrichment cost estimate
+    // Apollo: $59/mo = 2,500 credits, 1 credit = 1 verified email
+    const MONTHLY_CREDITS = 2500;
+    const COST_PER_CREDIT = 0.024; // $59 / 2500
+    const recordsNeedingEnrichment = total - coverage.withEmail;
+    const creditsRequired = recordsNeedingEnrichment; // 1 credit per email
+    const percentOfMonthlyBudget = MONTHLY_CREDITS > 0 ? Math.round((creditsRequired / MONTHLY_CREDITS) * 100) : 0;
+    const estimatedCost = Math.round(creditsRequired * COST_PER_CREDIT * 100) / 100; // Round to 2 decimals
+
+    const enrichmentEstimate = {
+      recordsNeedingEnrichment,
+      creditsRequired,
+      percentOfMonthlyBudget,
+      estimatedCost,
+    };
+
     return {
       isValid: true,
       totalRecords: records.length,
-      sampleRecords: sampleRecords.slice(0, 3), // Return just 3 for preview
+      sampleRecords: sampleRecords.slice(0, 50), // Return 50 for pressure detection
       detectedFields,
       fieldMapping,
       coverage,
       percentages,
       dataType,
       nestedObjects,
+      enrichmentEstimate,
     };
 
   } catch (error: any) {

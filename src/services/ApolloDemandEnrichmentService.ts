@@ -15,6 +15,8 @@
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const APOLLO_PROXY_URL = `${SUPABASE_URL}/functions/v1/apollo-enrichment`;
 
+import type { DetectedNiche } from './AIService';
+
 export interface DemandContact {
   name: string;
   email: string;
@@ -397,11 +399,36 @@ async function enrichPersonEmail(apolloApiKey: string, personId: string): Promis
  * Get target titles AND hire category based on signal type and job category
  * Returns both so callers can pass the category to findDemandContact
  */
+/**
+ * Get demand-side contact titles for enrichment.
+ * NICHE-AWARE: Uses detectedNiche.contactTargets.demandTitles when available.
+ * Falls back to signal-based title detection for backwards compatibility.
+ */
 export function getDemandTargetTitlesAndCategory(
   signalType: string,
   jobCategory?: string,
-  signalSummary?: string
+  signalSummary?: string,
+  detectedNiche?: DetectedNiche | null
 ): { titles: string[]; hireCategory: DemandHireCategory } {
+  // NICHE-AWARE: Use niche-specific titles when available
+  if (detectedNiche?.contactTargets?.demandTitles?.length) {
+    console.log(`[DemandEnrichment] Using niche-based demand titles for "${detectedNiche.niche}":`, detectedNiche.contactTargets.demandTitles);
+    // Map niche to a sensible hireCategory (or use 'unknown' if no match)
+    const nicheToCategory: Record<string, DemandHireCategory> = {
+      'Recruitment': 'engineering',
+      'Venture/PE': 'funding',
+      'Real Estate': 'operations',
+      'Tech/SaaS': 'engineering',
+      'B2B Services': 'sales',
+    };
+    const hireCategory = nicheToCategory[detectedNiche.niche] || 'unknown';
+    return {
+      titles: detectedNiche.contactTargets.demandTitles,
+      hireCategory
+    };
+  }
+
+  // FALLBACK: Signal-based title detection (legacy behavior)
   const signalLower = signalType.toLowerCase();
   const categoryLower = (jobCategory || '').toLowerCase();
   const summaryLower = (signalSummary || '').toLowerCase();

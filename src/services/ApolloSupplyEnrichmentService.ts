@@ -11,6 +11,8 @@
  * IMPORTANT: Uses Supabase Edge Function proxy to avoid CORS issues with Apollo API.
  */
 
+import { getCachedContact, saveToCache } from './EnrichedContactsCache';
+
 // Get the Supabase URL and anon key from environment - this is where the Apollo proxy lives
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -530,6 +532,21 @@ export async function findSupplyContact(
 ): Promise<SupplyContact | null> {
   console.log(`[SupplyEnrichment] === Finding contact at ${connectorCompany} (${connectorDomain}) ===`);
 
+  // === PASS -1: Check shared cache (all users' previous enrichments) ===
+  const cached = await getCachedContact(connectorDomain);
+  if (cached?.email) {
+    console.log(`[SupplyEnrichment] ✓ CACHE HIT - skip Apollo for ${connectorDomain}: ${cached.email}`);
+    return {
+      name: cached.name || 'Contact',
+      email: cached.email,
+      title: cached.title || 'Contact',
+      linkedin: cached.linkedin,
+      company: connectorCompany,
+      domain: connectorDomain,
+      confidence: 85, // Good confidence from cache
+    };
+  }
+
   // === PASS 0: Check if Apify already has a usable contact ===
   if (existingContact) {
     console.log('[SupplyEnrichment] Apify provided existing contact:', existingContact);
@@ -652,6 +669,17 @@ export async function findSupplyContact(
           domain: actualDomain,
           confidence: score > 8 ? 95 : score > 5 ? 85 : score > 2 ? 75 : 60,
         };
+
+        // SAVE TO SHARED CACHE - all users benefit
+        saveToCache({
+          domain: actualDomain,
+          email,
+          name: supplyContact.name,
+          title: supplyContact.title,
+          linkedin: supplyContact.linkedin,
+          companyName: actualCompanyName,
+          source: 'apollo',
+        });
 
         console.log(`[SupplyEnrichment] === BEST MATCH: ${supplyContact.name} (${supplyContact.title}) @ ${supplyContact.company} ===`);
         console.log(`[SupplyEnrichment] Email: ${email}`);

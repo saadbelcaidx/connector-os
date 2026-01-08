@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Crown, LogOut, Shield, Zap, X, Check, Bell } from 'lucide-react';
+import { Crown, LogOut, Shield, Zap, X, Check, Bell, Globe } from 'lucide-react';
 import { useAuth, AccessTier, SAAS_MODE } from './AuthContext';
 import { getUnreadCount } from './services/NotificationsService';
 
 const TIER_COLORS: Record<AccessTier, string> = {
-  FREE: '#666666',
-  CORE: '#3A9CFF',
-  ADVANCED: '#26F7C7',
-  OPERATOR: '#FFD700',
+  FREE: 'rgba(255,255,255,0.4)',
+  CORE: 'rgba(255,255,255,0.6)',
+  ADVANCED: 'rgba(255,255,255,0.8)',
+  OPERATOR: 'rgba(255,255,255,0.9)',
 };
 
 const TIER_ICONS: Record<AccessTier, typeof Crown> = {
@@ -47,80 +47,59 @@ function UpgradeModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4"
-      style={{
-        background: 'rgba(0, 0, 0, 0.85)',
-        backdropFilter: 'blur(8px)',
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="bg-[#0C0C0C] rounded-[16px] p-8 border border-[#1C1C1C] max-w-4xl w-full relative"
-        style={{
-          boxShadow: '0 0 40px rgba(58, 156, 255, 0.2)',
-        }}
+        className="bg-[#0a0a0a] rounded-2xl p-6 border border-white/[0.08] max-w-3xl w-full relative"
+        style={{ boxShadow: '0 24px 48px rgba(0, 0, 0, 0.4)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-white text-opacity-40 hover:text-opacity-100 transition-opacity"
+          className="absolute top-4 right-4 text-white/30 hover:text-white/60 transition-colors"
         >
-          <X size={20} />
+          <X size={18} />
         </button>
 
-        <h2 className="text-[28px] font-medium text-white mb-2">Choose Your Tier</h2>
-        <p className="text-[14px] text-white text-opacity-60 mb-8">
-          Unlock more features and capabilities with a higher tier
+        <h2 className="text-xl font-medium text-white/90 mb-1">Choose Your Tier</h2>
+        <p className="text-[13px] text-white/40 mb-6">
+          Unlock more features with a higher tier
         </p>
 
-        <div className="grid md:grid-cols-4 gap-4">
+        <div className="grid md:grid-cols-4 gap-3">
           {(['FREE', 'CORE', 'ADVANCED', 'OPERATOR'] as AccessTier[]).map((tier) => {
             const Icon = TIER_ICONS[tier];
             return (
               <div
                 key={tier}
-                className="bg-[#0F0F0F] rounded-[12px] p-5 border transition-all duration-200 hover:scale-105"
-                style={{
-                  borderColor: `${TIER_COLORS[tier]}40`,
-                  boxShadow: `0 0 20px ${TIER_COLORS[tier]}10`,
-                }}
+                className="bg-white/[0.02] rounded-xl p-4 border border-white/[0.06] hover:border-white/[0.12] transition-all duration-200"
               >
                 <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center mb-3"
-                  style={{
-                    background: `${TIER_COLORS[tier]}20`,
-                    border: `1px solid ${TIER_COLORS[tier]}40`,
-                  }}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center mb-3"
+                  style={{ background: 'rgba(255, 255, 255, 0.04)' }}
                 >
-                  <Icon size={20} style={{ color: TIER_COLORS[tier] }} />
+                  <Icon size={16} style={{ color: TIER_COLORS[tier] }} />
                 </div>
-                <div
-                  className="text-[16px] font-medium mb-1"
-                  style={{ color: TIER_COLORS[tier] }}
-                >
+                <div className="text-[13px] font-medium text-white/80 mb-0.5">
                   {tier}
                 </div>
-                <div className="text-[11px] text-white text-opacity-40 mb-4">
+                <div className="text-[11px] text-white/40 mb-3">
                   {tier === 'FREE' && '$0/mo'}
                   {tier === 'CORE' && '$49/mo'}
                   {tier === 'ADVANCED' && '$99/mo'}
                   {tier === 'OPERATOR' && '$199/mo'}
                 </div>
-                <div className="space-y-2 mb-4">
+                <div className="space-y-1.5 mb-4">
                   {TIER_FEATURES[tier].map((feature, index) => (
-                    <div key={index} className="flex items-start gap-2">
-                      <Check size={12} style={{ color: TIER_COLORS[tier], marginTop: '2px' }} />
-                      <span className="text-[11px] text-white text-opacity-60 leading-tight">{feature}</span>
+                    <div key={index} className="flex items-start gap-1.5">
+                      <Check size={10} className="text-white/40 mt-0.5" />
+                      <span className="text-[10px] text-white/50 leading-tight">{feature}</span>
                     </div>
                   ))}
                 </div>
                 <button
-                  className="w-full h-[32px] rounded-lg text-[12px] font-medium transition-all duration-150"
-                  style={{
-                    background: `${TIER_COLORS[tier]}20`,
-                    color: TIER_COLORS[tier],
-                    border: `1px solid ${TIER_COLORS[tier]}40`,
-                  }}
+                  className="w-full py-1.5 rounded-lg text-[11px] font-medium bg-white/[0.06] text-white/60 hover:bg-white/[0.1] hover:text-white/80 transition-colors"
                 >
                   Select
                 </button>
@@ -129,8 +108,8 @@ function UpgradeModal({
           })}
         </div>
 
-        <div className="mt-6 text-center text-[11px] text-white text-opacity-30">
-          Contact admin@operatoros.dev to upgrade your account
+        <div className="mt-4 text-center text-[10px] text-white/25">
+          Contact admin@operatoros.dev to upgrade
         </div>
       </div>
     </div>
@@ -159,32 +138,7 @@ function AppHeader() {
   };
 
   if (!SAAS_MODE) {
-    return (
-      <div className="fixed top-6 right-6 z-40">
-        <button
-          onClick={() => navigate('/notifications')}
-          className="relative p-2 rounded-lg border border-[#1C1C1C] hover:border-[#26F7C7] transition-all duration-150"
-          style={{
-            background: 'rgba(12, 12, 12, 0.9)',
-            backdropFilter: 'blur(12px)',
-          }}
-        >
-          <Bell size={16} className="text-white opacity-60" />
-          {unreadCount > 0 && (
-            <div
-              className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-              style={{
-                background: '#26F7C7',
-                color: '#0A0A0A',
-                boxShadow: '0 0 12px rgba(38, 247, 199, 0.6)',
-              }}
-            >
-              {unreadCount > 9 ? '9+' : unreadCount}
-            </div>
-          )}
-        </button>
-      </div>
-    );
+    return null;
   }
 
   if (!isAuthenticated || !user) {
@@ -200,78 +154,63 @@ function AppHeader() {
 
   return (
     <>
-      <div className="fixed top-6 right-6 z-40 flex items-center gap-3">
-        <button
-          onClick={() => navigate('/notifications')}
-          className="relative p-2 rounded-lg border border-[#1C1C1C] hover:border-[#26F7C7] transition-all duration-150"
-          style={{
-            background: 'rgba(12, 12, 12, 0.9)',
-            backdropFilter: 'blur(12px)',
-          }}
-        >
-          <Bell size={16} className="text-white opacity-60" />
-          {unreadCount > 0 && (
-            <div
-              className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-              style={{
-                background: '#26F7C7',
-                color: '#0A0A0A',
-                boxShadow: '0 0 12px rgba(38, 247, 199, 0.6)',
-              }}
-            >
-              {unreadCount > 9 ? '9+' : unreadCount}
-            </div>
-          )}
-        </button>
-
+      <div className="fixed top-6 right-6 z-40 flex items-center gap-2">
         <div
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer hover:border-opacity-60 transition-all duration-150"
+          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/[0.08] cursor-pointer hover:border-white/[0.15] transition-all duration-200"
           style={{
-            background: 'rgba(12, 12, 12, 0.9)',
-            backdropFilter: 'blur(12px)',
-            borderColor: `${TIER_COLORS[user.tier]}40`,
-            boxShadow: `0 0 20px ${TIER_COLORS[user.tier]}15`,
+            background: 'rgba(12, 12, 12, 0.85)',
+            backdropFilter: 'blur(20px)',
           }}
           onClick={() => setShowUpgradeModal(true)}
         >
           <div
-            className="w-6 h-6 rounded flex items-center justify-center"
-            style={{
-              background: `${TIER_COLORS[user.tier]}20`,
-            }}
+            className="w-6 h-6 rounded-lg flex items-center justify-center"
+            style={{ background: 'rgba(255, 255, 255, 0.06)' }}
           >
             <Icon size={14} style={{ color: TIER_COLORS[user.tier] }} />
           </div>
           <div>
-            <div className="text-[10px] text-white text-opacity-40 uppercase tracking-wider leading-none mb-0.5">
+            <div className="text-[9px] text-white/40 uppercase tracking-wide leading-none mb-0.5">
               {user.tier}
             </div>
-            <div className="text-[11px] text-white text-opacity-70 leading-none">{user.username}</div>
+            <div className="text-[11px] text-white/70 leading-none">{user.username}</div>
           </div>
         </div>
 
         {user.isAdmin && (
           <button
             onClick={() => navigate('/admin')}
-            className="p-2 rounded-lg border border-[#1C1C1C] hover:border-[#3A9CFF] transition-all duration-150"
+            className="p-2 rounded-xl border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200"
             style={{
-              background: 'rgba(12, 12, 12, 0.9)',
-              backdropFilter: 'blur(12px)',
+              background: 'rgba(12, 12, 12, 0.85)',
+              backdropFilter: 'blur(20px)',
             }}
           >
-            <Shield size={16} style={{ color: '#3A9CFF' }} />
+            <Shield size={16} className="text-white/60" />
           </button>
         )}
 
         <button
-          onClick={handleLogout}
-          className="p-2 rounded-lg border border-[#1C1C1C] hover:border-red-500 transition-all duration-150"
+          onClick={() => navigate('/site')}
+          className="p-2 rounded-xl border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200"
           style={{
-            background: 'rgba(12, 12, 12, 0.9)',
-            backdropFilter: 'blur(12px)',
+            background: 'rgba(12, 12, 12, 0.85)',
+            backdropFilter: 'blur(20px)',
+          }}
+          title="View site"
+        >
+          <Globe size={16} className="text-white/60" />
+        </button>
+
+        <button
+          onClick={handleLogout}
+          className="p-2 rounded-xl border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200"
+          style={{
+            background: 'rgba(12, 12, 12, 0.85)',
+            backdropFilter: 'blur(20px)',
           }}
         >
-          <LogOut size={16} className="text-white opacity-60" />
+          <LogOut size={16} className="text-white/60" />
         </button>
       </div>
 
