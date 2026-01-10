@@ -186,14 +186,14 @@ app.use(cors({
     'https://app.connector-os.com',
     'https://connector-os.com',
     'http://localhost:5173',
-    
+    'http://localhost:4173',
   ],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Authorization", "Content-Type", "x-user-id", "x-user-email"],
-  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-email'],
+  credentials: false,
 }));
 
-// Handle preflight
+// Handle preflight for all routes
 app.options('*', cors());
 
 app.use(express.json());
@@ -1628,7 +1628,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     }
 
     if (foundEmail) {
-      deductTokens(effectiveUserId, effectiveKeyId, 1);
+      deductTokens(userId, apiKey.id, 1);
       tokensUsed += 1;
 
       db.prepare(`
@@ -1688,7 +1688,7 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
 
     // Charge 1 token per valid verdict (not cached, not unknown)
     if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
-      deductTokens(effectiveUserId, effectiveKeyId, 1);
+      deductTokens(apiKey.user_id, apiKey.id, 1);
       tokensUsed += 1;
     }
 
