@@ -1559,9 +1559,11 @@ app.post('/api/email/v2/verify', async (req, res) => {
  */
 app.post('/api/email/v2/find-bulk', async (req, res) => {
   const apiKey = verifyApiKey(req.headers['authorization']);
+  const userIdHeader = req.headers['x-user-id'];
 
-  if (!apiKey) {
-    return res.status(401).json({ success: false, error: 'Invalid or missing API key' });
+  // Allow API key OR user headers (same as single endpoints)
+  if (!apiKey && !userIdHeader) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
   const { items } = req.body;
@@ -1570,7 +1572,8 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     return res.status(400).json({ success: false, error: 'items array required' });
   }
 
-  const userId = apiKey.user_id;
+  const userId = apiKey ? apiKey.user_id : userIdHeader;
+  const keyId = apiKey ? apiKey.id : '';
   const mode = getMode();
 
   const results = [];
@@ -1628,7 +1631,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     }
 
     if (foundEmail) {
-      deductTokens(userId, apiKey.id, 1);
+      deductTokens(userId, keyId, 1);
       tokensUsed += 1;
 
       db.prepare(`
@@ -1657,10 +1660,15 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
  */
 app.post('/api/email/v2/verify-bulk', async (req, res) => {
   const apiKey = verifyApiKey(req.headers['authorization']);
+  const userIdHeader = req.headers['x-user-id'];
 
-  if (!apiKey) {
-    return res.status(401).json({ success: false, error: 'Invalid or missing API key' });
+  // Allow API key OR user headers (same as single endpoints)
+  if (!apiKey && !userIdHeader) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
   }
+
+  const userId = apiKey ? apiKey.user_id : userIdHeader;
+  const keyId = apiKey ? apiKey.id : '';
 
   const { emails } = req.body;
 
@@ -1670,7 +1678,7 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
 
   // Check quota (1 token per email)
   const tokensNeeded = emails.length;
-  const usage = getOrCreateUsage(apiKey.user_id, apiKey.id);
+  const usage = getOrCreateUsage(userId, keyId);
   const MONTHLY_LIMIT = 10000;
 
   if (usage.tokens_used + tokensNeeded > MONTHLY_LIMIT) {
@@ -1684,11 +1692,11 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
   let tokensUsed = 0;
 
   for (const email of emails) {
-    const result = await verifyEmail(email, apiKey.user_id, 'bulk');
+    const result = await verifyEmail(email, userId, 'bulk');
 
     // Charge 1 token per valid verdict (not cached, not unknown)
     if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
-      deductTokens(apiKey.user_id, apiKey.id, 1);
+      deductTokens(userId, keyId, 1);
       tokensUsed += 1;
     }
 
