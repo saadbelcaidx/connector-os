@@ -184,6 +184,7 @@ function getLearnedEmail(domain, firstName, lastName) {
 app.use(cors({
   origin: [
     'https://app.connector-os.com',
+    'https://www.connector-os.com',
     'https://connector-os.com',
     'http://localhost:5173',
     'http://localhost:4173',
@@ -1106,7 +1107,11 @@ app.post('/api/keys/generate', (req, res) => {
   const userId = req.headers['x-user-id'];
   const userEmail = req.headers['x-user-email'];
 
+  // Structured logging for diagnosis
+  console.log(`[Keys:Generate] Request: user_id=${userId || 'MISSING'}, user_email=${userEmail || 'MISSING'}`);
+
   if (!userId || !userEmail) {
+    console.log(`[Keys:Generate] FAILED: Missing headers - user_id=${!!userId}, user_email=${!!userEmail}`);
     return res.status(400).json({ success: false, error: 'Missing user headers' });
   }
 
@@ -1131,7 +1136,7 @@ app.post('/api/keys/generate', (req, res) => {
   // Initialize usage for this period
   getOrCreateUsage(userId, keyId);
 
-  console.log(`[Keys] Generated key for ${userEmail}: ${keyPrefix}${rotated ? ' (rotated)' : ''}`);
+  console.log(`[Keys:Generate] SUCCESS: user_id=${userId}, user_email=${userEmail}, key_prefix=${keyPrefix}, rotated=${rotated}`);
 
   res.json({
     success: true,

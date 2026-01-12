@@ -12,6 +12,7 @@ import { useAuth } from '../AuthContext';
 import { supabase } from '../lib/supabase';
 import { FEATURES } from '../config/features';
 import ComingSoon from '../components/ComingSoon';
+import SSMGate from '../SSMGate';
 import {
   Copy,
   Check,
@@ -29,8 +30,11 @@ import {
   Mail,
   Activity,
   Eye,
-  Zap
+  Zap,
+  Upload,
+  X
 } from 'lucide-react';
+import Papa from 'papaparse';
 
 // ============================================================
 // TYPES
@@ -58,6 +62,127 @@ interface FindResult {
 
 interface VerifyResult {
   email: string | null;
+}
+
+// Bulk Source Adapter (CSV / Google Sheets)
+type BulkSourceAdapter = {
+  load(): Promise<{ headers: string[]; rows: any[] }>;
+};
+
+// Google Sheets config
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+const GOOGLE_SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+
+// ============================================================
+// BATCH PERSISTENCE (Zero-waste recovery system)
+// ============================================================
+
+interface ConnectorAgentBatch {
+  id: string;
+  type: 'find' | 'verify';
+  createdAt: string;
+  status: 'in_progress' | 'completed';
+  inputCount: number;
+  completedCount: number;
+  // Original inputs for resume (slice from completedCount)
+  originalInputs: Array<{
+    input: string;        // "firstName lastName domain" for find, email for verify
+    firstName?: string;
+    lastName?: string;
+    domain?: string;
+    email?: string;
+  }>;
+  results: Array<{
+    input: string;        // original input
+    email: string | null; // null = not found / invalid
+  }>;
+}
+
+const BATCH_INDEX_KEY = 'connector_agent_batch_index';
+const BATCH_PREFIX = 'connector_agent_batch_';
+const MAX_BATCHES = 20;
+
+// Generate UUID
+function generateBatchId(): string {
+  return 'batch_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
+}
+
+// Get all batch IDs (ordered newest first)
+function getBatchIndex(): string[] {
+  try {
+    const stored = localStorage.getItem(BATCH_INDEX_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Save batch index
+function saveBatchIndex(ids: string[]): void {
+  localStorage.setItem(BATCH_INDEX_KEY, JSON.stringify(ids));
+}
+
+// Get a single batch
+function getBatch(id: string): ConnectorAgentBatch | null {
+  try {
+    const stored = localStorage.getItem(BATCH_PREFIX + id);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Save a batch (handles FIFO pruning)
+function saveBatch(batch: ConnectorAgentBatch): void {
+  const index = getBatchIndex();
+
+  // Add to index if new
+  if (!index.includes(batch.id)) {
+    index.unshift(batch.id);
+  }
+
+  // FIFO prune if over limit
+  while (index.length > MAX_BATCHES) {
+    const oldId = index.pop();
+    if (oldId) localStorage.removeItem(BATCH_PREFIX + oldId);
+  }
+
+  saveBatchIndex(index);
+  localStorage.setItem(BATCH_PREFIX + batch.id, JSON.stringify(batch));
+}
+
+// Delete a batch
+function deleteBatch(id: string): void {
+  const index = getBatchIndex().filter(i => i !== id);
+  saveBatchIndex(index);
+  localStorage.removeItem(BATCH_PREFIX + id);
+}
+
+// Get all batches (newest first)
+function getAllBatches(): ConnectorAgentBatch[] {
+  return getBatchIndex()
+    .map(id => getBatch(id))
+    .filter((b): b is ConnectorAgentBatch => b !== null);
+}
+
+// Find in-progress batch
+function getInProgressBatch(): ConnectorAgentBatch | null {
+  for (const id of getBatchIndex()) {
+    const batch = getBatch(id);
+    if (batch?.status === 'in_progress') return batch;
+  }
+  return null;
+}
+
+// Generate CSV from batch (canonical format: input,email)
+function batchToCSV(batch: ConnectorAgentBatch): string {
+  let csv = 'input,email\n';
+  for (const r of batch.results) {
+    const input = r.input.replace(/"/g, '""');
+    const email = r.email ? r.email.replace(/"/g, '""') : '';
+    csv += `"${input}","${email}"\n`;
+  }
+  return csv;
 }
 
 // ============================================================
@@ -101,126 +226,6 @@ const slideIn = {
   }
 };
 
-// ============================================================
-// SSM GATE
-// ============================================================
-
-function SSMGateLocal({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const [isChecking, setIsChecking] = useState(true);
-  const [hasAccess, setHasAccess] = useState(false);
-
-  useEffect(() => {
-    const checkAccess = async () => {
-      if (!user?.email) {
-        setIsChecking(false);
-        setHasAccess(false);
-        return;
-      }
-
-      try {
-        const { data } = await supabase
-          .from('ssm_access')
-          .select('status')
-          .eq('email', user.email)
-          .single();
-
-        setHasAccess(data?.status === 'approved');
-      } catch {
-        setHasAccess(false);
-      } finally {
-        setIsChecking(false);
-      }
-    };
-
-    checkAccess();
-  }, [user]);
-
-  if (isChecking) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-        >
-          <Loader2 className="w-5 h-5 text-white/40" />
-        </motion.div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="min-h-screen bg-black flex flex-col items-center justify-center px-6"
-      >
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-          className="text-center max-w-md"
-        >
-          <div className="w-14 h-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-5">
-            <Eye className="w-7 h-7 text-white/50" />
-          </div>
-          <h1 className="text-[17px] font-semibold text-white/90 mb-2">Authentication Required</h1>
-          <p className="text-[13px] text-white/50 mb-6">Sign in to access Connector Agent.</p>
-          <button
-            onClick={() => navigate('/login')}
-            className="h-[40px] px-6 btn-primary text-[13px]"
-          >
-            Sign In
-          </button>
-        </motion.div>
-      </motion.div>
-    );
-  }
-
-  if (!hasAccess) {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="min-h-screen bg-black flex flex-col items-center justify-center px-6"
-      >
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-          className="text-center max-w-md"
-        >
-          <div className="w-14 h-14 rounded-2xl bg-amber-500/[0.08] border border-amber-500/[0.15] flex items-center justify-center mx-auto mb-5">
-            <AlertCircle className="w-7 h-7 text-amber-500/70" />
-          </div>
-          <h1 className="text-[17px] font-semibold text-white/90 mb-2">SSM Access Required</h1>
-          <p className="text-[13px] text-white/50 mb-6">Connector Agent is available exclusively to SSM members.</p>
-          <div className="flex gap-3 justify-center">
-            <button
-              onClick={() => navigate('/launcher')}
-              className="h-[40px] px-5 btn-secondary text-[13px] flex items-center gap-2"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-            <a
-              href="https://www.skool.com/ssmasters"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="h-[40px] px-5 btn-primary text-[13px]"
-            >
-              Join SSM
-            </a>
-          </div>
-        </motion.div>
-      </motion.div>
-    );
-  }
-
-  return <>{children}</>;
-}
 
 // ============================================================
 // API SERVICE
@@ -251,9 +256,47 @@ class ConnectorAgentAPI {
 
     try {
       const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
-      return response.json();
-    } catch (err) {
-      console.warn(`[ConnectorAgent] Backend unavailable: ${endpoint}`);
+      const text = await response.text();
+
+      // Handle HTML error pages (500s, etc)
+      if (text.startsWith('<!') || text.startsWith('<html')) {
+        console.error(`[ConnectorAgent] Server error (HTML response): ${endpoint}`);
+        return { success: false, error: `Server error: ${response.status}` };
+      }
+
+      try {
+        return JSON.parse(text);
+      } catch {
+        console.error(`[ConnectorAgent] Invalid JSON: ${endpoint}`);
+        return { success: false, error: 'Invalid response from server' };
+      }
+    } catch (err: unknown) {
+      // Detect CORS errors - they throw TypeError with specific message
+      const isCorsError = err instanceof TypeError && (
+        (err.message || '').includes('Failed to fetch') ||
+        (err.message || '').includes('NetworkError') ||
+        (err.message || '').includes('CORS')
+      );
+
+      if (isCorsError) {
+        console.error(`[ConnectorAgent] CORS blocked: ${endpoint}`, {
+          origin: window.location.origin,
+          apiBase: API_BASE,
+          error: err,
+        });
+        return {
+          success: false,
+          error: 'CORS_BLOCKED',
+          errorMessage: `Network blocked by browser security. Please use https://app.connector-os.com`,
+          debug: {
+            origin: window.location.origin,
+            apiBase: API_BASE,
+            endpoint,
+          },
+        };
+      }
+
+      console.warn(`[ConnectorAgent] Backend unavailable: ${endpoint}`, err);
       return { success: false, error: 'Backend unavailable' };
     }
   }
@@ -293,6 +336,20 @@ class ConnectorAgentAPI {
     return this.fetchWithAuth('/api/email/v2/verify', {
       method: 'POST',
       body: JSON.stringify({ email }),
+    });
+  }
+
+  async findBulk(items: { firstName: string; lastName: string; domain: string }[]) {
+    return this.fetchWithAuth('/api/email/v2/find-bulk', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
+  }
+
+  async verifyBulk(emails: string[]) {
+    return this.fetchWithAuth('/api/email/v2/verify-bulk', {
+      method: 'POST',
+      body: JSON.stringify({ emails }),
     });
   }
 }
@@ -370,8 +427,12 @@ function ConnectorAgentInner() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // useMemo ensures API is recreated if user changes (fixes race condition)
-  const api = useMemo(() => new ConnectorAgentAPI(user!.id, user!.email!), [user?.id, user?.email]);
+  // ALL HOOKS MUST BE CALLED UNCONDITIONALLY (Rules of Hooks)
+  // api can be null when user is not authenticated
+  const api = useMemo(
+    () => (user ? new ConnectorAgentAPI(user.id, user.email!) : null),
+    [user?.id, user?.email]
+  );
   const [activeKey, setActiveKey] = useState<ApiKeyData | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [quota, setQuota] = useState<QuotaData | null>(null);
@@ -379,23 +440,101 @@ function ConnectorAgentInner() {
   const [copied, setCopied] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'find' | 'verify' | 'integrate'>('find');
+  const [activeTab, setActiveTab] = useState<'find' | 'verify' | 'integrate' | 'bulk'>('find');
   const [result, setResult] = useState<any>(null);
   const [integratePlatform, setIntegratePlatform] = useState<'make' | 'n8n' | 'zapier'>('make');
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [corsBlocked, setCorsBlocked] = useState<{ message: string; debug: any } | null>(null);
+
+  // Bulk state
+  const [bulkMode, setBulkMode] = useState<'find' | 'verify'>('find');
+  const [bulkResults, setBulkResults] = useState<any[] | null>(null);
+  const [bulkSummary, setBulkSummary] = useState<any>(null);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkFilter, setBulkFilter] = useState<'all' | 'found' | 'not_found' | 'valid' | 'invalid' | 'unknown'>('all');
+
+  // Pre-flight state
+  const [bulkParsedData, setBulkParsedData] = useState<any[] | null>(null);
+  const [bulkRawHeaders, setBulkRawHeaders] = useState<string[]>([]);
+  const [bulkValidCount, setBulkValidCount] = useState(0);
+  const [bulkRemovedCount, setBulkRemovedCount] = useState(0);
+  const [bulkNeedsMapping, setBulkNeedsMapping] = useState(false);
+  const [bulkColumnMap, setBulkColumnMap] = useState<Record<string, string>>({});
+
+  // Chunking state
+  const [bulkProgress, setBulkProgress] = useState(0);
+  const [bulkTotalRows, setBulkTotalRows] = useState(0);
+  const [bulkCurrentBatch, setBulkCurrentBatch] = useState(0);
+  const [bulkTotalBatches, setBulkTotalBatches] = useState(0);
+  const [bulkProcessedCount, setBulkProcessedCount] = useState(0);
+  const [bulkStreamingResults, setBulkStreamingResults] = useState<any[]>([]);
+
+  // Bulk Source state (CSV / Google Sheets)
+  const [bulkSource, setBulkSource] = useState<'csv' | 'sheets'>('csv');
+  const [sheetsUrl, setSheetsUrl] = useState('');
+  const [sheetsTab, setSheetsTab] = useState('');
+  const [sheetsLoading, setSheetsLoading] = useState(false);
+  const [sheetsError, setSheetsError] = useState<string | null>(null);
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
 
   const [findFirstName, setFindFirstName] = useState('');
   const [findLastName, setFindLastName] = useState('');
   const [findDomain, setFindDomain] = useState('');
   const [verifyEmailInput, setVerifyEmailInput] = useState('');
 
+  // Batch persistence state
+  const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [pendingResumeBatch, setPendingResumeBatch] = useState<ConnectorAgentBatch | null>(null);
+  const [batchHistory, setBatchHistory] = useState<ConnectorAgentBatch[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Load batch history on mount
   useEffect(() => {
+    setBatchHistory(getAllBatches());
+  }, []);
+
+  // Check for in-progress batch on mount (resume detection)
+  useEffect(() => {
+    const inProgress = getInProgressBatch();
+    if (inProgress) {
+      setPendingResumeBatch(inProgress);
+      setShowResumeModal(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!api) {
+      setIsLoading(false);
+      return;
+    }
     const loadData = async () => {
       try {
         const keyResult = await api.getActiveKey();
+
+        // Detect CORS blocked
+        if (keyResult.error === 'CORS_BLOCKED') {
+          setCorsBlocked({
+            message: keyResult.errorMessage || 'Network blocked. Use app.connector-os.com',
+            debug: keyResult.debug,
+          });
+          setIsLoading(false);
+          return;
+        }
+
         if (keyResult.success && keyResult.key) setActiveKey(keyResult.key);
-        // Always fetch quota (works with user headers)
         const quotaResult = await api.getQuota();
-        if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
+
+        // Detect CORS blocked on quota
+        if (quotaResult.error === 'CORS_BLOCKED') {
+          setCorsBlocked({
+            message: quotaResult.errorMessage || 'Network blocked. Use app.connector-os.com',
+            debug: quotaResult.debug,
+          });
+        } else if (quotaResult.success && quotaResult.quota) {
+          setQuota(quotaResult.quota);
+        }
       } catch (err) {
         console.error('[ConnectorAgent] Load error:', err);
       } finally {
@@ -405,8 +544,25 @@ function ConnectorAgentInner() {
     loadData();
   }, [api]);
 
+  // Gate rendering AFTER all hooks are called
+  if (!user || !api) {
+    return (
+      <div className="min-h-screen bg-black noise-bg flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center mx-auto mb-4 border border-white/[0.08]">
+            <Eye className="w-7 h-7 text-white/60" />
+          </div>
+          <h1 className="text-[17px] font-semibold text-white/90 mb-2">Connector Agent</h1>
+          <p className="text-[13px] text-white/50">Locate & confirm contacts</p>
+        </div>
+      </div>
+    );
+  }
+
   const handleGenerateKey = async () => {
+    if (!api) return;
     setIsProcessing(true);
+    setKeyError(null); // Clear previous errors
     try {
       const result = await api.generateKey();
       if (result.success && result.key) {
@@ -416,24 +572,38 @@ function ConnectorAgentInner() {
         if (keyResult.success && keyResult.key) setActiveKey(keyResult.key);
         const quotaResult = await api.getQuota();
         if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
+      } else {
+        // Show error to user - this must be impossible to miss
+        const errorMessage = result.error || 'API key generation failed. Contact support.';
+        setKeyError(errorMessage);
+        console.error('[ConnectorAgent] Key generation failed:', result);
       }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'API key generation failed. Contact support.';
+      setKeyError(errorMessage);
+      console.error('[ConnectorAgent] Key generation exception:', err);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleRevokeKey = async () => {
-    if (!activeKey || !confirm('Revoke this API key?')) return;
+    if (!api) return;
+    setShowRevokeConfirm(false);
     setIsProcessing(true);
     try {
-      const result = await api.revokeKey(activeKey.key_id);
-      if (result.success) {
-        api.clearApiKey();
-        setActiveKey(null);
-        setNewKey(null);
-        setQuota(null);
+      // Try to revoke on backend if we have a key_id
+      if (activeKey?.key_id) {
+        await api.revokeKey(activeKey.key_id);
       }
+    } catch (err) {
+      // Ignore errors - we'll clear local state anyway
     } finally {
+      // Always clear local state so user can generate fresh
+      api.clearApiKey();
+      setActiveKey(null);
+      setNewKey(null);
+      setQuota(null);
       setIsProcessing(false);
     }
   };
@@ -445,6 +615,7 @@ function ConnectorAgentInner() {
   };
 
   const handleFind = async () => {
+    if (!api) return;
     if (!findFirstName || !findLastName || !findDomain) return;
     if (!findDomain.includes('.')) {
       alert('Domain must include TLD (e.g. company.com)');
@@ -463,6 +634,7 @@ function ConnectorAgentInner() {
   };
 
   const handleVerify = async () => {
+    if (!api) return;
     if (!verifyEmailInput) return;
     setIsProcessing(true);
     setResult(null);
@@ -473,6 +645,202 @@ function ConnectorAgentInner() {
       if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  // ============================================================
+  // GOOGLE SHEETS ADAPTER
+  // ============================================================
+
+  // Extract spreadsheet ID from Google Sheets URL
+  const extractSpreadsheetId = (url: string): string | null => {
+    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    return match ? match[1] : null;
+  };
+
+  // Normalize Google API errors to human-readable messages
+  const normalizeGoogleError = (status: number, errorBody?: any): string => {
+    if (status === 400) return 'Tab not found. Check the sheet/tab name.';
+    if (status === 401) return 'Session expired. Please try again.';
+    if (status === 403) return 'Access denied. Make sure the sheet is shared with you.';
+    if (status === 404) return 'Spreadsheet not found. Check the URL.';
+    if (status === 429) return 'Too many requests. Wait a moment and try again.';
+    if (status >= 500) return 'Google Sheets is temporarily unavailable. Try again later.';
+    return 'Failed to load sheet. Please try again.';
+  };
+
+  // Fetch sheet data with token (used for retry on expiration)
+  const fetchSheetData = async (spreadsheetId: string, accessToken: string): Promise<{ success: boolean; data?: any; status?: number }> => {
+    const range = sheetsTab ? `'${sheetsTab}'` : 'Sheet1';
+    const apiUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?majorDimension=ROWS`;
+
+    const res = await fetch(apiUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!res.ok) {
+      return { success: false, status: res.status };
+    }
+
+    const data = await res.json();
+    return { success: true, data };
+  };
+
+  // Initiate Google OAuth and load sheet data
+  const loadGoogleSheet = async () => {
+    if (!sheetsUrl) {
+      setSheetsError('Please enter a Google Sheets URL');
+      return;
+    }
+
+    const spreadsheetId = extractSpreadsheetId(sheetsUrl);
+    if (!spreadsheetId) {
+      setSheetsError('Invalid Google Sheets URL. Expected format: docs.google.com/spreadsheets/d/...');
+      return;
+    }
+
+    if (!GOOGLE_CLIENT_ID) {
+      setSheetsError('Google OAuth not configured. Set VITE_GOOGLE_CLIENT_ID.');
+      return;
+    }
+
+    setSheetsLoading(true);
+    setSheetsError(null);
+
+    try {
+      // Load Google Identity Services if not already loaded
+      if (!(window as any).google?.accounts?.oauth2) {
+        await new Promise<void>((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://accounts.google.com/gsi/client';
+          script.onload = () => resolve();
+          script.onerror = () => reject(new Error('Failed to load Google sign-in. Check your internet connection.'));
+          document.head.appendChild(script);
+        });
+      }
+
+      // Process sheet data after auth
+      const processSheetData = async (accessToken: string, isRetry = false) => {
+        try {
+          const result = await fetchSheetData(spreadsheetId, accessToken);
+
+          // Handle token expiration - retry auth once
+          if (result.status === 401 && !isRetry) {
+            setGoogleAccessToken(null);
+            // Re-request token
+            tokenClient.requestAccessToken();
+            return;
+          }
+
+          if (!result.success) {
+            setSheetsError(normalizeGoogleError(result.status || 0));
+            setSheetsLoading(false);
+            return;
+          }
+
+          const values = result.data?.values || [];
+
+          // Handle empty sheet
+          if (values.length === 0) {
+            setSheetsError('Sheet is empty. Add data and try again.');
+            setSheetsLoading(false);
+            return;
+          }
+
+          if (values.length === 1) {
+            setSheetsError('Sheet has headers but no data rows.');
+            setSheetsLoading(false);
+            return;
+          }
+
+          // Extract headers and rows
+          const headers = values[0] as string[];
+          const rows = values.slice(1);
+
+          // Enforce row limits with clear error
+          const rowLimit = bulkMode === 'find' ? 1000 : 2000;
+          const totalRows = rows.length;
+          const exceededLimit = totalRows > rowLimit;
+          const limitedRows = rows.slice(0, rowLimit);
+
+          // Convert to objects (same format as Papa Parse)
+          const parsedRows = limitedRows.map((row: any[]) => {
+            const obj: Record<string, string> = {};
+            headers.forEach((h, i) => {
+              obj[h] = row[i] || '';
+            });
+            return obj;
+          });
+
+          // Feed into existing pipeline
+          setBulkRawHeaders(headers);
+          setBulkParsedData(parsedRows);
+
+          // Show warning if rows were truncated
+          if (exceededLimit) {
+            setBulkError(`Sheet has ${totalRows} rows. Truncated to ${rowLimit} (max for ${bulkMode}).`);
+          }
+
+          // Check if column mapping is needed
+          const expectedCols = bulkMode === 'find'
+            ? ['first_name', 'last_name', 'domain']
+            : ['email'];
+          const lowerHeaders = headers.map(h => h.toLowerCase().replace(/\s+/g, '_'));
+          const needsMapping = !expectedCols.every(col => lowerHeaders.includes(col));
+
+          if (needsMapping) {
+            setBulkNeedsMapping(true);
+            // Auto-map if possible
+            const autoMap: Record<string, string> = {};
+            expectedCols.forEach(col => {
+              const match = headers.find(h => h.toLowerCase().replace(/\s+/g, '_') === col);
+              if (match) autoMap[col] = match;
+            });
+            setBulkColumnMap(autoMap);
+          } else {
+            setBulkNeedsMapping(false);
+            // Direct mapping
+            const directMap: Record<string, string> = {};
+            expectedCols.forEach(col => {
+              const match = headers.find(h => h.toLowerCase().replace(/\s+/g, '_') === col);
+              if (match) directMap[col] = match;
+            });
+            setBulkColumnMap(directMap);
+          }
+
+          setSheetsLoading(false);
+        } catch (err: any) {
+          setSheetsError('Failed to process sheet data. Please try again.');
+          setSheetsLoading(false);
+        }
+      };
+
+      // Get access token via OAuth popup
+      const tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_SHEETS_SCOPE,
+        callback: async (response: any) => {
+          if (response.error) {
+            // Normalize OAuth errors
+            let errorMsg = 'Sign-in was cancelled or failed.';
+            if (response.error === 'access_denied') errorMsg = 'Access denied. Please grant permission to read sheets.';
+            if (response.error === 'popup_closed_by_user') errorMsg = 'Sign-in popup was closed. Please try again.';
+            setSheetsError(errorMsg);
+            setSheetsLoading(false);
+            return;
+          }
+
+          const accessToken = response.access_token;
+          setGoogleAccessToken(accessToken); // Memory only, never localStorage
+
+          await processSheetData(accessToken, false);
+        }
+      });
+
+      tokenClient.requestAccessToken();
+    } catch (err: any) {
+      setSheetsError('Failed to initialize Google sign-in. Please try again.');
+      setSheetsLoading(false);
     }
   };
 
@@ -518,6 +886,45 @@ function ConnectorAgentInner() {
           className="absolute -bottom-1/2 -right-1/4 w-[800px] h-[800px] bg-violet-500/[0.03] rounded-full blur-3xl"
         />
       </div>
+
+      {/* CORS BLOCKED BANNER — Enterprise fail-safe */}
+      {corsBlocked && (
+        <div className="fixed inset-x-0 top-0 z-50 p-4">
+          <div className="max-w-2xl mx-auto p-4 rounded-xl bg-red-500/10 border border-red-500/30 backdrop-blur-sm">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-red-400 text-lg font-bold">!</span>
+              </div>
+              <div className="flex-1">
+                <p className="text-[14px] font-semibold text-red-300 mb-1">Network blocked by browser security</p>
+                <p className="text-[13px] text-red-200/80 mb-3">
+                  This domain cannot access the API. Please use the canonical app URL.
+                </p>
+                <div className="flex items-center gap-3">
+                  <a
+                    href="https://app.connector-os.com/connector-agent"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[13px] font-medium transition-colors"
+                  >
+                    Open app.connector-os.com
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                  <button
+                    onClick={() => {
+                      const debugInfo = JSON.stringify(corsBlocked.debug, null, 2);
+                      navigator.clipboard.writeText(debugInfo);
+                    }}
+                    className="text-[12px] text-red-400/60 hover:text-red-400/80 underline"
+                  >
+                    Copy debug info
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <motion.div
         variants={containerVariants}
@@ -597,9 +1004,9 @@ function ConnectorAgentInner() {
               <Key className="w-4 h-4 text-white/40" />
               <span className="text-[12px] font-medium text-white/60 uppercase tracking-wider">API Key</span>
             </div>
-            {activeKey && (
+            {api.getApiKey() && (
               <button
-                onClick={handleRevokeKey}
+                onClick={() => setShowRevokeConfirm(true)}
                 disabled={isProcessing}
                 className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-500/[0.08] text-red-400 hover:bg-red-500/[0.15] transition-colors disabled:opacity-50 flex items-center gap-1.5"
               >
@@ -610,7 +1017,7 @@ function ConnectorAgentInner() {
           </div>
 
           <AnimatePresence mode="wait">
-            {!activeKey ? (
+            {!api.getApiKey() ? (
               <motion.button
                 key="generate"
                 initial={{ opacity: 0, y: 10 }}
@@ -638,33 +1045,19 @@ function ConnectorAgentInner() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
               >
-                {/* Always show full key from localStorage */}
                 <div className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-lg bg-violet-500/[0.15] flex items-center justify-center">
                       <Key className="w-4 h-4 text-violet-400" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <code className="text-[11px] text-white/80 font-mono truncate max-w-[280px]">
-                          {api.getApiKey() || activeKey.key_prefix}
-                        </code>
-                        <span className="px-2 py-0.5 rounded-md text-[9px] font-medium bg-emerald-500/[0.15] text-emerald-400 uppercase tracking-wider flex-shrink-0">Active</span>
-                      </div>
-                      <div className="text-[10px] text-white/30 mt-1">
-                        Last used: {activeKey.last_used_at ? new Date(activeKey.last_used_at).toLocaleDateString() : 'Never'}
-                      </div>
+                      <code className="text-[11px] text-white/80 font-mono truncate max-w-[280px] block">
+                        {api.getApiKey()}
+                      </code>
                     </div>
                   </div>
                   <button
-                    onClick={() => {
-                      const keyToCopy = api.getApiKey();
-                      if (keyToCopy) {
-                        handleCopy(keyToCopy, 'apikey');
-                      } else {
-                        alert('API key not available. Generate a new key to copy.');
-                      }
-                    }}
+                    onClick={() => handleCopy(api.getApiKey()!, 'apikey')}
                     className="h-9 w-9 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] flex items-center justify-center transition-colors flex-shrink-0 ml-3"
                   >
                     {copied === 'apikey' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
@@ -672,17 +1065,42 @@ function ConnectorAgentInner() {
                 </div>
               </motion.div>
             )}
-
           </AnimatePresence>
+
+          {/* Error display - impossible to miss */}
+          {keyError && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-4 rounded-xl bg-red-500/[0.1] border border-red-500/[0.3]"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-red-500/[0.2] flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="w-4 h-4 text-red-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-medium text-red-400 mb-1">Failed to generate API key</p>
+                  <p className="text-[12px] text-red-400/70">{keyError}</p>
+                </div>
+                <button
+                  onClick={() => setKeyError(null)}
+                  className="text-red-400/50 hover:text-red-400 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
         </motion.div>
 
         {/* Tabs & Content */}
-        {activeKey && (
+        {api.getApiKey() && (
           <>
             <motion.div variants={itemVariants} className="flex gap-1 mb-5 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06] w-fit">
               {[
                 { id: 'find', label: 'Find', icon: Search },
                 { id: 'verify', label: 'Verify', icon: ShieldCheck },
+                { id: 'bulk', label: 'Bulk', icon: Upload },
                 { id: 'integrate', label: 'Integrate', icon: Code2 },
               ].map(tab => (
                 <button
@@ -745,7 +1163,7 @@ function ConnectorAgentInner() {
                       ) : (
                         <>
                           <Search className="w-4 h-4" />
-                          Find Email
+                          Find Contact
                         </>
                       )}
                     </button>
@@ -782,10 +1200,1014 @@ function ConnectorAgentInner() {
                       ) : (
                         <>
                           <ShieldCheck className="w-4 h-4" />
-                          Verify Email
+                          Verify Contact
                         </>
                       )}
                     </button>
+                  </motion.div>
+                )}
+
+                {activeTab === 'bulk' && (
+                  <motion.div
+                    key="bulk"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    className="space-y-4"
+                  >
+                    {/* Mode toggle */}
+                    <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                      {[
+                        { id: 'find' as const, label: 'Bulk Find' },
+                        { id: 'verify' as const, label: 'Bulk Verify' },
+                      ].map(mode => (
+                        <button
+                          key={mode.id}
+                          onClick={() => {
+                            setBulkMode(mode.id);
+                            setBulkResults(null);
+                            setBulkSummary(null);
+                            setBulkError(null);
+                            setBulkFilter('all');
+                            setBulkParsedData(null);
+                            setBulkNeedsMapping(false);
+                            setBulkColumnMap({});
+                            // Reset sheets state
+                            setSheetsUrl('');
+                            setSheetsTab('');
+                            setSheetsError(null);
+                          }}
+                          className={`flex-1 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${
+                            bulkMode === mode.id
+                              ? 'bg-white/[0.08] text-white/90'
+                              : 'text-white/40 hover:text-white/60'
+                          }`}
+                        >
+                          {mode.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Source Selector (CSV / Google Sheets) — disabled while processing */}
+                    {!bulkParsedData && (
+                      <div className={`flex gap-1 p-1 rounded-lg bg-white/[0.02] border border-white/[0.06] w-fit ${(isProcessing || sheetsLoading) ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {[
+                          { id: 'csv' as const, label: 'CSV Upload' },
+                          { id: 'sheets' as const, label: 'Google Sheets' },
+                        ].map(src => (
+                          <button
+                            key={src.id}
+                            disabled={isProcessing || sheetsLoading}
+                            onClick={() => {
+                              setBulkSource(src.id);
+                              setSheetsError(null);
+                              setBulkError(null);
+                            }}
+                            className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
+                              bulkSource === src.id ? 'bg-white/[0.08] text-white/90' : 'text-white/40 hover:text-white/60'
+                            } disabled:cursor-not-allowed`}
+                          >
+                            {src.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* CSV Upload (only if no pending data and CSV source selected) */}
+                    {!bulkParsedData && bulkSource === 'csv' && (
+                      <div>
+                        <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">
+                          {bulkMode === 'find' ? 'CSV (first_name, last_name, domain) — max 5MB' : 'CSV (contact) — max 5MB'}
+                        </label>
+                        <input
+                          type="file"
+                          accept=".csv"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+
+                            // File size check (5MB)
+                            if (file.size > 5 * 1024 * 1024) {
+                              setBulkError('File too large. Max 5MB.');
+                              e.target.value = '';
+                              return;
+                            }
+
+                            Papa.parse(file, {
+                              header: true,
+                              skipEmptyLines: true,
+                              complete: (results) => {
+                                setBulkError(null);
+                                setBulkResults(null);
+                                setBulkSummary(null);
+                                setBulkProgress(0);
+                                setBulkCurrentBatch(0);
+                                setBulkTotalBatches(0);
+
+                                const headers = results.meta.fields || [];
+                                setBulkRawHeaders(headers);
+                                setBulkParsedData(results.data as any[]);
+
+                                // Check if mapping needed
+                                const headersLower = headers.map(h => h.toLowerCase().trim());
+                                if (bulkMode === 'find') {
+                                  const hasFirstName = headersLower.some(h => h === 'first_name' || h === 'firstname');
+                                  const hasLastName = headersLower.some(h => h === 'last_name' || h === 'lastname');
+                                  const hasDomain = headersLower.includes('domain');
+                                  if (!hasFirstName || !hasLastName || !hasDomain) {
+                                    setBulkNeedsMapping(true);
+                                    setBulkColumnMap({});
+                                  } else {
+                                    setBulkNeedsMapping(false);
+                                    // Auto-map
+                                    const map: Record<string, string> = {};
+                                    headers.forEach(h => {
+                                      const hl = h.toLowerCase().trim();
+                                      if (hl === 'first_name' || hl === 'firstname') map['first_name'] = h;
+                                      if (hl === 'last_name' || hl === 'lastname') map['last_name'] = h;
+                                      if (hl === 'domain') map['domain'] = h;
+                                    });
+                                    setBulkColumnMap(map);
+                                  }
+                                } else {
+                                  const hasEmail = headersLower.includes('email');
+                                  if (!hasEmail) {
+                                    setBulkNeedsMapping(true);
+                                    setBulkColumnMap({});
+                                  } else {
+                                    setBulkNeedsMapping(false);
+                                    const emailHeader = headers.find(h => h.toLowerCase().trim() === 'email');
+                                    setBulkColumnMap({ email: emailHeader || '' });
+                                  }
+                                }
+                              }
+                            });
+
+                            e.target.value = '';
+                          }}
+                          disabled={isProcessing}
+                          className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-white/[0.08] file:text-white/70 hover:file:bg-white/[0.12] disabled:opacity-40"
+                        />
+                      </div>
+                    )}
+
+                    {/* Google Sheets Input (only if no pending data and Sheets source selected) */}
+                    {!bulkParsedData && bulkSource === 'sheets' && (
+                      <div className="space-y-3">
+                        {/* Agent Sheets Integration — Founder note with animations */}
+                        <motion.div
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          whileHover={{ y: -2, boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+                          transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+                          className="relative overflow-hidden rounded-xl border border-white/[0.06] bg-gradient-to-br from-white/[0.03] to-transparent cursor-default"
+                        >
+                          {/* Animated gradient drift */}
+                          <motion.div
+                            className="absolute inset-0 bg-gradient-to-r from-violet-500/[0.04] via-transparent to-blue-500/[0.04]"
+                            animate={{
+                              backgroundPosition: ['0% 50%', '100% 50%', '0% 50%'],
+                            }}
+                            transition={{
+                              duration: 8,
+                              repeat: Infinity,
+                              ease: 'linear',
+                            }}
+                            style={{ backgroundSize: '200% 200%' }}
+                          />
+                          <div className="relative p-4">
+                            <div className="flex items-start gap-3">
+                              {/* Avatar with glow pulse */}
+                              <motion.div
+                                initial={{ scale: 0, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                transition={{ delay: 0.1, duration: 0.4, type: 'spring', stiffness: 200 }}
+                                className="relative flex-shrink-0"
+                              >
+                                <motion.div
+                                  className="absolute -inset-1 rounded-full bg-gradient-to-r from-violet-500/20 to-blue-500/20 blur-sm"
+                                  animate={{
+                                    opacity: [0.3, 0.6, 0.3],
+                                    scale: [1, 1.1, 1],
+                                  }}
+                                  transition={{
+                                    duration: 3,
+                                    repeat: Infinity,
+                                    ease: 'easeInOut',
+                                  }}
+                                />
+                                <img
+                                  src="/saad.jpg"
+                                  alt="Saad"
+                                  className="relative w-8 h-8 rounded-full object-cover object-[center_20%] border border-white/[0.12]"
+                                />
+                              </motion.div>
+                              <div className="space-y-1.5">
+                                {/* Title with stagger */}
+                                <motion.p
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ delay: 0.2, duration: 0.4 }}
+                                  className="text-[10px] font-medium text-white/70 uppercase tracking-wider"
+                                >
+                                  Why Sheets?
+                                </motion.p>
+                                {/* Paragraphs with staggered reveal */}
+                                <div className="text-[11px] text-white/40 leading-[1.6] space-y-2">
+                                  <motion.p
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.3, duration: 0.4 }}
+                                  >
+                                    Quick note on why this exists.
+                                  </motion.p>
+                                  <motion.p
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.45, duration: 0.4 }}
+                                  >
+                                    When Saad was building this, he knew most people already live in Google Sheets. That's where the data is.
+                                  </motion.p>
+                                  <motion.p
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.6, duration: 0.4 }}
+                                  >
+                                    So instead of making you export files or learn a new dashboard, the agent just comes to you.
+                                  </motion.p>
+                                  <motion.p
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.75, duration: 0.4 }}
+                                  >
+                                    Paste a Sheet, run it, and keep working like you normally would.
+                                  </motion.p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </motion.div>
+                        <div>
+                          <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">
+                            Google Sheets URL
+                          </label>
+                          <input
+                            type="url"
+                            value={sheetsUrl}
+                            onChange={(e) => setSheetsUrl(e.target.value)}
+                            placeholder="https://docs.google.com/spreadsheets/d/..."
+                            disabled={sheetsLoading}
+                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] placeholder:text-white/30 disabled:opacity-40"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">
+                            Sheet / Tab Name (optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={sheetsTab}
+                            onChange={(e) => setSheetsTab(e.target.value)}
+                            placeholder="Sheet1"
+                            disabled={sheetsLoading}
+                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] placeholder:text-white/30 disabled:opacity-40"
+                          />
+                        </div>
+                        {sheetsError && (
+                          <div className="p-3 rounded-xl bg-red-500/[0.06] border border-red-500/[0.12] text-[11px] text-red-400">
+                            {sheetsError}
+                          </div>
+                        )}
+                        <button
+                          onClick={loadGoogleSheet}
+                          disabled={sheetsLoading || !sheetsUrl}
+                          className="w-full h-10 rounded-xl bg-white/[0.06] border border-white/[0.08] text-[12px] font-medium text-white/80 hover:bg-white/[0.1] transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+                        >
+                          {sheetsLoading ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Loading...
+                            </>
+                          ) : (
+                            <>
+                              <Globe className="w-4 h-4" />
+                              Load Preview
+                            </>
+                          )}
+                        </button>
+                        {/* Schema hint — sexy chips */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[9px] text-white/30 uppercase tracking-wider">Columns</span>
+                          {(bulkMode === 'find'
+                            ? ['first_name', 'last_name', 'domain']
+                            : ['email']
+                          ).map(col => (
+                            <span
+                              key={col}
+                              className="px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] text-[10px] text-white/50 font-mono"
+                            >
+                              {col}
+                            </span>
+                          ))}
+                          <span className="text-[9px] text-white/20">•</span>
+                          <span className="text-[9px] text-white/30">
+                            max {bulkMode === 'find' ? '1,000' : '2,000'} rows
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Column Mapper (if needed) */}
+                    {bulkParsedData && bulkNeedsMapping && (
+                      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-4">
+                        <div className="flex items-center gap-2">
+                          <div className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                          <p className="text-[11px] text-white/60 font-medium tracking-tight">Map columns</p>
+                        </div>
+                        <div className="space-y-2">
+                          {bulkMode === 'find' ? (
+                            <>
+                              {['first_name', 'last_name', 'domain'].map(field => (
+                                <div key={field} className="flex items-center gap-3">
+                                  <span className="text-[10px] text-white/40 w-20 font-mono">{field}</span>
+                                  <div className="flex-1 relative group">
+                                    <select
+                                      value={bulkColumnMap[field] || ''}
+                                      onChange={(e) => setBulkColumnMap(prev => ({ ...prev, [field]: e.target.value }))}
+                                      className="w-full h-8 px-3 pr-8 rounded-lg bg-[#0a0a0a] border border-white/[0.08] text-white/80 text-[11px] font-medium appearance-none cursor-pointer hover:border-white/[0.15] focus:border-white/[0.20] focus:outline-none transition-colors"
+                                      style={{ colorScheme: 'dark' }}
+                                    >
+                                      <option value="" className="bg-[#0a0a0a] text-white/40">Select column</option>
+                                      {bulkRawHeaders.map(h => (
+                                        <option key={h} value={h} className="bg-[#0a0a0a] text-white/80">{h}</option>
+                                      ))}
+                                    </select>
+                                    <svg className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                  </div>
+                                  {bulkColumnMap[field] && (
+                                    <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                                      <svg className="w-2.5 h-2.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                      </svg>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] text-white/40 w-20 font-mono">contact</span>
+                              <div className="flex-1 relative group">
+                                <select
+                                  value={bulkColumnMap['email'] || ''}
+                                  onChange={(e) => setBulkColumnMap(prev => ({ ...prev, email: e.target.value }))}
+                                  className="w-full h-8 px-3 pr-8 rounded-lg bg-[#0a0a0a] border border-white/[0.08] text-white/80 text-[11px] font-medium appearance-none cursor-pointer hover:border-white/[0.15] focus:border-white/[0.20] focus:outline-none transition-colors"
+                                  style={{ colorScheme: 'dark' }}
+                                >
+                                  <option value="" className="bg-[#0a0a0a] text-white/40">Select column</option>
+                                  {bulkRawHeaders.map(h => (
+                                    <option key={h} value={h} className="bg-[#0a0a0a] text-white/80">{h}</option>
+                                  ))}
+                                </select>
+                                <svg className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </div>
+                              {bulkColumnMap['email'] && (
+                                <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                                  <svg className="w-2.5 h-2.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pre-flight Summary */}
+                    {bulkParsedData && (() => {
+                      const FIND_CHUNK = 10;
+                      const VERIFY_CHUNK = 10;
+                      const map = bulkColumnMap;
+                      const isMapped = bulkMode === 'find'
+                        ? map['first_name'] && map['last_name'] && map['domain']
+                        : map['email'];
+
+                      if (!isMapped) return null;
+
+                      // Calculate valid/removed
+                      const seen = new Set<string>();
+                      let validCount = 0;
+                      let totalRaw = bulkParsedData.length;
+
+                      if (bulkMode === 'find') {
+                        bulkParsedData.forEach((row: any) => {
+                          const fn = (row[map['first_name']] || '').trim();
+                          const ln = (row[map['last_name']] || '').trim();
+                          const d = (row[map['domain']] || '').trim().toLowerCase();
+                          if (!fn || !ln || !d) return;
+                          const key = `${fn.toLowerCase()}|${ln.toLowerCase()}|${d}`;
+                          if (seen.has(key)) return;
+                          seen.add(key);
+                          validCount++;
+                        });
+                      } else {
+                        bulkParsedData.forEach((row: any) => {
+                          const email = (row[map['email']] || '').trim().toLowerCase();
+                          if (!email || !email.includes('@')) return;
+                          if (seen.has(email)) return;
+                          seen.add(email);
+                          validCount++;
+                        });
+                      }
+
+                      const removedCount = totalRaw - validCount;
+                      const chunkSize = bulkMode === 'find' ? FIND_CHUNK : VERIFY_CHUNK;
+                      const numBatches = Math.ceil(validCount / chunkSize);
+                      const estimatedCredits = validCount;
+                      const availableCredits = quota?.remaining ?? 0;
+                      const insufficientCredits = estimatedCredits > availableCredits;
+
+                      return (
+                        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-3">
+                          <div className="flex items-center justify-between text-[12px]">
+                            <span className="text-white/50">Rows to process</span>
+                            <span className="text-white/90 font-medium">{validCount}</span>
+                          </div>
+                          {removedCount > 0 && (
+                            <div className="flex items-center justify-between text-[12px]">
+                              <span className="text-white/40">Removed (invalid/duplicates)</span>
+                              <span className="text-white/50">{removedCount}</span>
+                            </div>
+                          )}
+                          {numBatches > 1 && (
+                            <div className="flex items-center justify-between text-[12px]">
+                              <span className="text-white/40">Batches</span>
+                              <span className="text-white/50">{numBatches}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between text-[12px]">
+                            <span className="text-white/40">Est. credits</span>
+                            <span className={insufficientCredits ? 'text-red-400' : 'text-white/50'}>~{estimatedCredits}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[12px]">
+                            <span className="text-white/40">Available credits</span>
+                            <span className="text-white/50">{availableCredits}</span>
+                          </div>
+                          {insufficientCredits && (
+                            <div className="text-[11px] text-red-400">
+                              Insufficient credits. Need ~{estimatedCredits}, have {availableCredits}.
+                            </div>
+                          )}
+                          {validCount === 0 && (
+                            <div className="text-[11px] text-red-400">
+                              No valid rows found after validation.
+                            </div>
+                          )}
+                          <div className="flex gap-2 pt-2">
+                            <button
+                              onClick={() => {
+                                setBulkParsedData(null);
+                                setBulkNeedsMapping(false);
+                                setBulkColumnMap({});
+                                // Reset sheets state on cancel
+                                setSheetsUrl('');
+                                setSheetsTab('');
+                                setSheetsError(null);
+                              }}
+                              className="flex-1 h-[36px] rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/60 hover:bg-white/[0.08]"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              disabled={insufficientCredits || validCount === 0 || isProcessing}
+                              onClick={async () => {
+                                if (!api || !bulkParsedData) return;
+                                setIsProcessing(true);
+                                setBulkError(null);
+                                setBulkResults(null);
+                                setBulkSummary(null);
+                                setBulkProcessedCount(0);
+                                setBulkStreamingResults([]);
+
+                                try {
+                                  // Build items array
+                                  const seenSet = new Set<string>();
+                                  let items: any[] = [];
+
+                                  if (bulkMode === 'find') {
+                                    bulkParsedData.forEach((row: any, idx: number) => {
+                                      const firstName = (row[map['first_name']] || '').trim();
+                                      const lastName = (row[map['last_name']] || '').trim();
+                                      const domain = (row[map['domain']] || '').trim().toLowerCase();
+                                      if (!firstName || !lastName || !domain) return;
+                                      const key = `${firstName.toLowerCase()}|${lastName.toLowerCase()}|${domain}`;
+                                      if (seenSet.has(key)) return;
+                                      seenSet.add(key);
+                                      items.push({ firstName, lastName, domain, _row: idx });
+                                    });
+                                  } else {
+                                    bulkParsedData.forEach((row: any, idx: number) => {
+                                      const email = (row[map['email']] || '').trim().toLowerCase();
+                                      if (!email || !email.includes('@')) return;
+                                      if (seenSet.has(email)) return;
+                                      seenSet.add(email);
+                                      items.push({ email, _row: idx });
+                                    });
+                                  }
+
+                                  // Chunk and execute
+                                  const totalItems = items.length;
+                                  const batches = Math.ceil(totalItems / chunkSize);
+                                  setBulkTotalRows(totalItems);
+                                  setBulkTotalBatches(batches);
+
+                                  // === BATCH PERSISTENCE: Create batch record ===
+                                  const batchId = generateBatchId();
+                                  setCurrentBatchId(batchId);
+                                  const originalInputs = items.map(item =>
+                                    bulkMode === 'find'
+                                      ? { input: `${item.firstName} ${item.lastName} ${item.domain}`, firstName: item.firstName, lastName: item.lastName, domain: item.domain }
+                                      : { input: item.email, email: item.email }
+                                  );
+                                  let persistedResults: Array<{ input: string; email: string | null }> = [];
+                                  const batchRecord: ConnectorAgentBatch = {
+                                    id: batchId,
+                                    type: bulkMode,
+                                    createdAt: new Date().toISOString(),
+                                    status: 'in_progress',
+                                    inputCount: totalItems,
+                                    completedCount: 0,
+                                    originalInputs,
+                                    results: [],
+                                  };
+                                  saveBatch(batchRecord);
+
+                                  // Clear parsed data early so progress UI shows
+                                  setBulkParsedData(null);
+                                  setBulkNeedsMapping(false);
+                                  setBulkColumnMap({});
+
+                                  let allResults: any[] = [];
+                                  let stopped = false;
+
+                                  for (let b = 0; b < batches && !stopped; b++) {
+                                    setBulkCurrentBatch(b + 1);
+                                    const chunk = items.slice(b * chunkSize, (b + 1) * chunkSize);
+
+                                    let res: any;
+                                    if (bulkMode === 'find') {
+                                      res = await api.findBulk(chunk.map(({ _row, ...rest }: any) => rest));
+                                    } else {
+                                      res = await api.verifyBulk(chunk.map((i: any) => i.email));
+                                    }
+
+                                    // Check for hard-stop errors
+                                    if (res.error) {
+                                      if (res.error.includes('401') || res.error.includes('Invalid')) {
+                                        setBulkError('Invalid or missing API key');
+                                        stopped = true;
+                                      } else if (res.error.includes('402') || res.error.includes('Insufficient') || res.error.includes('Quota exceeded')) {
+                                        setBulkError('Insufficient credits — stopped at batch ' + (b + 1));
+                                        stopped = true;
+                                      } else if (res.error.includes('429')) {
+                                        setBulkError('Rate limited — stopped at batch ' + (b + 1));
+                                        stopped = true;
+                                      } else {
+                                        setBulkError(res.error);
+                                      }
+                                    }
+
+                                    // Accumulate results and stream to UI
+                                    if (res.results) {
+                                      const resultsWithRow = res.results.map((r: any, i: number) => ({
+                                        ...r,
+                                        _row: chunk[i]?._row ?? i,
+                                      }));
+                                      allResults = [...allResults, ...resultsWithRow];
+
+                                      // Stream results to UI incrementally
+                                      setBulkStreamingResults([...allResults]);
+
+                                      // === BATCH PERSISTENCE: Save after each chunk ===
+                                      const chunkPersisted = res.results.map((r: any, i: number) => ({
+                                        input: originalInputs[b * chunkSize + i]?.input || '',
+                                        email: bulkMode === 'find' ? (r.email || null) : (r.verdict === 'VALID' ? r.email : null),
+                                      }));
+                                      persistedResults = [...persistedResults, ...chunkPersisted];
+                                      batchRecord.results = persistedResults;
+                                      batchRecord.completedCount = persistedResults.length;
+                                      saveBatch(batchRecord);
+                                    }
+
+                                    // Update progress with actual count
+                                    const completed = Math.min((b + 1) * chunkSize, totalItems);
+                                    setBulkProcessedCount(completed);
+                                    setBulkProgress(Math.round((completed / totalItems) * 100));
+                                  }
+
+                                  // Sort and set final results
+                                  allResults.sort((a: any, b: any) => a._row - b._row);
+                                  setBulkResults(allResults);
+                                  setBulkStreamingResults([]);
+
+                                  // === BATCH PERSISTENCE: Mark completed ===
+                                  batchRecord.status = 'completed';
+                                  batchRecord.completedCount = persistedResults.length;
+                                  saveBatch(batchRecord);
+                                  setBatchHistory(getAllBatches());
+                                  setCurrentBatchId(null);
+
+                                  // Calculate summary
+                                  if (bulkMode === 'find') {
+                                    setBulkSummary({
+                                      total: allResults.length,
+                                      found: allResults.filter((r: any) => r.email).length,
+                                      not_found: allResults.filter((r: any) => !r.email).length,
+                                    });
+                                  } else {
+                                    setBulkSummary({
+                                      total: allResults.length,
+                                      valid: allResults.filter((r: any) => r.verdict === 'VALID').length,
+                                      invalid: allResults.filter((r: any) => r.verdict === 'INVALID').length,
+                                      unknown: allResults.filter((r: any) => r.verdict !== 'VALID' && r.verdict !== 'INVALID').length,
+                                    });
+                                  }
+
+                                  const quotaResult = await api.getQuota();
+                                  if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
+                                } finally {
+                                  setIsProcessing(false);
+                                  setBulkCurrentBatch(0);
+                                  setBulkTotalBatches(0);
+                                  setBulkProcessedCount(0);
+                                }
+                              }}
+                              className="flex-1 h-[36px] rounded-lg bg-white/[0.08] border border-white/[0.1] text-[11px] font-medium text-white/90 hover:bg-white/[0.12] disabled:opacity-40"
+                            >
+                              {isProcessing ? 'Processing...' : 'Confirm & Run'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Error */}
+                    {bulkError && (
+                      <div className="p-3 rounded-xl bg-red-500/[0.08] border border-red-500/[0.15] text-[12px] text-red-400">
+                        {bulkError}
+                      </div>
+                    )}
+
+                    {isProcessing && (
+                      <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] overflow-hidden">
+                        {/* Progress Header */}
+                        <div className="p-4 space-y-3 border-b border-white/[0.04]">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="relative">
+                                <div className="w-8 h-8 rounded-full bg-white/[0.04] flex items-center justify-center">
+                                  <Loader2 className="w-4 h-4 text-white/60 animate-spin" />
+                                </div>
+                                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500/80 border-2 border-[#0a0a0a]" />
+                              </div>
+                              <div>
+                                <p className="text-[12px] text-white/80 font-medium">
+                                  {bulkMode === 'find' ? 'Resolving contacts' : 'Verifying contacts'}
+                                </p>
+                                <p className="text-[10px] text-white/40">
+                                  {bulkTotalBatches > 1 ? `Batch ${bulkCurrentBatch} of ${bulkTotalBatches}` : 'Processing'}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[14px] font-mono text-white/90 tabular-nums">
+                                {bulkProcessedCount.toLocaleString()} <span className="text-white/30">/</span> {bulkTotalRows.toLocaleString()}
+                              </p>
+                              <p className="text-[10px] text-white/40">{bulkProgress}% complete</p>
+                            </div>
+                          </div>
+                          {/* Progress Bar */}
+                          <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-white/60 to-white/40 rounded-full transition-all duration-300"
+                              style={{ width: `${bulkProgress}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Streaming Results */}
+                        {bulkStreamingResults.length > 0 && (
+                          <div className="max-h-[200px] overflow-y-auto">
+                            <div className="divide-y divide-white/[0.04]">
+                              {bulkStreamingResults.slice(-10).map((result, i) => (
+                                <div
+                                  key={i}
+                                  className="px-4 py-2 flex items-center justify-between text-[11px]"
+                                  style={{
+                                    animation: `fadeSlideIn 0.3s ease ${i * 0.05}s both`,
+                                  }}
+                                >
+                                  <span className="font-mono text-white/50 truncate max-w-[200px]">
+                                    {result.email || `${result.firstName} ${result.lastName}`}
+                                  </span>
+                                  {bulkMode === 'find' ? (
+                                    <span className={result.email ? 'text-violet-400' : 'text-white/30'}>
+                                      {result.email ? 'resolved' : 'pending'}
+                                    </span>
+                                  ) : (
+                                    <span className={
+                                      result.verdict === 'VALID' ? 'text-violet-400' :
+                                      result.verdict === 'INVALID' ? 'text-red-400/60' :
+                                      'text-white/30'
+                                    }>
+                                      {result.verdict === 'VALID' ? 'verified' : result.verdict === 'INVALID' ? 'rejected' : 'queued'}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <style>{`
+                      @keyframes fadeSlideIn {
+                        from { opacity: 0; transform: translateY(-8px); }
+                        to { opacity: 1; transform: translateY(0); }
+                      }
+                    `}</style>
+
+                    {/* Summary */}
+                    {bulkSummary && (
+                      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                        <div className="flex items-center gap-4 text-[12px]">
+                          <span className="text-white/50">Total: <span className="text-white/90 font-medium">{bulkSummary.total}</span></span>
+                          {bulkMode === 'find' ? (
+                            <>
+                              <span className="text-violet-400">Resolved: <span className="font-medium">{bulkSummary.found}</span></span>
+                              <span className="text-white/40">Pending: <span className="font-medium">{bulkSummary.not_found}</span></span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-violet-400">Verified: <span className="font-medium">{bulkSummary.valid}</span></span>
+                              <span className="text-red-400/60">Rejected: <span className="font-medium">{bulkSummary.invalid}</span></span>
+                              <span className="text-white/40">Queued: <span className="font-medium">{bulkSummary.unknown}</span></span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Result Filters — Sticky with counts */}
+                    {bulkResults && bulkResults.length > 0 && (() => {
+                      // Compute counts
+                      const counts = {
+                        all: bulkResults.length,
+                        found: bulkResults.filter(r => !!r.email).length,
+                        not_found: bulkResults.filter(r => !r.email).length,
+                        valid: bulkResults.filter(r => r.verdict === 'VALID').length,
+                        invalid: bulkResults.filter(r => r.verdict === 'INVALID').length,
+                        unknown: bulkResults.filter(r => r.verdict !== 'VALID' && r.verdict !== 'INVALID').length,
+                      };
+                      return (
+                        <div className="sticky top-0 z-10 bg-[#09090b] py-2">
+                          <div className="flex gap-1 p-1 rounded-lg bg-white/[0.02] border border-white/[0.06] w-fit">
+                            {bulkMode === 'find' ? (
+                              <>
+                                {[
+                                  { id: 'all' as const, label: 'All', count: counts.all },
+                                  { id: 'found' as const, label: 'Resolved', count: counts.found },
+                                  { id: 'not_found' as const, label: 'Pending', count: counts.not_found },
+                                ].map(f => (
+                                  <button
+                                    key={f.id}
+                                    onClick={() => setBulkFilter(f.id)}
+                                    className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
+                                      bulkFilter === f.id ? 'bg-white/[0.08] text-white/90' : 'text-white/40 hover:text-white/60'
+                                    }`}
+                                  >
+                                    {f.label} ({f.count})
+                                  </button>
+                                ))}
+                              </>
+                            ) : (
+                              <>
+                                {[
+                                  { id: 'all' as const, label: 'All', count: counts.all },
+                                  { id: 'valid' as const, label: 'Verified', count: counts.valid },
+                                  { id: 'invalid' as const, label: 'Rejected', count: counts.invalid },
+                                  { id: 'unknown' as const, label: 'Queued', count: counts.unknown },
+                                ].map(f => (
+                                  <button
+                                    key={f.id}
+                                    onClick={() => setBulkFilter(f.id)}
+                                    className={`px-3 py-1 rounded text-[10px] font-medium transition-all ${
+                                      bulkFilter === f.id ? 'bg-white/[0.08] text-white/90' : 'text-white/40 hover:text-white/60'
+                                    }`}
+                                  >
+                                    {f.label} ({f.count})
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Results Table */}
+                    {bulkResults && bulkResults.length > 0 && (() => {
+                      const filtered = bulkResults.filter(row => {
+                        if (bulkFilter === 'all') return true;
+                        if (bulkMode === 'find') {
+                          if (bulkFilter === 'found') return !!row.email;
+                          if (bulkFilter === 'not_found') return !row.email;
+                        } else {
+                          if (bulkFilter === 'valid') return row.verdict === 'VALID';
+                          if (bulkFilter === 'invalid') return row.verdict === 'INVALID';
+                          if (bulkFilter === 'unknown') return row.verdict !== 'VALID' && row.verdict !== 'INVALID';
+                        }
+                        return true;
+                      });
+
+                      return (
+                        <>
+                          <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                            <div className="max-h-[300px] overflow-y-auto">
+                              <table className="w-full text-[11px]">
+                                <thead className="bg-white/[0.02] sticky top-0">
+                                  <tr>
+                                    {bulkMode === 'find' ? (
+                                      <>
+                                        <th className="text-left px-3 py-2 text-white/40 font-medium">Name</th>
+                                        <th className="text-left px-3 py-2 text-white/40 font-medium">Domain</th>
+                                        <th className="text-left px-3 py-2 text-white/40 font-medium">Contact</th>
+                                        <th className="text-left px-3 py-2 text-white/40 font-medium">Status</th>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <th className="text-left px-3 py-2 text-white/40 font-medium">Contact</th>
+                                        <th className="text-left px-3 py-2 text-white/40 font-medium">Status</th>
+                                      </>
+                                    )}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {filtered.map((row, i) => (
+                                    <tr key={i} className="border-t border-white/[0.04]">
+                                      {bulkMode === 'find' ? (
+                                        <>
+                                          <td className="px-3 py-2 text-white/70">{row.firstName} {row.lastName}</td>
+                                          <td className="px-3 py-2 text-white/50">{row.domain}</td>
+                                          <td className="px-3 py-2">
+                                            {row.email ? (
+                                              <span className="text-emerald-400 font-mono">{row.email}</span>
+                                            ) : (
+                                              <span className="text-white/30">—</span>
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2">
+                                            <span className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase ${
+                                              row.email ? 'bg-emerald-500/[0.15] text-emerald-400' : 'bg-white/[0.06] text-white/40'
+                                            }`}>
+                                              {row.email ? 'found' : 'not_found'}
+                                            </span>
+                                          </td>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <td className="px-3 py-2 text-white/70 font-mono">{row.email}</td>
+                                          <td className="px-3 py-2">
+                                            <span className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase ${
+                                              row.verdict === 'VALID' ? 'bg-emerald-500/[0.15] text-emerald-400' :
+                                              row.verdict === 'INVALID' ? 'bg-red-500/[0.15] text-red-400' :
+                                              'bg-white/[0.06] text-white/40'
+                                            }`}>
+                                              {row.verdict || 'unknown'}
+                                            </span>
+                                          </td>
+                                        </>
+                                      )}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+
+                          {/* Download CSV */}
+                          <button
+                            onClick={() => {
+                              if (!bulkResults) return;
+                              let csv = '';
+                              if (bulkMode === 'find') {
+                                csv = 'first_name,last_name,domain,email,status\n';
+                                bulkResults.forEach(row => {
+                                  csv += `"${row.firstName || ''}","${row.lastName || ''}","${row.domain || ''}","${row.email || ''}","${row.email ? 'found' : 'not_found'}"\n`;
+                                });
+                              } else {
+                                csv = 'email,status\n';
+                                bulkResults.forEach(row => {
+                                  csv += `"${row.email || ''}","${row.verdict || 'unknown'}"\n`;
+                                });
+                              }
+                              const blob = new Blob([csv], { type: 'text/csv' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `bulk_${bulkMode}_results.csv`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="w-full h-[40px] rounded-xl bg-white/[0.04] border border-white/[0.08] text-[12px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Copy className="w-4 h-4" />
+                            Download CSV
+                          </button>
+                        </>
+                      );
+                    })()}
+
+                    {/* === HISTORY SECTION === */}
+                    {batchHistory.length > 0 && !isProcessing && (
+                      <div className="mt-6 pt-6 border-t border-white/[0.06]">
+                        <button
+                          onClick={() => setShowHistory(!showHistory)}
+                          className="w-full flex items-center justify-between text-[11px] font-medium text-white/40 hover:text-white/60 transition-colors"
+                        >
+                          <span>History ({batchHistory.length})</span>
+                          <span className="text-[10px]">{showHistory ? '▲' : '▼'}</span>
+                        </button>
+
+                        {showHistory && (
+                          <div className="mt-3 space-y-2">
+                            {batchHistory.slice(0, 20).map((batch) => (
+                              <div
+                                key={batch.id}
+                                className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.1] transition-colors"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-2 h-2 rounded-full ${batch.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                    <div>
+                                      <div className="text-[12px] text-white/70">
+                                        {batch.type === 'find' ? 'Find' : 'Verify'} · {batch.completedCount}/{batch.inputCount}
+                                      </div>
+                                      <div className="text-[10px] text-white/30">
+                                        {new Date(batch.createdAt).toLocaleDateString()} {new Date(batch.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {batch.status === 'in_progress' && (
+                                      <button
+                                        onClick={() => {
+                                          setPendingResumeBatch(batch);
+                                          setShowResumeModal(true);
+                                        }}
+                                        className="px-2 py-1 rounded-lg bg-amber-500/[0.1] border border-amber-500/[0.2] text-[10px] font-medium text-amber-400 hover:bg-amber-500/[0.2] transition-colors"
+                                      >
+                                        Resume
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => {
+                                        const csv = batchToCSV(batch);
+                                        const blob = new Blob([csv], { type: 'text/csv' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `${batch.type}_${batch.id}.csv`;
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[10px] font-medium text-white/50 hover:bg-white/[0.08] transition-colors"
+                                    >
+                                      CSV
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        deleteBatch(batch.id);
+                                        setBatchHistory(getAllBatches());
+                                      }}
+                                      className="px-2 py-1 rounded-lg bg-white/[0.02] border border-white/[0.06] text-[10px] text-white/30 hover:text-red-400 hover:border-red-500/[0.2] transition-colors"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </motion.div>
                 )}
 
@@ -1224,6 +2646,227 @@ function ConnectorAgentInner() {
         )}
 
       </motion.div>
+
+      {/* Revoke Confirmation Modal */}
+      <AnimatePresence>
+        {showRevokeConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowRevokeConfirm(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm mx-4 p-6 rounded-2xl bg-[#111] border border-white/[0.08]"
+            >
+              <div className="w-12 h-12 rounded-xl bg-red-500/[0.1] border border-red-500/[0.15] flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-6 h-6 text-red-400" />
+              </div>
+              <h3 className="text-[15px] font-semibold text-white/90 text-center mb-2">Revoke API Key?</h3>
+              <p className="text-[13px] text-white/50 text-center mb-6">
+                This action cannot be undone. You'll need to generate a new key to continue using the API.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowRevokeConfirm(false)}
+                  className="flex-1 h-[42px] rounded-xl bg-white/[0.04] border border-white/[0.08] text-[13px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRevokeKey}
+                  className="flex-1 h-[42px] rounded-xl bg-red-500/[0.15] border border-red-500/[0.2] text-[13px] font-medium text-red-400 hover:bg-red-500/[0.25] transition-colors"
+                >
+                  Revoke Key
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* === RESUME MODAL === */}
+        {showResumeModal && pendingResumeBatch && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50"
+            onClick={() => setShowResumeModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-sm mx-4 p-6 rounded-2xl bg-[#111] border border-white/[0.08]"
+            >
+              <div className="w-12 h-12 rounded-xl bg-amber-500/[0.1] border border-amber-500/[0.15] flex items-center justify-center mx-auto mb-4">
+                <Activity className="w-6 h-6 text-amber-400" />
+              </div>
+              <h3 className="text-[15px] font-semibold text-white/90 text-center mb-2">Resume Batch?</h3>
+              <p className="text-[13px] text-white/50 text-center mb-2">
+                {pendingResumeBatch.type === 'find' ? 'Find' : 'Verify'} · {pendingResumeBatch.completedCount}/{pendingResumeBatch.inputCount} completed
+              </p>
+              <p className="text-[11px] text-white/30 text-center mb-6">
+                Started {new Date(pendingResumeBatch.createdAt).toLocaleDateString()} {new Date(pendingResumeBatch.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    // Discard batch
+                    deleteBatch(pendingResumeBatch.id);
+                    setBatchHistory(getAllBatches());
+                    setShowResumeModal(false);
+                    setPendingResumeBatch(null);
+                  }}
+                  className="flex-1 h-[42px] rounded-xl bg-white/[0.04] border border-white/[0.08] text-[13px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!api || !pendingResumeBatch) return;
+
+                    // Switch to bulk tab and set mode
+                    setActiveTab('bulk');
+                    setBulkMode(pendingResumeBatch.type);
+                    setShowResumeModal(false);
+
+                    // Calculate remaining items
+                    const remainingInputs = pendingResumeBatch.originalInputs.slice(pendingResumeBatch.completedCount);
+                    if (remainingInputs.length === 0) {
+                      // Already complete, just mark it
+                      const batch = getBatch(pendingResumeBatch.id);
+                      if (batch) {
+                        batch.status = 'completed';
+                        saveBatch(batch);
+                        setBatchHistory(getAllBatches());
+                      }
+                      setPendingResumeBatch(null);
+                      return;
+                    }
+
+                    // Start processing
+                    setIsProcessing(true);
+                    setBulkError(null);
+                    setBulkResults(null);
+                    setBulkSummary(null);
+                    setBulkProcessedCount(pendingResumeBatch.completedCount);
+                    setBulkStreamingResults([]);
+
+                    const CHUNK_SIZE = 10;
+                    const totalItems = pendingResumeBatch.inputCount;
+                    const batches = Math.ceil(remainingInputs.length / CHUNK_SIZE);
+                    setBulkTotalRows(totalItems);
+                    setBulkTotalBatches(batches);
+                    setCurrentBatchId(pendingResumeBatch.id);
+
+                    let batchRecord = pendingResumeBatch;
+                    let persistedResults = [...batchRecord.results];
+                    let allResults: any[] = [];
+                    let stopped = false;
+
+                    try {
+                      for (let b = 0; b < batches && !stopped; b++) {
+                        setBulkCurrentBatch(b + 1);
+                        const chunk = remainingInputs.slice(b * CHUNK_SIZE, (b + 1) * CHUNK_SIZE);
+
+                        let res: any;
+                        if (batchRecord.type === 'find') {
+                          res = await api.findBulk(chunk.map(item => ({
+                            firstName: item.firstName!,
+                            lastName: item.lastName!,
+                            domain: item.domain!,
+                          })));
+                        } else {
+                          res = await api.verifyBulk(chunk.map(item => item.email!));
+                        }
+
+                        // Check for errors
+                        if (res.error) {
+                          if (res.error.includes('401') || res.error.includes('Invalid')) {
+                            setBulkError('Invalid or missing API key');
+                            stopped = true;
+                          } else if (res.error.includes('402') || res.error.includes('Insufficient') || res.error.includes('Quota exceeded')) {
+                            setBulkError('Insufficient credits — stopped');
+                            stopped = true;
+                          } else if (res.error.includes('429')) {
+                            setBulkError('Rate limited — stopped');
+                            stopped = true;
+                          } else {
+                            setBulkError(res.error);
+                          }
+                        }
+
+                        if (res.results) {
+                          allResults = [...allResults, ...res.results];
+                          setBulkStreamingResults([...allResults]);
+
+                          // Persist
+                          const chunkPersisted = res.results.map((r: any, i: number) => ({
+                            input: chunk[i]?.input || '',
+                            email: batchRecord.type === 'find' ? (r.email || null) : (r.verdict === 'VALID' ? r.email : null),
+                          }));
+                          persistedResults = [...persistedResults, ...chunkPersisted];
+                          batchRecord.results = persistedResults;
+                          batchRecord.completedCount = persistedResults.length;
+                          saveBatch(batchRecord);
+                        }
+
+                        const completed = pendingResumeBatch.completedCount + Math.min((b + 1) * CHUNK_SIZE, remainingInputs.length);
+                        setBulkProcessedCount(completed);
+                        setBulkProgress(Math.round((completed / totalItems) * 100));
+                      }
+
+                      // Mark completed
+                      batchRecord.status = 'completed';
+                      saveBatch(batchRecord);
+                      setBatchHistory(getAllBatches());
+                      setCurrentBatchId(null);
+
+                      // Set final results
+                      setBulkResults(allResults);
+                      setBulkStreamingResults([]);
+
+                      // Calculate summary
+                      if (batchRecord.type === 'find') {
+                        setBulkSummary({
+                          total: allResults.length,
+                          found: allResults.filter((r: any) => r.email).length,
+                          not_found: allResults.filter((r: any) => !r.email).length,
+                        });
+                      } else {
+                        setBulkSummary({
+                          total: allResults.length,
+                          valid: allResults.filter((r: any) => r.verdict === 'VALID').length,
+                          invalid: allResults.filter((r: any) => r.verdict === 'INVALID').length,
+                          unknown: allResults.filter((r: any) => r.verdict !== 'VALID' && r.verdict !== 'INVALID').length,
+                        });
+                      }
+
+                      const quotaResult = await api.getQuota();
+                      if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
+                    } finally {
+                      setIsProcessing(false);
+                      setBulkCurrentBatch(0);
+                      setBulkTotalBatches(0);
+                      setPendingResumeBatch(null);
+                    }
+                  }}
+                  className="flex-1 h-[42px] rounded-xl bg-amber-500/[0.15] border border-amber-500/[0.2] text-[13px] font-medium text-amber-400 hover:bg-amber-500/[0.25] transition-colors"
+                >
+                  Resume
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1243,8 +2886,8 @@ export default function ConnectorAgent() {
   }
 
   return (
-    <SSMGateLocal>
+    <SSMGate featureName="Connector Agent">
       <ConnectorAgentInner />
-    </SSMGateLocal>
+    </SSMGate>
   );
 }
