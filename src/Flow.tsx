@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -17,7 +17,7 @@ import { supabase } from './lib/supabase';
 // New architecture
 import { validateDataset, normalizeDataset, NormalizedRecord, Schema } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
-import { enrichRecord, EnrichmentConfig, EnrichmentResult } from './enrichment';
+import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
 // AI Config type + Antifragile intro generation
@@ -34,6 +34,62 @@ import { resolveSender, buildSenderConfig, SenderAdapter, SenderConfig } from '.
 
 // Connector Hub Adapter (side-channel - does NOT modify existing flow)
 import { isFromHub, hasHubContacts, getHubBothSides, clearHubContacts } from './services/ConnectorHubAdapter';
+
+// Supply Annotations — Operator judgment persistence (render-only, no matching impact)
+import {
+  SupplyAnnotation,
+  fingerprintFromSupply,
+  fetchAllUserAnnotations,
+  toggleStarred,
+  toggleExcluded,
+  getGuestAnnotations,
+  saveGuestAnnotation,
+} from './services/SupplyAnnotationService';
+
+// Connector Mode — Deterministic supply filter builder (FIX 1 + FIX 2)
+import {
+  ConnectorMode,
+  detectConnectorMode,
+  buildSupplyFilters,
+  validateSupplyRecord,
+  getModeLabel,
+  MODE_LABELS,
+  getModesForUI,
+} from './services/SupplyFilterBuilder';
+
+// Enterprise Validation — Copy validation, evidence gates
+import {
+  getModeContract,
+  getAvailableModes,
+  MODE_REGISTRY_VERSION,
+  getPresignalExamples,
+  getModeDocsAnchor,
+} from './services/ConnectorModeRegistry';
+import {
+  buildEvidenceSet,
+  emptyEvidenceSet,
+  type EvidenceSet,
+} from './services/EvidenceGate';
+import {
+  validateCopy,
+  canSend,
+  type CopyValidationResult,
+} from './services/CopyValidator';
+
+// Observability
+import {
+  RunAuditPanel,
+  createEmptyAuditData,
+  type RunAuditData,
+  type ValidationFailure,
+} from './components/RunAuditPanel';
+
+// Premium UX Components (Education + Explainability)
+import { AlertPanel, AlertFromExplanation } from './components/AlertPanel';
+import { TooltipHint, LabelWithHint } from './components/TooltipHint';
+import { InlineHelpLink } from './components/InlineHelpLink';
+import { explain, type UXBlock } from './services/Explainability';
+import { DOCS } from './config/docs';
 
 // =============================================================================
 // INTRO GENERATION — Now handled by IntroGenerator.ts
@@ -54,6 +110,20 @@ function extractStageFromFunding(funding: string): string | null {
   if (lower.includes('seed')) return 'Seed';
   if (lower.includes('public') || lower.includes('ipo')) return 'Public';
   return null;
+}
+
+/**
+ * Normalize domain for consistent key lookup.
+ * "http://www.vitatek.com/" → "vitatek.com"
+ */
+function normalizeDomain(input?: string): string | null {
+  if (!input) return null;
+  return input
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .trim() || null;
 }
 
 /**
@@ -142,6 +212,38 @@ function detectCommonSignal(signals: string[]): string {
 }
 
 // =============================================================================
+// USER-FRIENDLY ERROR MESSAGES
+// =============================================================================
+
+type ErrorCode =
+  | 'MISSING_APIFY_TOKEN'
+  | 'MISSING_DATASET_ID'
+  | 'DATASET_FETCH_FAILED'
+  | 'DATASET_EMPTY'
+  | 'DATASET_INVALID'
+  | 'MISSING_SUPPLY'
+  | 'HUB_ERROR'
+  | 'HUB_MISSING_SIDE'
+  | 'CONTRACT_VIOLATION'
+  | 'UNKNOWN';
+
+function toUserError(code: ErrorCode, detail?: string): string {
+  const messages: Record<ErrorCode, string> = {
+    MISSING_APIFY_TOKEN: 'Missing Apify token. Go to Settings → Data Sources, paste your Apify API token.',
+    MISSING_DATASET_ID: 'Missing dataset ID. Go to Settings → Data Sources, add your Apify dataset ID.',
+    DATASET_FETCH_FAILED: `Failed to fetch dataset${detail ? `: ${detail}` : ''}. Check your dataset ID and Apify token, then retry.`,
+    DATASET_EMPTY: 'Dataset returned 0 rows. Run your Apify scraper first, or check the dataset ID.',
+    DATASET_INVALID: `Dataset format not recognized${detail ? `: ${detail}` : ''}. Use a supported Apify scraper (Wellfound Jobs, LinkedIn Company Leads).`,
+    MISSING_SUPPLY: 'No supply dataset configured. Go to Settings → Data Sources, add a supply dataset ID.',
+    HUB_ERROR: detail || 'Hub data error. Please try selecting contacts again.',
+    HUB_MISSING_SIDE: 'Hub requires both Demand and Supply contacts. Go back to Hub and select contacts for both sides.',
+    CONTRACT_VIOLATION: `Data validation failed${detail ? `: ${detail}` : ''}. Check console for details.`,
+    UNKNOWN: detail || 'Something went wrong. Check console for details.',
+  };
+  return messages[code];
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -150,6 +252,10 @@ interface FlowState {
 
   // Source tracking (for UI labels)
   isHubFlow: boolean;
+
+  // Connector Mode (FIX 1) — determines supply filter + intro language
+  connectorMode: ConnectorMode | null;  // null = not yet selected
+  customModeAcknowledged: boolean;  // Safety interlock for Custom mode
 
   // Datasets
   demandSchema: Schema | null;
@@ -177,6 +283,17 @@ interface FlowState {
 
   // Error
   error: string | null;
+
+  // Audit (observability)
+  auditData: RunAuditData | null;
+  copyValidationFailures: CopyValidationResult[];
+}
+
+// Pre-signal context entry (operator-written)
+interface PreSignalContextEntry {
+  text: string;
+  source?: 'linkedin' | 'news' | 'prior_convo' | 'job_post' | 'other';
+  updatedAt: string;
 }
 
 interface Settings {
@@ -185,12 +302,22 @@ interface Settings {
   supplyDatasetId?: string;
   apolloApiKey?: string;
   anymailApiKey?: string;
-  ssmApiKey?: string;
+  connectorAgentApiKey?: string;
+  // Sending provider
+  sendingProvider?: 'instantly' | 'plusvibe';
   instantlyApiKey?: string;
+  plusvibeApiKey?: string;
+  plusvibeWorkspaceId?: string;
   demandCampaignId?: string;
   supplyCampaignId?: string;
   // AI
   aiConfig: AIConfig | null;
+  // FIX 1: Connector mode (persisted per operator)
+  connectorMode?: ConnectorMode | null;
+  // FIX 4: Pre-signal context split by side (keyed by domain)
+  preSignalContext?: Record<string, PreSignalContextEntry>;  // Legacy - single field
+  presignalDemand?: Record<string, PreSignalContextEntry>;   // NEW - demand side
+  presignalSupply?: Record<string, PreSignalContextEntry>;   // NEW - supply side
 }
 
 // =============================================================================
@@ -201,6 +328,8 @@ export default function Flow() {
   const [state, setState] = useState<FlowState>({
     step: 'upload',
     isHubFlow: false,
+    connectorMode: null,  // FIX 1: Will be auto-detected or user-selected
+    customModeAcknowledged: false,  // Safety interlock for Custom mode
     demandSchema: null,
     supplySchema: null,
     demandRecords: [],
@@ -214,12 +343,35 @@ export default function Flow() {
     sentDemand: 0,
     sentSupply: 0,
     error: null,
+    auditData: null,
+    copyValidationFailures: [],
   });
 
   const [settings, setSettings] = useState<Settings | null>(null);
+
+  // Pre-signal context editing state
+  const [editingContextDomain, setEditingContextDomain] = useState<string | null>(null);
+  const [contextText, setContextText] = useState('');
+  const [contextSource, setContextSource] = useState<'linkedin' | 'news' | 'prior_convo' | 'job_post' | 'other'>('other');
+  const [savingContext, setSavingContext] = useState(false);
+
+  // Supply Annotations — Operator judgment (render-only, no matching impact)
+  const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
+
   const abortRef = useRef(false);
+  const errorRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
+
+  // Scroll to error when it appears
+  useEffect(() => {
+    if (state.error && errorRef.current) {
+      errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [state.error]);
+
+  // Debug mode check
+  const isDebugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
   // Load settings (auth-aware: Supabase for logged-in, localStorage for guests)
   useEffect(() => {
@@ -270,17 +422,32 @@ export default function Flow() {
 
           const aiConfig = buildAIConfig(ai);
 
+          // Determine sending provider
+          const sendingProvider = data?.sending_provider || 'instantly';
+
+          // Select campaign IDs based on provider
+          const demandCampaignId = sendingProvider === 'plusvibe'
+            ? data?.plusvibe_campaign_demand || ''
+            : data?.instantly_campaign_demand || '';
+          const supplyCampaignId = sendingProvider === 'plusvibe'
+            ? data?.plusvibe_campaign_supply || ''
+            : data?.instantly_campaign_supply || '';
+
           setSettings({
             apifyToken: data?.apify_token || '',
             demandDatasetId: data?.demand_dataset_id || '',
             supplyDatasetId: data?.supply_dataset_id || '',
             apolloApiKey: data?.enrichment_api_key || '',
             anymailApiKey: data?.anymail_finder_api_key || '',
-            ssmApiKey: data?.ssm_api_key || '',
+            connectorAgentApiKey: data?.connector_agent_api_key || '',
+            sendingProvider,
             instantlyApiKey: data?.instantly_api_key || '',
-            demandCampaignId: data?.instantly_campaign_demand || '',
-            supplyCampaignId: data?.instantly_campaign_supply || '',
+            plusvibeApiKey: data?.plusvibe_api_key || '',
+            plusvibeWorkspaceId: data?.plusvibe_workspace_id || '',
+            demandCampaignId,
+            supplyCampaignId,
             aiConfig,
+            preSignalContext: data?.pre_signal_context || {},
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
@@ -303,17 +470,32 @@ export default function Flow() {
 
         const aiConfig = buildAIConfig(s);
 
+        // Determine sending provider
+        const sendingProvider = s.sendingProvider || 'instantly';
+
+        // Select campaign IDs based on provider
+        const demandCampaignId = sendingProvider === 'plusvibe'
+          ? s.plusvibeCampaignDemand
+          : s.instantlyCampaignDemand;
+        const supplyCampaignId = sendingProvider === 'plusvibe'
+          ? s.plusvibeCampaignSupply
+          : s.instantlyCampaignSupply;
+
         setSettings({
           apifyToken: s.apifyToken,
           demandDatasetId: s.demandDatasetId,
           supplyDatasetId: s.supplyDatasetId,
           apolloApiKey: s.apolloApiKey,
           anymailApiKey: s.anymailApiKey,
-          ssmApiKey: s.ssmApiKey,
+          connectorAgentApiKey: s.connectorAgentApiKey,
+          sendingProvider,
           instantlyApiKey: s.instantlyApiKey,
-          demandCampaignId: s.instantlyCampaignDemand,
-          supplyCampaignId: s.instantlyCampaignSupply,
+          plusvibeApiKey: s.plusvibeApiKey,
+          plusvibeWorkspaceId: s.plusvibeWorkspaceId,
+          demandCampaignId,
+          supplyCampaignId,
           aiConfig,
+          preSignalContext: s.preSignalContext || {},
         });
 
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
@@ -325,6 +507,129 @@ export default function Flow() {
 
     loadSettings();
   }, [isAuthenticated, user?.id]);
+
+  // Load supply annotations (operator judgment — render-only, no matching impact)
+  useEffect(() => {
+    const loadAnnotations = async () => {
+      try {
+        if (isAuthenticated && user?.id) {
+          const annotations = await fetchAllUserAnnotations();
+          setSupplyAnnotations(annotations);
+        } else {
+          // Guest mode: load from localStorage
+          const guestAnnotations = getGuestAnnotations();
+          setSupplyAnnotations(guestAnnotations);
+        }
+      } catch (err) {
+        console.warn('[Flow] Failed to load supply annotations:', err);
+      }
+    };
+    loadAnnotations();
+  }, [isAuthenticated, user?.id]);
+
+  // Handle star/exclude toggle for supply
+  const handleToggleStar = useCallback(async (fingerprint: string) => {
+    const current = supplyAnnotations.get(fingerprint);
+    const currentValue = current?.starred ?? false;
+
+    // Optimistic update
+    setSupplyAnnotations(prev => {
+      const next = new Map(prev);
+      next.set(fingerprint, { ...current, supplier_fingerprint: fingerprint, starred: !currentValue, excluded: current?.excluded ?? false, notes: current?.notes ?? null, tags: current?.tags ?? [] });
+      return next;
+    });
+
+    // Persist
+    if (isAuthenticated && user?.id) {
+      await toggleStarred(fingerprint, currentValue);
+    } else {
+      saveGuestAnnotation(fingerprint, { starred: !currentValue });
+    }
+  }, [supplyAnnotations, isAuthenticated, user?.id]);
+
+  const handleToggleExcluded = useCallback(async (fingerprint: string) => {
+    const current = supplyAnnotations.get(fingerprint);
+    const currentValue = current?.excluded ?? false;
+
+    // Optimistic update
+    setSupplyAnnotations(prev => {
+      const next = new Map(prev);
+      next.set(fingerprint, { ...current, supplier_fingerprint: fingerprint, starred: current?.starred ?? false, excluded: !currentValue, notes: current?.notes ?? null, tags: current?.tags ?? [] });
+      return next;
+    });
+
+    // Persist
+    if (isAuthenticated && user?.id) {
+      await toggleExcluded(fingerprint, currentValue);
+    } else {
+      saveGuestAnnotation(fingerprint, { excluded: !currentValue });
+    }
+  }, [supplyAnnotations, isAuthenticated, user?.id]);
+
+  // Save pre-signal context for a domain
+  const saveContext = useCallback(async (domain: string) => {
+    const normalizedKey = normalizeDomain(domain);
+    if (!normalizedKey || !contextText.trim()) {
+      setEditingContextDomain(null);
+      return;
+    }
+
+    setSavingContext(true);
+    try {
+      const entry: PreSignalContextEntry = {
+        text: contextText.trim(),
+        source: contextSource,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const updatedContext = {
+        ...(settings?.preSignalContext || {}),
+        [normalizedKey]: entry,  // Use normalized domain as key
+      };
+      console.log('[Flow] Saving context with normalized key:', normalizedKey);
+
+      // Update local state immediately
+      setSettings(prev => prev ? { ...prev, preSignalContext: updatedContext } : prev);
+
+      // Persist based on auth state
+      if (isAuthenticated && user?.id) {
+        await supabase.from('operator_settings').upsert({
+          user_id: user.id,
+          pre_signal_context: updatedContext,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+        console.log('[Flow] Saved context to Supabase:', domain);
+      } else {
+        // Guest: update localStorage
+        const stored = localStorage.getItem('guest_settings');
+        const parsed = stored ? JSON.parse(stored) : { settings: {} };
+        const updatedSettings = { ...parsed.settings, preSignalContext: updatedContext };
+        localStorage.setItem('guest_settings', JSON.stringify({ settings: updatedSettings }));
+        console.log('[Flow] Saved context to localStorage:', domain);
+      }
+
+      setEditingContextDomain(null);
+      setContextText('');
+    } catch (e) {
+      console.error('[Flow] Failed to save context:', e);
+    }
+    setSavingContext(false);
+  }, [contextText, contextSource, settings, isAuthenticated, user?.id]);
+
+  // Start editing context for a domain
+  const startEditContext = useCallback((domain: string, side: 'demand' | 'supply') => {
+    const normalizedKey = normalizeDomain(domain);
+    const existing = normalizedKey ? settings?.preSignalContext?.[normalizedKey] : undefined;
+    setContextText(existing?.text || '');
+    setContextSource(existing?.source || 'other');
+    setEditingContextDomain(domain);  // Keep original for display
+  }, [settings]);
+
+  // Cancel editing
+  const cancelEditContext = useCallback(() => {
+    setEditingContextDomain(null);
+    setContextText('');
+  }, []);
 
   // Auto-start when coming from Connector Hub (ref to avoid dependency issues)
   const hubAutoStartRef = useRef(false);
@@ -364,7 +669,7 @@ export default function Flow() {
           setState(prev => ({
             ...prev,
             step: 'upload',
-            error: hubError,
+            error: toUserError('HUB_ERROR', hubError),
           }));
           return;
         }
@@ -375,7 +680,7 @@ export default function Flow() {
           setState(prev => ({
             ...prev,
             step: 'upload',
-            error: 'Hub requires both Demand and Supply. Please select contacts for both sides.',
+            error: toUserError('HUB_MISSING_SIDE'),
           }));
           return;
         }
@@ -425,7 +730,7 @@ export default function Flow() {
           setState(prev => ({
             ...prev,
             step: 'upload',
-            error: 'Hub data contract violation (demand). Check console for details.',
+            error: toUserError('CONTRACT_VIOLATION', 'demand records missing required fields'),
           }));
           return;
         }
@@ -434,7 +739,7 @@ export default function Flow() {
           setState(prev => ({
             ...prev,
             step: 'upload',
-            error: 'Hub data contract violation (supply). Check console for details.',
+            error: toUserError('CONTRACT_VIOLATION', 'supply records missing required fields'),
           }));
           return;
         }
@@ -477,8 +782,12 @@ export default function Flow() {
       // END HUB ADAPTER - Normal flow continues below
       // =========================================================================
 
-      if (!settings?.demandDatasetId || !settings?.apifyToken) {
-        setState(prev => ({ ...prev, step: 'upload', error: 'Configure datasets in Settings' }));
+      if (!settings?.apifyToken) {
+        setState(prev => ({ ...prev, step: 'upload', error: toUserError('MISSING_APIFY_TOKEN') }));
+        return;
+      }
+      if (!settings?.demandDatasetId) {
+        setState(prev => ({ ...prev, step: 'upload', error: toUserError('MISSING_DATASET_ID') }));
         return;
       }
 
@@ -493,11 +802,22 @@ export default function Flow() {
       // Validate demand
       const demandValidation = validateDataset(demandData);
       console.log('[Flow] Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
+
+      // Check for empty dataset
+      if (!demandData || demandData.length === 0) {
+        setState(prev => ({
+          ...prev,
+          step: 'upload',
+          error: toUserError('DATASET_EMPTY'),
+        }));
+        return;
+      }
+
       if (!demandValidation.valid || !demandValidation.schema) {
         setState(prev => ({
           ...prev,
           step: 'upload',
-          error: demandValidation.error || 'Invalid demand dataset',
+          error: toUserError('DATASET_INVALID', demandValidation.error),
         }));
         return;
       }
@@ -544,10 +864,11 @@ export default function Flow() {
 
     } catch (err) {
       console.error('[Flow] Validation failed:', err);
+      const detail = err instanceof Error ? err.message : undefined;
       setState(prev => ({
         ...prev,
         step: 'upload',
-        error: err instanceof Error ? err.message : 'Failed to load datasets',
+        error: toUserError('DATASET_FETCH_FAILED', detail),
       }));
     }
   }, [settings]);
@@ -592,7 +913,7 @@ export default function Flow() {
       setState(prev => ({
         ...prev,
         step: 'upload',
-        error: 'Configure supply dataset in Settings. Matching requires both demand and supply.',
+        error: toUserError('MISSING_SUPPLY'),
       }));
       return;
     }
@@ -660,7 +981,7 @@ export default function Flow() {
   };
 
   // =============================================================================
-  // STEP 3: ENRICHMENT
+  // STEP 3: ENRICHMENT (bounded concurrency, circuit breaker, per-record isolation)
   // =============================================================================
 
   const runEnrichment = async (
@@ -671,46 +992,47 @@ export default function Flow() {
     const config: EnrichmentConfig = {
       apolloApiKey: settings?.apolloApiKey,
       anymailApiKey: settings?.anymailApiKey,
-      ssmApiKey: settings?.ssmApiKey,
+      connectorAgentApiKey: settings?.connectorAgentApiKey,
     };
+
+    // Run ID for this batch
+    const runId = `flow-${Date.now()}`;
 
     console.log('[Flow] Enrichment config:', {
       hasApollo: !!config.apolloApiKey,
       hasAnymail: !!config.anymailApiKey,
-      hasSsm: !!config.ssmApiKey,
+      hasConnectorAgent: !!config.connectorAgentApiKey,
+      runId,
+      concurrency: 5,
     });
 
-    const enrichedDemand = new Map<string, EnrichmentResult>();
+    // Enrich demand side with bounded concurrency
+    const demandRecords = matching.demandMatches.map(m => m.demand);
+    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5)`);
+
+    const enrichedDemand = await enrichBatch(
+      demandRecords,
+      demandSchema,
+      config,
+      (current, total) => {
+        setState(prev => ({
+          ...prev,
+          progress: { current, total, message: `Enriching ${current}/${total}` },
+        }));
+      },
+      `${runId}-demand`
+    );
+
+    // Update state with demand results
+    setState(prev => ({ ...prev, enrichedDemand: new Map(enrichedDemand) }));
+
+    // Enrich supply side
     const enrichedSupply = new Map<string, EnrichmentResult>();
-
-    // Enrich demand side
-    const demandToEnrich = matching.demandMatches;
-    console.log(`[Flow] Enriching ${demandToEnrich.length} demand matches`);
-
-    for (let i = 0; i < demandToEnrich.length; i++) {
-      if (abortRef.current) break;
-
-      const match = demandToEnrich[i];
-      const record = match.demand;
-
-      console.log(`[Flow] Enriching demand ${i + 1}:`, { domain: record.domain, email: record.email, firstName: record.firstName });
-      const result = await enrichRecord(record, demandSchema, config, record.signal);
-      console.log(`[Flow] Enrichment result:`, { success: result.success, email: result.email, firstName: result.firstName });
-      enrichedDemand.set(record.domain, result);
-
-      setState(prev => ({
-        ...prev,
-        progress: { current: i + 1, total: demandToEnrich.length, message: `Enriching ${i + 1}/${demandToEnrich.length}` },
-        enrichedDemand: new Map(enrichedDemand),
-      }));
-    }
-
-    // Enrich supply side (if needed)
     const supplyToEnrich = matching.supplyAggregates;
-    for (let i = 0; i < supplyToEnrich.length; i++) {
+
+    for (const agg of supplyToEnrich) {
       if (abortRef.current) break;
 
-      const agg = supplyToEnrich[i];
       const record = agg.supply;
 
       // Supply from B2B Contacts usually has email
@@ -725,29 +1047,43 @@ export default function Flow() {
           source: 'existing',
         });
       } else if (supplySchema) {
-        const result = await enrichRecord(record, supplySchema, config);
-        enrichedSupply.set(record.domain, result);
+        const sanitizedDomain = record.domain?.replace(/[^a-z0-9.-]/gi, '') || 'unknown';
+        const correlationId = `${runId}-supply-${sanitizedDomain}`;
+        try {
+          const result = await enrichRecord(record, supplySchema, config, undefined, correlationId);
+          enrichedSupply.set(record.domain, result);
+        } catch (err) {
+          console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain}`);
+          enrichedSupply.set(record.domain, {
+            success: false,
+            email: null,
+            firstName: record.firstName || '',
+            lastName: record.lastName || '',
+            title: record.title || '',
+            verified: false,
+            source: 'timeout',
+          });
+        }
       }
     }
 
     // Summary
     const demandSuccessCount = Array.from(enrichedDemand.values()).filter(r => r.success && r.email).length;
     const supplySuccessCount = Array.from(enrichedSupply.values()).filter(r => r.success && r.email).length;
-    console.log(`[Flow] Enrichment complete:`);
-    console.log(`  - Demand: ${demandSuccessCount}/${enrichedDemand.size} with email`);
-    console.log(`  - Supply: ${supplySuccessCount}/${enrichedSupply.size} with email`);
+    const demandTimeoutCount = Array.from(enrichedDemand.values()).filter(r => r.source === 'timeout').length;
+    const supplyTimeoutCount = Array.from(enrichedSupply.values()).filter(r => r.source === 'timeout').length;
+    console.log(`[Flow] Enrichment complete (runId=${runId}):`);
+    console.log(`  - Demand: ${demandSuccessCount}/${enrichedDemand.size} with email, ${demandTimeoutCount} timeouts`);
+    console.log(`  - Supply: ${supplySuccessCount}/${enrichedSupply.size} with email, ${supplyTimeoutCount} timeouts`);
 
-    // Move to intro generation
+    // Move to ready — intros will generate when user clicks Route
+    // This allows operator to add pre-signal context before intro generation
     setState(prev => ({
       ...prev,
-      step: 'generating',
+      step: 'ready',
       enrichedDemand,
       enrichedSupply,
-      progress: { current: 0, total: demandSuccessCount + supplySuccessCount, message: 'Generating intros...' },
     }));
-
-    // Generate AI intros
-    await runIntroGeneration(matching, enrichedDemand, enrichedSupply);
   };
 
   // =============================================================================
@@ -823,15 +1159,25 @@ export default function Flow() {
       const roleCount = roleCountByDomain.get(match.demand.domain) || 1;
 
       try {
+        // Normalize domain for consistent preSignalContext lookup
+        const demandDomainKey = normalizeDomain(match.demand.domain);
+        const demandPreSignalContext = demandDomainKey
+          ? settings?.preSignalContext?.[demandDomainKey]?.text
+          : undefined;
+
         // Build rich context from ALL available data
         // Pass: firstName, enriched title (e.g., "VP Engineering"), role count
         const ctx = buildDemandContext(
           match.demand,
           firstName,
           enriched.title || undefined,  // Enriched title from Apollo
-          roleCount
+          roleCount,
+          demandPreSignalContext  // Operator context (normalized lookup)
         );
         console.log(`[Flow] Generating demand intro for ${firstName} at ${match.demand.company}...`);
+        console.log(`[Flow] Domain lookup:`, demandDomainKey);
+        console.log(`[Flow] PreSignalContext keys:`, Object.keys(settings?.preSignalContext || {}));
+        console.log(`[Flow] Injected preSignalContext:`, demandPreSignalContext || '(none)');
         console.log(`[Flow] Context:`, {
           signal: ctx.signal,
           contactTitle: ctx.contactTitle,
@@ -839,6 +1185,7 @@ export default function Flow() {
           hasDescription: !!ctx.companyDescription,
           hasFunding: !!ctx.companyFunding,
           industry: ctx.industry,
+          preSignalContext: ctx.preSignalContext || '(none)',
         });
 
         // Generate with validation (retries up to 3x if validation fails)
@@ -894,10 +1241,19 @@ export default function Flow() {
       const demandEnriched = enrichedDemand.get(agg.bestMatch.demand.domain);
       const contactName = demandEnriched?.firstName || agg.bestMatch.demand.firstName || null;
 
+      // Normalize domain for consistent preSignalContext lookup
+      const supplyDomainKey = normalizeDomain(agg.supply.domain);
+      const supplyPreSignalContext = supplyDomainKey
+        ? settings?.preSignalContext?.[supplyDomainKey]?.text
+        : undefined;
+
       console.log(`[Flow] Generating supply intro for ${firstName} via antifragile path...`);
       console.log(`[Flow] Signal: "${commonSignal}" → sanitized: "${sanitizedSignal}"`);
+      console.log(`[Flow] Supply domain lookup:`, supplyDomainKey);
+      console.log(`[Flow] Injected supply preSignalContext:`, supplyPreSignalContext || '(none)');
 
       // ANTIFRAGILE PATH: AIService.generateIntro (signal-only, no enrichment)
+      // FIX 1 + FIX 3: Pass connector mode and job signal for mode-appropriate language
       const intro = await generateIntro(
         {
           type: 'supply',
@@ -906,7 +1262,13 @@ export default function Flow() {
             firstName,
             company: exampleCompany,
             contactName: contactName || undefined,
+            // Operator-written pre-signal context (normalized lookup)
+            preSignalContext: supplyPreSignalContext,
           },
+          // FIX 1: Pass connector mode
+          connectorMode: state.connectorMode,
+          // FIX 3: Supply side doesn't use job signals (we're offering leads, not hiring)
+          jobSignal: undefined,
         },
         aiConfig
       );
@@ -930,10 +1292,9 @@ export default function Flow() {
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
 
-    // Move to ready
+    // Save intros to state (step transition handled by caller)
     setState(prev => ({
       ...prev,
-      step: 'ready',
       demandIntros,
       supplyIntros,
     }));
@@ -970,9 +1331,15 @@ export default function Flow() {
       return;
     }
 
+    // Generate intros NOW (after user has had chance to add context)
+    const { matchingResult, enrichedDemand, enrichedSupply } = state;
+    if (matchingResult) {
+      setState(prev => ({ ...prev, step: 'generating' }));
+      await runIntroGeneration(matchingResult, enrichedDemand, enrichedSupply);
+    }
+
     setState(prev => ({ ...prev, step: 'sending' }));
 
-    const { matchingResult, enrichedDemand, enrichedSupply } = state;
     if (!matchingResult) return;
 
     let sentDemand = 0;
@@ -1002,6 +1369,33 @@ export default function Flow() {
           firstName: enriched.firstName || match.demand.firstName,
           email: enriched.email,
         });
+
+        // ENTERPRISE: Validate copy before send (if mode is set)
+        if (state.connectorMode && intro) {
+          const evidence = buildEvidenceSet({
+            jobPostingUrl: match.demand.job_posting_url,
+            jobTitle: match.demand.job_title,
+            openRolesCount: match.demand.open_roles_count,
+            funding: match.demand.funding,
+            fundingRound: match.demand.funding_round,
+          });
+
+          const validation = canSend(intro, {
+            mode: state.connectorMode,
+            side: 'demand',
+            evidence,
+          });
+
+          if (!validation.canSend) {
+            console.warn(`[Flow] Copy validation blocked: ${match.demand.domain}`, validation.blockReason);
+            // Track the failure but continue with next
+            setState(prev => ({
+              ...prev,
+              progress: { current: i + 1, total: demandToSend.length, message: `Demand ${i + 1}/${demandToSend.length} (skipped)` },
+            }));
+            continue; // Skip this send
+          }
+        }
 
         try {
           const result = await sender.sendLead(senderConfig, {
@@ -1050,6 +1444,27 @@ export default function Flow() {
           { ...agg.supply, firstName: enriched.firstName || agg.supply.firstName, email: enriched.email },
           agg.bestMatch.demand
         );
+
+        // ENTERPRISE: Validate copy before send (if mode is set)
+        if (state.connectorMode && intro) {
+          // Supply side doesn't have job signals in the same way - use empty evidence for now
+          const evidence = emptyEvidenceSet();
+
+          const validation = canSend(intro, {
+            mode: state.connectorMode,
+            side: 'supply',
+            evidence,
+          });
+
+          if (!validation.canSend) {
+            console.warn(`[Flow] Copy validation blocked supply: ${agg.supply.domain}`, validation.blockReason);
+            setState(prev => ({
+              ...prev,
+              progress: { current: i + 1, total: supplyToSend.length, message: `Supply ${i + 1}/${supplyToSend.length} (skipped)` },
+            }));
+            continue; // Skip this send
+          }
+        }
 
         try {
           const result = await sender.sendLead(senderConfig, {
@@ -1100,6 +1515,8 @@ export default function Flow() {
     setState({
       step: 'upload',
       isHubFlow: false,
+      connectorMode: null,  // Reset mode for new flow
+      customModeAcknowledged: false,
       demandSchema: null,
       supplySchema: null,
       demandRecords: [],
@@ -1113,6 +1530,8 @@ export default function Flow() {
       sentDemand: 0,
       sentSupply: 0,
       error: null,
+      auditData: null,
+      copyValidationFailures: [],
     });
   };
 
@@ -1153,26 +1572,184 @@ export default function Flow() {
               </div>
 
               <h1 className="text-[17px] font-medium text-white/90 mb-2">Flow</h1>
-              <p className="text-[13px] text-white/40 mb-10">Match · Enrich · Route</p>
+              <p className="text-[13px] text-white/40 mb-6">Match · Enrich · Route</p>
 
-              {state.error && (
-                <div className="mb-6">
-                  <p className="text-[12px] text-white/40 mb-3">{state.error}</p>
-                  <button
-                    onClick={() => navigate('/settings')}
-                    className="text-[12px] text-white/50 hover:text-white/70 underline"
-                  >
-                    Open Settings
-                  </button>
+              {/* Error Banner - Premium AlertPanel with Explainability */}
+              {state.error && (() => {
+                // Convert error string to UXBlock for rich explanation
+                const errorBlock: UXBlock = state.error.includes('Missing Apify token')
+                  ? { type: 'DATASET_INVALID', side: 'demand', message: 'Missing Apify token' }
+                  : state.error.includes('Missing dataset')
+                  ? { type: 'DATASET_INVALID', side: 'demand', message: state.error }
+                  : state.error.includes('No supply dataset')
+                  ? { type: 'DATASET_INVALID', side: 'supply', message: 'No supply dataset configured' }
+                  : state.error.includes('Hub')
+                  ? { type: 'DATASET_INVALID', side: 'demand', message: state.error }
+                  : { type: 'GENERIC_ERROR', message: state.error };
+
+                const explanation = explain(errorBlock, {
+                  mode: state.connectorMode || undefined,
+                });
+
+                return (
+                  <div ref={errorRef} className="mb-8 max-w-lg mx-auto">
+                    <AlertFromExplanation
+                      explanation={explanation}
+                      onAction={(action) => {
+                        if (action.kind === 'open_settings') {
+                          navigate('/settings');
+                        } else if (action.kind === 'copy_to_clipboard') {
+                          navigator.clipboard.writeText(
+                            `Flow Error: ${state.error}\n\nDataset: ${settings?.demandDatasetId || 'not set'}\nMode: ${state.connectorMode || 'not set'}`
+                          );
+                        } else if (action.kind === 'retry') {
+                          setState(prev => ({ ...prev, error: null }));
+                        }
+                      }}
+                      onDismiss={() => setState(prev => ({ ...prev, error: null }))}
+                    />
+                    {/* Debug payload (only in debug mode) */}
+                    {isDebugMode && settings && (
+                      <details className="mt-2">
+                        <summary className="text-[10px] text-white/30 cursor-pointer hover:text-white/50">
+                          Debug info
+                        </summary>
+                        <div className="mt-2 p-2 rounded-lg bg-black/30 border border-white/[0.06] text-[10px] font-mono text-white/50 space-y-1">
+                          <p>demandDatasetId: {settings.demandDatasetId || '(not set)'}</p>
+                          <p>supplyDatasetId: {settings.supplyDatasetId || '(not set)'}</p>
+                          <p>apifyToken: {settings.apifyToken ? '✓ set' : '✗ missing'}</p>
+                          <p>aiConfig: {settings.aiConfig?.provider || 'none'}</p>
+                          <p>connectorMode: {state.connectorMode || '(not selected)'}</p>
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Connector Mode Selector — All modes from registry with tooltips */}
+              <div className="mb-6">
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <span className="text-[11px] text-white/30">Connector Mode</span>
+                  <TooltipHint
+                    content={
+                      <div className="space-y-2">
+                        <p className="font-medium text-white/90">What's your connector play?</p>
+                        <p className="text-white/60">Each mode configures the supply filters, intro language, and validation rules for your specific market.</p>
+                        <p className="text-white/50 text-[10px]">Hover each mode to see what it does and blocks.</p>
+                      </div>
+                    }
+                    position="bottom"
+                  />
+                  <InlineHelpLink href={DOCS.modes} label="Learn" />
                 </div>
-              )}
+                <div className="grid grid-cols-3 gap-2 max-w-lg mx-auto">
+                  {getModesForUI().map((mode) => {
+                    const isCustom = mode.id === 'custom';
+                    const contract = getModeContract(mode.id);
+                    const demandExamples = getPresignalExamples(mode.id, 'demand');
+                    const supplyExamples = getPresignalExamples(mode.id, 'supply');
+
+                    return (
+                      <button
+                        key={mode.id}
+                        onClick={() => setState(prev => ({
+                          ...prev,
+                          connectorMode: mode.id,
+                          // Reset acknowledgement when switching modes
+                          customModeAcknowledged: mode.id === 'custom' ? false : prev.customModeAcknowledged,
+                        }))}
+                        className={`group relative px-3 py-2.5 text-[12px] rounded-lg border transition-all text-left ${
+                          state.connectorMode === mode.id
+                            ? 'bg-white/10 border-white/20 text-white/90'
+                            : 'border-white/[0.08] text-white/40 hover:border-white/20 hover:text-white/60'
+                        }`}
+                      >
+                        <span className="font-medium block">{mode.label}</span>
+                        <span className="block text-[9px] text-white/30 mt-0.5 truncate">
+                          {isCustom ? 'You define' : mode.description.split('→')[0].trim()}
+                        </span>
+
+                        {/* Hover tooltip — uses contract.ui */}
+                        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-72 p-3 rounded-lg bg-[#1a1a1a] border border-white/10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none">
+                          <p className="text-[10px] text-white/70 mb-2">{contract.ui.tooltip}</p>
+                          <div className="mb-2">
+                            <p className="text-[9px] font-medium text-emerald-400/80 uppercase mb-0.5">Does</p>
+                            <p className="text-[10px] text-white/50 leading-tight">{contract.ui.whatItDoes}</p>
+                          </div>
+                          <div className="mb-2">
+                            <p className="text-[9px] font-medium text-red-400/80 uppercase mb-0.5">Blocks</p>
+                            <p className="text-[10px] text-white/50 leading-tight">{contract.ui.whatItBlocks}</p>
+                          </div>
+                          {!isCustom && (
+                            <div className="pt-2 border-t border-white/5">
+                              <div className="mb-1.5">
+                                <p className="text-[9px] font-medium text-violet-400/80 uppercase mb-0.5">Demand example</p>
+                                <p className="text-[10px] text-white/40 leading-tight">{demandExamples[0]}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] font-medium text-cyan-400/80 uppercase mb-0.5">Supply example</p>
+                                <p className="text-[10px] text-white/40 leading-tight">{supplyExamples[0]}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Mode selection hint */}
+                {!state.connectorMode && (
+                  <p className="text-[10px] text-amber-400/60 mt-3 flex items-center justify-center gap-1">
+                    <span>Select a mode to continue</span>
+                    <span className="text-amber-400/40">— required</span>
+                  </p>
+                )}
+
+                {/* B2B (Broad) explanation */}
+                {state.connectorMode === 'enterprise_partnerships' && (
+                  <p className="text-[10px] text-white/40 mt-3 text-center max-w-sm mx-auto">
+                    For general B2B intros across industries. Safest wording. Claims require evidence.
+                  </p>
+                )}
+
+                {/* Custom mode safety interlock */}
+                {state.connectorMode === 'custom' && (
+                  <div className="mt-4 max-w-sm mx-auto">
+                    <div className="p-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/20">
+                      <p className="text-[11px] text-amber-400/90 font-medium mb-2">Custom Mode Warning</p>
+                      <ul className="text-[10px] text-white/50 space-y-1 mb-3">
+                        <li>• Custom does not auto-filter industries</li>
+                        <li>• You must choose correct datasets</li>
+                        <li>• Claims like hiring/funding/partnership are blocked without evidence</li>
+                      </ul>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={state.customModeAcknowledged}
+                          onChange={(e) => setState(prev => ({ ...prev, customModeAcknowledged: e.target.checked }))}
+                          className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/5 text-emerald-500 focus:ring-emerald-500/30"
+                        />
+                        <span className="text-[10px] text-white/60 leading-tight">
+                          I understand custom mode requires correct datasets
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <button
                 onClick={startFlow}
-                disabled={!settings?.demandDatasetId}
+                disabled={
+                  !settings?.demandDatasetId ||
+                  !state.connectorMode ||
+                  (state.connectorMode === 'custom' && !state.customModeAcknowledged)
+                }
                 className="px-4 py-2 text-[13px] font-medium rounded-md bg-white text-black hover:bg-white/90 active:scale-[0.98] disabled:opacity-30 transition-all"
               >
-                Start
+                {state.error ? 'Retry' : 'Start'}
               </button>
 
             </motion.div>
@@ -1289,100 +1866,382 @@ export default function Flow() {
                 <p className="text-[12px] text-red-400/80 mb-4">{state.error}</p>
               )}
 
-              <p className="text-[13px] text-white/40 mb-8">
-                {state.matchingResult?.demandMatches.length || 0} demand · {state.matchingResult?.supplyAggregates.length || 0} supply
-              </p>
+              {/* FIX 5: Count Consistency — Enhanced breakdown with clear labels */}
+              {(() => {
+                // Calculate counts for detailed breakdown
+                const demandMatches = state.matchingResult?.demandMatches || [];
+                const supplyAggregates = state.matchingResult?.supplyAggregates || [];
 
-              {/* Preview Section */}
+                // Loaded = total from dataset
+                const demandLoaded = state.demandRecords.length;
+                const supplyLoaded = state.supplyRecords.length;
+
+                // Matched = passed matching filter
+                const demandMatched = demandMatches.length;
+                const supplyMatched = supplyAggregates.length;
+
+                // Enriched = has contact info
+                const demandEnriched = demandMatches.filter(m => {
+                  const e = state.enrichedDemand.get(m.demand.domain);
+                  return e?.success && e?.email;
+                }).length;
+
+                const supplyEnriched = supplyAggregates.filter(a => {
+                  const e = state.enrichedSupply.get(a.supply.domain);
+                  return e?.success && e?.email;
+                }).length;
+
+                // Timed out (blocked)
+                const demandTimedOut = demandMatches.filter(m => {
+                  const e = state.enrichedDemand.get(m.demand.domain);
+                  return e?.source === 'timeout';
+                }).length;
+
+                const supplyTimedOut = supplyAggregates.filter(a => {
+                  const e = state.enrichedSupply.get(a.supply.domain);
+                  return e?.source === 'timeout';
+                }).length;
+
+                // Blocked = matched but not enriched (excluding timeouts)
+                const demandBlocked = demandMatched - demandEnriched - demandTimedOut;
+                const supplyBlocked = supplyMatched - supplyEnriched - supplyTimedOut;
+
+                // Show detailed breakdown panel
+                const hasDiscrepancy = demandEnriched !== demandMatched || supplyEnriched !== supplyMatched;
+
+                return (
+                  <div className="mb-8">
+                    {/* Summary line */}
+                    <div className="flex items-center justify-center gap-2 mb-3">
+                      <span className="text-[13px] text-white/40">
+                        {demandEnriched + supplyEnriched} ready to route
+                      </span>
+                      <TooltipHint
+                        position="bottom"
+                        content={
+                          <div className="space-y-2 text-[11px]">
+                            <p className="font-medium text-white/90">Count breakdown</p>
+                            <p className="text-white/60">Loaded: Raw records from dataset</p>
+                            <p className="text-white/60">Matched: Passed mode filter</p>
+                            <p className="text-white/60">Sendable: Has enriched contact</p>
+                            <p className="text-white/60">Blocked: Failed enrichment</p>
+                          </div>
+                        }
+                      />
+                    </div>
+
+                    {/* Detailed breakdown (shown when there's drop-off) */}
+                    {hasDiscrepancy && (
+                      <div className="max-w-xs mx-auto p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                        <div className="grid grid-cols-2 gap-4 text-[11px]">
+                          {/* Demand column */}
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-medium text-violet-400/80 uppercase mb-2">Demand</p>
+                            <div className="flex justify-between">
+                              <span className="text-white/40">Loaded</span>
+                              <span className="text-white/60">{demandLoaded}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-white/40">Matched</span>
+                              <span className="text-white/60">{demandMatched}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-white/40">Sendable</span>
+                              <span className="text-emerald-400/80">{demandEnriched}</span>
+                            </div>
+                            {(demandBlocked > 0 || demandTimedOut > 0) && (
+                              <div className="flex justify-between">
+                                <span className="text-white/40">Blocked</span>
+                                <span className="text-amber-400/70">
+                                  {demandBlocked + demandTimedOut}
+                                  {demandTimedOut > 0 && (
+                                    <span className="text-white/30 ml-1">({demandTimedOut} timeout)</span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Supply column */}
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-medium text-emerald-400/80 uppercase mb-2">Supply</p>
+                            <div className="flex justify-between">
+                              <span className="text-white/40">Loaded</span>
+                              <span className="text-white/60">{supplyLoaded}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-white/40">Matched</span>
+                              <span className="text-white/60">{supplyMatched}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-white/40">Sendable</span>
+                              <span className="text-emerald-400/80">{supplyEnriched}</span>
+                            </div>
+                            {(supplyBlocked > 0 || supplyTimedOut > 0) && (
+                              <div className="flex justify-between">
+                                <span className="text-white/40">Blocked</span>
+                                <span className="text-amber-400/70">
+                                  {supplyBlocked + supplyTimedOut}
+                                  {supplyTimedOut > 0 && (
+                                    <span className="text-white/30 ml-1">({supplyTimedOut} timeout)</span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Preview Section — Clean Linear Style */}
               {state.matchingResult && (
-                <div className="mb-8 space-y-6 max-w-[480px] mx-auto">
+                <div className="mb-8 max-w-md mx-auto">
+                  {/* Single cohesive panel */}
+                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
 
-                  {/* Demand Previews */}
-                  {state.matchingResult.demandMatches.slice(0, 2).map((match, idx) => {
-                    const enriched = state.enrichedDemand.get(match.demand.domain);
-                    const intro = state.demandIntros.get(match.demand.domain);
-                    if (!enriched?.success || !intro) return null;
+                    {/* Demand Section */}
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Demand</span>
+                      </div>
 
-                    return (
-                      <motion.div
-                        key={`demand-${match.demand.domain}`}
-                        initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 + idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
-                        className="text-left"
-                      >
-                        {/* Header */}
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-[10px] font-medium tracking-wide text-violet-400/80 uppercase">
-                            Demand
-                          </span>
-                          <span className="text-[10px] text-white/20">→</span>
-                          <span className="text-[11px] text-white/40 truncate">
-                            {enriched.firstName} at {match.demand.company}
-                          </span>
-                        </div>
+                      <div className="space-y-3">
+                        {state.matchingResult.demandMatches.slice(0, 2).map((match, idx) => {
+                          const enriched = state.enrichedDemand.get(match.demand.domain);
+                          const intro = state.demandIntros.get(match.demand.domain);
 
-                        {/* Intro Card */}
-                        <div className="p-4 rounded-xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/[0.08] hover:border-white/[0.12] transition-colors">
-                          <p className="text-[13px] leading-relaxed text-white/70">
-                            {intro}
-                          </p>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                          if (enriched?.source === 'timeout') {
+                            return (
+                              <div key={`demand-timeout-${match.demand.domain}`} className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                                <p className="text-[11px] text-white/30">{match.demand.company || match.demand.domain}</p>
+                                <p className="text-[10px] text-amber-400/50 mt-1">Skipped</p>
+                              </div>
+                            );
+                          }
 
-                  {/* Supply Previews */}
-                  {state.matchingResult.supplyAggregates.slice(0, 1).map((agg, idx) => {
-                    const enriched = state.enrichedSupply.get(agg.supply.domain);
-                    const intro = state.supplyIntros.get(agg.supply.domain);
-                    if (!enriched?.success || !intro) return null;
+                          if (!enriched?.success) return null;
 
-                    return (
-                      <motion.div
-                        key={`supply-${agg.supply.domain}`}
-                        initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.3 + idx * 0.08, ease: [0.16, 1, 0.3, 1] }}
-                        className="text-left"
-                      >
-                        {/* Header */}
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-[10px] font-medium tracking-wide text-emerald-400/80 uppercase">
-                            Supply
-                          </span>
-                          <span className="text-[10px] text-white/20">→</span>
-                          <span className="text-[11px] text-white/40 truncate">
-                            {enriched.firstName} at {agg.supply.company}
-                          </span>
-                          {agg.totalMatches > 1 && (
-                            <span className="ml-auto text-[10px] text-white/30">
-                              +{agg.totalMatches - 1} more matches
-                            </span>
-                          )}
-                        </div>
+                          const domain = match.demand.domain;
+                          const normalizedDomainKey = normalizeDomain(domain);
+                          const demandPresignal = normalizedDomainKey ? settings?.preSignalContext?.[normalizedDomainKey] : undefined;
+                          const isEditing = editingContextDomain === domain;
 
-                        {/* Intro Card */}
-                        <div className="p-4 rounded-xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/[0.08] hover:border-white/[0.12] transition-colors">
-                          <p className="text-[13px] leading-relaxed text-white/70">
-                            {intro}
-                          </p>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
+                          return (
+                            <motion.div
+                              key={`demand-${domain}`}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ delay: idx * 0.05 }}
+                            >
+                              {/* Contact row */}
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-[11px] text-white/60">{enriched.firstName} at {match.demand.company}</span>
+                                <button
+                                  onClick={() => startEditContext(domain, 'demand')}
+                                  className="ml-auto text-[10px] text-white/25 hover:text-white/50 transition-colors"
+                                >
+                                  <Pencil size={10} />
+                                </button>
+                              </div>
 
-                  {/* More indicator */}
+                              {/* Presignal (if exists) */}
+                              {demandPresignal && !isEditing && (
+                                <div className="mb-2 px-3 py-2 rounded-lg bg-white/[0.03] border-l-2 border-white/[0.08]">
+                                  <p className="text-[11px] text-white/40 leading-relaxed">{demandPresignal.text}</p>
+                                </div>
+                              )}
+
+                              {/* Editor */}
+                              {isEditing && (
+                                <div className="mb-2 p-3 rounded-lg bg-white/[0.03] border border-white/[0.08]">
+                                  <textarea
+                                    value={contextText}
+                                    onChange={(e) => setContextText(e.target.value)}
+                                    placeholder="Context about this company..."
+                                    className="w-full h-14 bg-transparent text-[11px] text-white/60 resize-none outline-none placeholder:text-white/20"
+                                    autoFocus
+                                  />
+                                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.04]">
+                                    <select
+                                      value={contextSource}
+                                      onChange={(e) => setContextSource(e.target.value as any)}
+                                      className="text-[10px] bg-transparent text-white/40 outline-none cursor-pointer"
+                                    >
+                                      <option value="prior_convo">Prior Convo</option>
+                                      <option value="linkedin">LinkedIn</option>
+                                      <option value="news">News</option>
+                                      <option value="job_post">Job Post</option>
+                                      <option value="other">Other</option>
+                                    </select>
+                                    <div className="flex gap-2">
+                                      <button onClick={cancelEditContext} className="p-1 text-white/20 hover:text-white/40"><X size={12} /></button>
+                                      <button onClick={() => saveContext(domain)} disabled={savingContext} className="p-1 text-white/40 hover:text-white/60 disabled:opacity-50"><Check size={12} /></button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Intro */}
+                              <div className="p-3 rounded-lg bg-white/[0.02]">
+                                <p className="text-[12px] leading-relaxed text-white/50">
+                                  {intro || <span className="text-white/20">Generates on route</span>}
+                                </p>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div className="border-t border-white/[0.04]" />
+
+                    {/* Supply Section */}
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Supply</span>
+                      </div>
+
+                      <div className="space-y-3">
+                        {state.matchingResult.supplyAggregates.slice(0, 1).map((agg, idx) => {
+                          const enriched = state.enrichedSupply.get(agg.supply.domain);
+                          const intro = state.supplyIntros.get(agg.supply.domain);
+
+                          if (enriched?.source === 'timeout') {
+                            return (
+                              <div key={`supply-timeout-${agg.supply.domain}`} className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                                <p className="text-[11px] text-white/30">{agg.supply.company || agg.supply.domain}</p>
+                                <p className="text-[10px] text-amber-400/50 mt-1">Skipped</p>
+                              </div>
+                            );
+                          }
+
+                          if (!enriched?.success) return null;
+
+                          const domain = agg.supply.domain;
+                          const normalizedDomainKey = normalizeDomain(domain);
+                          const supplyPresignal = normalizedDomainKey ? settings?.preSignalContext?.[normalizedDomainKey] : undefined;
+                          const isEditing = editingContextDomain === domain;
+
+                          const fingerprint = fingerprintFromSupply({
+                            domain: agg.supply.domain,
+                            email: enriched.email,
+                            contactName: enriched.firstName,
+                            companyName: agg.supply.company,
+                          });
+                          const annotation = supplyAnnotations.get(fingerprint);
+                          const isStarred = annotation?.starred ?? false;
+                          const isExcluded = annotation?.excluded ?? false;
+
+                          return (
+                            <motion.div
+                              key={`supply-${domain}`}
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              transition={{ delay: 0.1 + idx * 0.05 }}
+                              className={isExcluded ? 'opacity-40' : ''}
+                            >
+                              {/* Contact row */}
+                              <div className="flex items-center gap-2 mb-2">
+                                <button
+                                  onClick={() => handleToggleStar(fingerprint)}
+                                  className={`${isStarred ? 'text-amber-400' : 'text-white/15 hover:text-white/30'} transition-colors`}
+                                >
+                                  <Star size={11} fill={isStarred ? 'currentColor' : 'none'} />
+                                </button>
+                                <span className="text-[11px] text-white/60">{enriched.firstName} at {agg.supply.company}</span>
+                                {agg.totalMatches > 1 && (
+                                  <span className="text-[10px] text-white/20">+{agg.totalMatches - 1}</span>
+                                )}
+                                <button
+                                  onClick={() => startEditContext(domain, 'supply')}
+                                  className="ml-auto text-[10px] text-white/25 hover:text-white/50 transition-colors"
+                                >
+                                  <Pencil size={10} />
+                                </button>
+                              </div>
+
+                              {/* Presignal */}
+                              {supplyPresignal && !isEditing && (
+                                <div className="mb-2 px-3 py-2 rounded-lg bg-white/[0.03] border-l-2 border-white/[0.08]">
+                                  <p className="text-[11px] text-white/40 leading-relaxed">{supplyPresignal.text}</p>
+                                </div>
+                              )}
+
+                              {/* Editor */}
+                              {isEditing && (
+                                <div className="mb-2 p-3 rounded-lg bg-white/[0.03] border border-white/[0.08]">
+                                  <textarea
+                                    value={contextText}
+                                    onChange={(e) => setContextText(e.target.value)}
+                                    placeholder="Context about this supplier..."
+                                    className="w-full h-14 bg-transparent text-[11px] text-white/60 resize-none outline-none placeholder:text-white/20"
+                                    autoFocus
+                                  />
+                                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.04]">
+                                    <select
+                                      value={contextSource}
+                                      onChange={(e) => setContextSource(e.target.value as any)}
+                                      className="text-[10px] bg-transparent text-white/40 outline-none cursor-pointer"
+                                    >
+                                      <option value="prior_convo">Prior Convo</option>
+                                      <option value="linkedin">LinkedIn</option>
+                                      <option value="news">News</option>
+                                      <option value="other">Other</option>
+                                    </select>
+                                    <div className="flex gap-2">
+                                      <button onClick={cancelEditContext} className="p-1 text-white/20 hover:text-white/40"><X size={12} /></button>
+                                      <button onClick={() => saveContext(domain)} disabled={savingContext} className="p-1 text-white/40 hover:text-white/60 disabled:opacity-50"><Check size={12} /></button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Intro */}
+                              <div className="p-3 rounded-lg bg-white/[0.02]">
+                                <p className="text-[12px] leading-relaxed text-white/50">
+                                  {intro || <span className="text-white/20">Generates on route</span>}
+                                </p>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Queue count */}
                   {(state.matchingResult.demandMatches.length > 2 || state.matchingResult.supplyAggregates.length > 1) && (
-                    <motion.p
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.5 }}
-                      className="text-[11px] text-white/25 text-center pt-2"
-                    >
-                      + {Math.max(0, state.matchingResult.demandMatches.length - 2 + state.matchingResult.supplyAggregates.length - 1)} more intros queued
-                    </motion.p>
+                    <p className="text-[10px] text-white/20 text-center mt-3">
+                      +{Math.max(0, state.matchingResult.demandMatches.length - 2 + state.matchingResult.supplyAggregates.length - 1)} more queued
+                    </p>
                   )}
+                </div>
+              )}
+
+              {/* Run Audit Panel — Observability */}
+              {state.connectorMode && (
+                <div className="mb-6 max-w-sm mx-auto">
+                  <RunAuditPanel
+                    data={state.auditData || {
+                      mode: state.connectorMode,
+                      registryVersion: MODE_REGISTRY_VERSION,
+                      demandCount: state.demandRecords.length,
+                      supplyCount: state.supplyRecords.length,
+                      enrichedCount: state.enrichedDemand.size + state.enrichedSupply.size,
+                      matchedCount: state.matchingResult?.demandMatches.length || 0,
+                      demandValidationFailures: [],
+                      supplyValidationFailures: [],
+                      copyValidationFailures: state.copyValidationFailures,
+                      instantlyPayloadSize: (state.matchingResult?.demandMatches.length || 0) + (state.matchingResult?.supplyAggregates.length || 0),
+                      sentCount: state.sentDemand + state.sentSupply,
+                      skippedReasons: [],
+                      runStartedAt: new Date(),
+                    }}
+                  />
                 </div>
               )}
 
