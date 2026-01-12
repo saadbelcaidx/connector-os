@@ -1318,6 +1318,9 @@ app.post('/api/email/v2/find', async (req, res) => {
     return res.json({ email: null });
   }
 
+  // Wrap main logic in try-catch to handle ECONNRESET and network errors
+  try {
+
   // Helper to cache and return VALID email
   const cacheAndReturn = (email, source, isCatchAll = false) => {
     deductTokens(effectiveUserId, effectiveKeyId, 1);
@@ -1472,6 +1475,12 @@ app.post('/api/email/v2/find', async (req, res) => {
 
   console.log(`[Find] FAILED: No deliverable email for ${firstName} ${lastName} @ ${domain}`);
   res.json({ email: null });
+
+  } catch (err) {
+    // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
+    console.error(`[Find] ERROR: ${err.code || err.message} for ${firstName} ${lastName} @ ${domain}`);
+    return res.json({ email: null });
+  }
 });
 
 // ============================================================
@@ -1525,27 +1534,34 @@ app.post('/api/email/v2/verify', async (req, res) => {
     return res.status(429).json({ email: null });
   }
 
-  const result = await withDeadline(
-    verifyEmail(emailToVerify, effectiveUserId),
-    VERIFY_DEADLINE_MS,
-    emailToVerify
-  );
+  // Wrap main logic in try-catch to handle ECONNRESET and network errors
+  try {
+    const result = await withDeadline(
+      verifyEmail(emailToVerify, effectiveUserId),
+      VERIFY_DEADLINE_MS,
+      emailToVerify
+    );
 
-  // Handle deadline exceeded - retryable, no charge
-  if (result.verdict === 'SERVICE_BUSY') {
+    // Handle deadline exceeded - retryable, no charge
+    if (result.verdict === 'SERVICE_BUSY') {
+      return res.json({ email: null });
+    }
+
+    // Token accounting: only charge on VALID or INVALID (not cached, not service_busy)
+    if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
+      deductTokens(effectiveUserId, effectiveKeyId, 1);
+    }
+
+    // VALID = return email + status, anything else = null + invalid
+    if (result.verdict === 'VALID') {
+      res.json({ email: emailToVerify, status: 'valid' });
+    } else {
+      res.json({ email: null, status: 'invalid' });
+    }
+  } catch (err) {
+    // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
+    console.error(`[Verify] ERROR: ${err.code || err.message} for ${emailToVerify}`);
     return res.json({ email: null });
-  }
-
-  // Token accounting: only charge on VALID or INVALID (not cached, not service_busy)
-  if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
-    deductTokens(effectiveUserId, effectiveKeyId, 1);
-  }
-
-  // VALID = return email + status, anything else = null + invalid
-  if (result.verdict === 'VALID') {
-    res.json({ email: emailToVerify, status: 'valid' });
-  } else {
-    res.json({ email: null, status: 'invalid' });
   }
 });
 
@@ -1925,6 +1941,29 @@ app.get('/health', (req, res) => {
     queue_depth: 0,
     timestamp: new Date().toISOString(),
   });
+});
+
+// ============================================================
+// GLOBAL ERROR HANDLER (catch ECONNRESET, timeouts, etc.)
+// ============================================================
+
+app.use((err, req, res, next) => {
+  // Log the error
+  console.error('[GlobalError]', {
+    path: req.path,
+    method: req.method,
+    error: err.message,
+    code: err.code,
+    stack: err.stack?.split('\n').slice(0, 3).join(' '),
+  });
+
+  // Normalize ECONNRESET and network errors
+  if (err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT' || err.code === 'ENOTFOUND') {
+    return res.status(200).json({ email: null });
+  }
+
+  // Generic error fallback
+  res.status(500).json({ success: false, error: 'Internal server error' });
 });
 
 // ============================================================

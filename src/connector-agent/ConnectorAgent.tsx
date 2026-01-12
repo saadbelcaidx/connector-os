@@ -443,6 +443,7 @@ function ConnectorAgentInner() {
   const [activeTab, setActiveTab] = useState<'find' | 'verify' | 'integrate' | 'bulk'>('find');
   const [result, setResult] = useState<any>(null);
   const [integratePlatform, setIntegratePlatform] = useState<'make' | 'n8n' | 'zapier'>('make');
+  const [integrateEndpoint, setIntegrateEndpoint] = useState<'find' | 'verify'>('find');
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [corsBlocked, setCorsBlocked] = useState<{ message: string; debug: any } | null>(null);
@@ -626,6 +627,30 @@ function ConnectorAgentInner() {
     try {
       const res = await api.findEmail(findFirstName, findLastName, findDomain);
       setResult({ type: 'find', ...res });
+
+      // Save single lookup to history (treated as batch of 1)
+      const inputString = `${findFirstName} ${findLastName} @ ${findDomain}`;
+      const singleBatch: ConnectorAgentBatch = {
+        id: generateBatchId(),
+        type: 'find',
+        createdAt: new Date().toISOString(),
+        status: 'completed',
+        inputCount: 1,
+        completedCount: 1,
+        originalInputs: [{
+          input: inputString,
+          firstName: findFirstName,
+          lastName: findLastName,
+          domain: findDomain,
+        }],
+        results: [{
+          input: inputString,
+          email: res.email || null,
+        }],
+      };
+      saveBatch(singleBatch);
+      setBatchHistory(getAllBatches());
+
       const quotaResult = await api.getQuota();
       if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
     } finally {
@@ -641,6 +666,27 @@ function ConnectorAgentInner() {
     try {
       const res = await api.verifyEmail(verifyEmailInput);
       setResult({ type: 'verify', ...res });
+
+      // Save single lookup to history (treated as batch of 1)
+      const singleBatch: ConnectorAgentBatch = {
+        id: generateBatchId(),
+        type: 'verify',
+        createdAt: new Date().toISOString(),
+        status: 'completed',
+        inputCount: 1,
+        completedCount: 1,
+        originalInputs: [{
+          input: verifyEmailInput,
+          email: verifyEmailInput,
+        }],
+        results: [{
+          input: verifyEmailInput,
+          email: res.email || null,
+        }],
+      };
+      saveBatch(singleBatch);
+      setBatchHistory(getAllBatches());
+
       const quotaResult = await api.getQuota();
       if (quotaResult.success && quotaResult.quota) setQuota(quotaResult.quota);
     } finally {
@@ -2243,6 +2289,27 @@ function ConnectorAgentInner() {
                       </div>
                     </div>
 
+                    {/* Endpoint Sub-tabs (Find / Verify) */}
+                    <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06] mb-4">
+                      {[
+                        { id: 'find' as const, label: 'Find Email', icon: Search },
+                        { id: 'verify' as const, label: 'Verify Email', icon: ShieldCheck },
+                      ].map(endpoint => (
+                        <button
+                          key={endpoint.id}
+                          onClick={() => setIntegrateEndpoint(endpoint.id)}
+                          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium transition-all ${
+                            integrateEndpoint === endpoint.id
+                              ? 'bg-violet-500/[0.15] text-violet-300 border border-violet-500/[0.2]'
+                              : 'text-white/40 hover:text-white/60'
+                          }`}
+                        >
+                          <endpoint.icon className="w-3.5 h-3.5" />
+                          {endpoint.label}
+                        </button>
+                      ))}
+                    </div>
+
                     {/* Platform Tabs */}
                     <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06]">
                       {[
@@ -2292,8 +2359,8 @@ function ConnectorAgentInner() {
                               <div className="flex items-center justify-between p-2 rounded-lg bg-black/40">
                                 <span className="text-[10px] text-white/40">URL</span>
                                 <div className="flex items-center gap-2">
-                                  <code className="text-[10px] text-white/70 font-mono">{API_BASE}/api/email/v2/find</code>
-                                  <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/find`, 'make-url')} className="text-white/30 hover:text-white/60">
+                                  <code className="text-[10px] text-white/70 font-mono">{API_BASE}/api/email/v2/{integrateEndpoint}</code>
+                                  <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/${integrateEndpoint}`, 'make-url')} className="text-white/30 hover:text-white/60">
                                     {copied === 'make-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                                   </button>
                                 </div>
@@ -2305,7 +2372,7 @@ function ConnectorAgentInner() {
                             </div>
                           </div>
 
-                          {/* Step 3 - Headers */}
+                          {/* Step 3 - Headers (Content-Type removed - Make adds it automatically) */}
                           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-blue-500/[0.2] text-blue-400 text-[10px] font-bold flex items-center justify-center">3</span>
@@ -2321,15 +2388,6 @@ function ConnectorAgentInner() {
                                   </button>
                                 </div>
                               </div>
-                              <div className="flex items-center justify-between p-2 rounded-lg bg-black/40">
-                                <span className="text-[10px] text-white/40">Content-Type</span>
-                                <div className="flex items-center gap-2">
-                                  <code className="text-[10px] text-white/70 font-mono">application/json</code>
-                                  <button onClick={() => handleCopy('application/json', 'make-ct')} className="text-white/30 hover:text-white/60">
-                                    {copied === 'make-ct' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                                  </button>
-                                </div>
-                              </div>
                             </div>
                           </div>
 
@@ -2341,7 +2399,12 @@ function ConnectorAgentInner() {
                                 <span className="text-[12px] font-medium text-white/80">Request Body (JSON)</span>
                               </div>
                               <button
-                                onClick={() => handleCopy('{"firstName": "John", "lastName": "Doe", "domain": "company.com"}', 'make-body')}
+                                onClick={() => handleCopy(
+                                  integrateEndpoint === 'find'
+                                    ? '{"firstName": "John", "lastName": "Doe", "domain": "company.com"}'
+                                    : '{"email": "john.doe@company.com"}',
+                                  'make-body'
+                                )}
                                 className="text-[10px] text-white/40 hover:text-white/60 flex items-center gap-1"
                               >
                                 {copied === 'make-body' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -2349,10 +2412,12 @@ function ConnectorAgentInner() {
                               </button>
                             </div>
                             <pre className="p-3 rounded-lg bg-black/60 text-[10px] text-white/60 font-mono overflow-x-auto">
-{`{
+{integrateEndpoint === 'find' ? `{
   "firstName": "John",
   "lastName": "Doe",
   "domain": "company.com"
+}` : `{
+  "email": "john.doe@company.com"
 }`}
                             </pre>
                           </div>
@@ -2364,9 +2429,15 @@ function ConnectorAgentInner() {
                               <span className="text-[12px] font-medium text-white/80">Response</span>
                             </div>
                             <pre className="p-3 rounded-lg bg-black/40 text-[10px] text-emerald-400/80 font-mono">
-{`{ "email": "john.doe@company.com" }`}
+{integrateEndpoint === 'find'
+  ? `{ "email": "john.doe@company.com" }`
+  : `{ "email": "john.doe@company.com", "status": "valid" }`}
                             </pre>
-                            <p className="text-[10px] text-white/40 mt-2">Returns <code className="text-white/60">null</code> if no email found</p>
+                            <p className="text-[10px] text-white/40 mt-2">
+                              {integrateEndpoint === 'find'
+                                ? <>Returns <code className="text-white/60">null</code> if no email found</>
+                                : <>Returns <code className="text-white/60">status: "invalid"</code> if email is invalid</>}
+                            </p>
                           </div>
                         </div>
                       )}
@@ -2400,8 +2471,8 @@ function ConnectorAgentInner() {
                               <div className="flex items-center justify-between p-2 rounded-lg bg-black/40">
                                 <span className="text-[10px] text-white/40">URL</span>
                                 <div className="flex items-center gap-2">
-                                  <code className="text-[10px] text-white/70 font-mono">{API_BASE}/api/email/v2/find</code>
-                                  <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/find`, 'n8n-url')} className="text-white/30 hover:text-white/60">
+                                  <code className="text-[10px] text-white/70 font-mono">{API_BASE}/api/email/v2/{integrateEndpoint}</code>
+                                  <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/${integrateEndpoint}`, 'n8n-url')} className="text-white/30 hover:text-white/60">
                                     {copied === 'n8n-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                                   </button>
                                 </div>
@@ -2434,7 +2505,12 @@ function ConnectorAgentInner() {
                                 <span className="text-[12px] font-medium text-white/80">Body Parameters</span>
                               </div>
                               <button
-                                onClick={() => handleCopy('{"firstName": "{{$json.firstName}}", "lastName": "{{$json.lastName}}", "domain": "{{$json.domain}}"}', 'n8n-body')}
+                                onClick={() => handleCopy(
+                                  integrateEndpoint === 'find'
+                                    ? '{"firstName": "{{$json.firstName}}", "lastName": "{{$json.lastName}}", "domain": "{{$json.domain}}"}'
+                                    : '{"email": "{{$json.email}}"}',
+                                  'n8n-body'
+                                )}
                                 className="text-[10px] text-white/40 hover:text-white/60 flex items-center gap-1"
                               >
                                 {copied === 'n8n-body' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -2442,10 +2518,12 @@ function ConnectorAgentInner() {
                               </button>
                             </div>
                             <pre className="p-3 rounded-lg bg-black/60 text-[10px] text-white/60 font-mono overflow-x-auto">
-{`{
+{integrateEndpoint === 'find' ? `{
   "firstName": "{{$json.firstName}}",
   "lastName": "{{$json.lastName}}",
   "domain": "{{$json.domain}}"
+}` : `{
+  "email": "{{$json.email}}"
 }`}
                             </pre>
                           </div>
@@ -2457,8 +2535,15 @@ function ConnectorAgentInner() {
                               <span className="text-[12px] font-medium text-white/80">Response</span>
                             </div>
                             <pre className="p-3 rounded-lg bg-black/40 text-[10px] text-emerald-400/80 font-mono">
-{`{ "email": "john.doe@company.com" }`}
+{integrateEndpoint === 'find'
+  ? `{ "email": "john.doe@company.com" }`
+  : `{ "email": "john.doe@company.com", "status": "valid" }`}
                             </pre>
+                            <p className="text-[10px] text-white/40 mt-2">
+                              {integrateEndpoint === 'find'
+                                ? <>Returns <code className="text-white/60">null</code> if no email found</>
+                                : <>Returns <code className="text-white/60">status: "invalid"</code> if email is invalid</>}
+                            </p>
                           </div>
                         </div>
                       )}
@@ -2492,8 +2577,8 @@ function ConnectorAgentInner() {
                               <div className="flex items-center justify-between p-2 rounded-lg bg-black/40">
                                 <span className="text-[10px] text-white/40">URL</span>
                                 <div className="flex items-center gap-2">
-                                  <code className="text-[10px] text-white/70 font-mono">{API_BASE}/api/email/v2/find</code>
-                                  <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/find`, 'zap-url')} className="text-white/30 hover:text-white/60">
+                                  <code className="text-[10px] text-white/70 font-mono">{API_BASE}/api/email/v2/{integrateEndpoint}</code>
+                                  <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/${integrateEndpoint}`, 'zap-url')} className="text-white/30 hover:text-white/60">
                                     {copied === 'zap-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                                   </button>
                                 </div>
@@ -2501,7 +2586,7 @@ function ConnectorAgentInner() {
                             </div>
                           </div>
 
-                          {/* Step 3 - Headers */}
+                          {/* Step 3 - Headers (Content-Type removed - Zapier adds it automatically) */}
                           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">3</span>
@@ -2517,15 +2602,6 @@ function ConnectorAgentInner() {
                                 </div>
                                 <code className="text-[10px] text-white/70 font-mono">Bearer {api.getApiKey()?.slice(0, 12) || 'YOUR_KEY'}...</code>
                               </div>
-                              <div className="p-2 rounded-lg bg-black/40">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[10px] text-white/40">Content-Type</span>
-                                  <button onClick={() => handleCopy('application/json', 'zap-ct')} className="text-white/30 hover:text-white/60">
-                                    {copied === 'zap-ct' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                                  </button>
-                                </div>
-                                <code className="text-[10px] text-white/70 font-mono">application/json</code>
-                              </div>
                             </div>
                           </div>
 
@@ -2537,7 +2613,12 @@ function ConnectorAgentInner() {
                                 <span className="text-[12px] font-medium text-white/80">Data (Raw JSON)</span>
                               </div>
                               <button
-                                onClick={() => handleCopy('{"firstName": "John", "lastName": "Doe", "domain": "company.com"}', 'zap-body')}
+                                onClick={() => handleCopy(
+                                  integrateEndpoint === 'find'
+                                    ? '{"firstName": "John", "lastName": "Doe", "domain": "company.com"}'
+                                    : '{"email": "john.doe@company.com"}',
+                                  'zap-body'
+                                )}
                                 className="text-[10px] text-white/40 hover:text-white/60 flex items-center gap-1"
                               >
                                 {copied === 'zap-body' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -2545,10 +2626,12 @@ function ConnectorAgentInner() {
                               </button>
                             </div>
                             <pre className="p-3 rounded-lg bg-black/60 text-[10px] text-white/60 font-mono overflow-x-auto">
-{`{
+{integrateEndpoint === 'find' ? `{
   "firstName": "John",
   "lastName": "Doe",
   "domain": "company.com"
+}` : `{
+  "email": "john.doe@company.com"
 }`}
                             </pre>
                           </div>
@@ -2560,27 +2643,18 @@ function ConnectorAgentInner() {
                               <span className="text-[12px] font-medium text-white/80">Response</span>
                             </div>
                             <pre className="p-3 rounded-lg bg-black/40 text-[10px] text-emerald-400/80 font-mono">
-{`{ "email": "john.doe@company.com" }`}
+{integrateEndpoint === 'find'
+  ? `{ "email": "john.doe@company.com" }`
+  : `{ "email": "john.doe@company.com", "status": "valid" }`}
                             </pre>
+                            <p className="text-[10px] text-white/40 mt-2">
+                              {integrateEndpoint === 'find'
+                                ? <>Returns <code className="text-white/60">null</code> if no email found</>
+                                : <>Returns <code className="text-white/60">status: "invalid"</code> if email is invalid</>}
+                            </p>
                           </div>
                         </div>
                       )}
-                    </div>
-
-                    {/* Verify Endpoint Note */}
-                    <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-                      <div className="flex items-center gap-2 mb-2">
-                        <ShieldCheck className="w-4 h-4 text-white/40" />
-                        <span className="text-[11px] font-medium text-white/60">Verify Endpoint</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <code className="text-[10px] text-white/50 font-mono">/api/email/v2/verify</code>
-                        <button onClick={() => handleCopy(`${API_BASE}/api/email/v2/verify`, 'verify-url')} className="text-[10px] text-white/40 hover:text-white/60 flex items-center gap-1">
-                          {copied === 'verify-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          Copy URL
-                        </button>
-                      </div>
-                      <p className="text-[10px] text-white/40 mt-2">Body: <code className="text-white/50">{`{"email": "john@company.com"}`}</code></p>
                     </div>
                   </motion.div>
                 )}
