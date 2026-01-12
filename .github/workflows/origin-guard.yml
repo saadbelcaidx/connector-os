@@ -1,0 +1,49 @@
+name: Origin Guard
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  verify-origin-safety:
+    name: Verify Origin + CORS Config
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify canonical origin redirects
+        run: node scripts/verify-origin-config.js
+        continue-on-error: false
+
+      - name: Verify CORS preflight
+        run: node scripts/verify-cors-preflight.js
+        continue-on-error: false
+
+      - name: Origin Guard Summary
+        if: success()
+        run: |
+          echo "✓ Origin safety verified"
+          echo "  - All domains redirect to app.connector-os.com"
+          echo "  - CORS allows only canonical origin"
+          echo "  - Deployment is safe to proceed"
+
+      - name: Origin Guard Failed
+        if: failure()
+        run: |
+          echo "✗ ORIGIN GUARD FAILED"
+          echo ""
+          echo "Deployment BLOCKED. Fix before merging:"
+          echo "  1. Check domain redirects (connector-os.com → app.connector-os.com)"
+          echo "  2. Check CORS config (only app.connector-os.com allowed)"
+          echo "  3. Run locally: node scripts/verify-origin-config.js"
+          echo "  4. Run locally: node scripts/verify-cors-preflight.js"
+          exit 1
