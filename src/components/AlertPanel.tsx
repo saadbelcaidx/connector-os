@@ -28,6 +28,28 @@ import {
 import type { UXSeverity, UXAction, UXExplanation } from '../services/Explainability';
 
 // =============================================================================
+// SAFE RENDER — Prevent React error #31
+// =============================================================================
+
+/**
+ * Safely convert any value to a renderable string.
+ * Prevents React error #31 when objects leak into render paths.
+ */
+function safeRender(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value instanceof Error) return value.message;
+  // Object detected — stringify
+  if (typeof value === 'object') {
+    console.warn('[AlertPanel] safeRender caught object:', value);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -187,7 +209,7 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
           {/* Title row */}
           <div className="flex items-center justify-between gap-2">
             <h4 className={`text-sm font-medium ${styles.title}`}>
-              {title}
+              {safeRender(title)}
             </h4>
             {onDismiss && (
               <button
@@ -202,7 +224,7 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
           {/* Reason */}
           {reason && (
             <p className="mt-1 text-sm text-white/60 leading-relaxed">
-              {reason}
+              {safeRender(reason)}
             </p>
           )}
 
@@ -219,7 +241,7 @@ export const AlertPanel: React.FC<AlertPanelProps> = ({
               {fix.map((step, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm text-white/70">
                   <span className="text-white/30 select-none">•</span>
-                  <span>{step}</span>
+                  <span>{safeRender(step)}</span>
                 </li>
               ))}
             </ul>

@@ -117,6 +117,28 @@ interface RunAuditPanelProps {
 }
 
 // =============================================================================
+// SAFE RENDER — Prevent React error #31
+// =============================================================================
+
+/**
+ * Safely convert any value to a renderable string.
+ * Prevents React error #31 when objects leak into render paths.
+ */
+function safeRender(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value instanceof Error) return value.message;
+  // Object detected — stringify
+  if (typeof value === 'object') {
+    console.warn('[RunAuditPanel] safeRender caught object:', value);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+// =============================================================================
 // HELPER COMPONENTS
 // =============================================================================
 
@@ -195,17 +217,17 @@ function StatRow({
 
   return (
     <div className="flex items-center justify-between py-1">
-      <span className="text-[11px] text-white/50">{label}</span>
+      <span className="text-[11px] text-white/50">{safeRender(label)}</span>
       <div className="flex items-center gap-2">
         {subValue && (
-          <span className="text-[10px] text-white/30">{subValue}</span>
+          <span className="text-[10px] text-white/30">{safeRender(subValue)}</span>
         )}
         <span
           className={`text-[11px] font-medium ${
             status ? statusColors[status] : 'text-white/80'
           }`}
         >
-          {value}
+          {safeRender(value)}
         </span>
       </div>
     </div>
@@ -247,8 +269,8 @@ function FailureList({
           className="flex items-start gap-2 text-[11px] text-white/60"
         >
           <XCircle size={11} className="text-red-400/70 mt-0.5 shrink-0" />
-          <span className="flex-1 leading-tight">{reason}</span>
-          <span className="text-white/30 shrink-0">×{count}</span>
+          <span className="flex-1 leading-tight">{safeRender(reason)}</span>
+          <span className="text-white/30 shrink-0">×{safeRender(count)}</span>
         </div>
       ))}
     </div>

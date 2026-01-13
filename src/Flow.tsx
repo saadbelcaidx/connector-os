@@ -216,6 +216,31 @@ function detectCommonSignal(signals: string[]): string {
 }
 
 // =============================================================================
+// SAFE RENDER — Prevent React error #31 (object as child)
+// =============================================================================
+
+/**
+ * Safely convert any value to a renderable string.
+ * Prevents React error #31 when objects leak into render paths.
+ *
+ * This is a DEFENSIVE guard — it should never be triggered in normal flow,
+ * but protects against edge cases (401 errors, malformed responses, etc.)
+ */
+function safeRender(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value instanceof Error) return value.message;
+  // Object detected — log warning and stringify
+  if (typeof value === 'object') {
+    console.warn('[Flow] safeRender caught object in render path:', value);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+// =============================================================================
 // USER-FRIENDLY ERROR MESSAGES
 // =============================================================================
 
@@ -1643,16 +1668,19 @@ export default function Flow() {
 
               {/* Error Banner - Premium AlertPanel with Explainability */}
               {state.error && (() => {
+                // Normalize error to string (defensive against objects leaking in)
+                const errorStr = safeRender(state.error);
+
                 // Convert error string to UXBlock for rich explanation
-                const errorBlock: UXBlock = state.error.includes('Missing Apify token')
+                const errorBlock: UXBlock = errorStr.includes('Missing Apify token')
                   ? { type: 'DATASET_INVALID', side: 'demand', message: 'Missing Apify token' }
-                  : state.error.includes('Missing dataset')
-                  ? { type: 'DATASET_INVALID', side: 'demand', message: state.error }
-                  : state.error.includes('No supply dataset')
+                  : errorStr.includes('Missing dataset')
+                  ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
+                  : errorStr.includes('No supply dataset')
                   ? { type: 'DATASET_INVALID', side: 'supply', message: 'No supply dataset configured' }
-                  : state.error.includes('Hub')
-                  ? { type: 'DATASET_INVALID', side: 'demand', message: state.error }
-                  : { type: 'GENERIC_ERROR', message: state.error };
+                  : errorStr.includes('Hub')
+                  ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
+                  : { type: 'UNKNOWN_ERROR', message: errorStr };
 
                 const explanation = explain(errorBlock, {
                   mode: state.connectorMode || undefined,
@@ -1667,7 +1695,7 @@ export default function Flow() {
                           navigate('/settings');
                         } else if (action.kind === 'copy_to_clipboard') {
                           navigator.clipboard.writeText(
-                            `Flow Error: ${state.error}\n\nDataset: ${settings?.demandDatasetId || 'not set'}\nMode: ${state.connectorMode || 'not set'}`
+                            `Flow Error: ${errorStr}\n\nDataset: ${settings?.demandDatasetId || 'not set'}\nMode: ${state.connectorMode || 'not set'}`
                           );
                         } else if (action.kind === 'retry') {
                           setState(prev => ({ ...prev, error: null }));
@@ -1781,7 +1809,7 @@ export default function Flow() {
                 transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                 className="w-10 h-10 mx-auto mb-8 rounded-full border-2 border-white/10 border-t-white/60"
               />
-              <p className="text-[13px] text-white/40">{state.progress.message}</p>
+              <p className="text-[13px] text-white/40">{safeRender(state.progress.message)}</p>
             </motion.div>
           )}
 
@@ -1936,7 +1964,7 @@ export default function Flow() {
                         animate={{ opacity: 1 }}
                         className="text-[12px] text-red-400/80 mb-6 text-center max-w-sm"
                       >
-                        {state.error}
+                        {safeRender(state.error)}
                       </motion.p>
                     )}
 
@@ -2147,7 +2175,7 @@ export default function Flow() {
               <div className="text-[48px] font-light text-white mb-2">
                 {state.progress.current}<span className="text-white/30">/{state.progress.total}</span>
               </div>
-              <p className="text-[13px] text-white/40 mb-8">{state.progress.message}</p>
+              <p className="text-[13px] text-white/40 mb-8">{safeRender(state.progress.message)}</p>
               <div className="w-48 mx-auto">
                 <div className="h-[3px] bg-white/[0.08] rounded-full overflow-hidden">
                   <div
