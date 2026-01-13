@@ -673,18 +673,18 @@ const sections: DocSection[] = [
     content: (
       <article>
         <p className="lead">
-          A mode tells the system what business you're in. Pick one. The system does the rest.
+          Copy infrastructure built the way serious teams build payment infrastructure — with constraints, tests, and zero trust in future contributors.
         </p>
 
         <h3>What is a mode?</h3>
         <p>
-          A mode is a preset. It tells the system who you're connecting. Each mode knows:
+          A mode is a preset that controls everything: who you're connecting, what language the system uses, and what proof is required before making claims. One file. 169 tests. Zero divergence.
         </p>
         <ul>
-          <li>Who is <strong>demand</strong> (the side with the need)</li>
-          <li>Who is <strong>supply</strong> (the side that fills the need)</li>
-          <li>What words to use (and what words to avoid)</li>
-          <li>What proof is needed before making claims</li>
+          <li><strong>Demand</strong> — the side with the need</li>
+          <li><strong>Supply</strong> — the side that fills the need</li>
+          <li><strong>Vocabulary</strong> — words to use, words to ban</li>
+          <li><strong>Evidence gates</strong> — no timing claims without proof</li>
         </ul>
 
         <h3>Available modes</h3>
@@ -716,6 +716,10 @@ const sections: DocSection[] = [
               <div className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Example presignal</div>
               <p className="m-0 text-[12px] text-white/50 italic">"Hiring 3 engineers this quarter. VP role open 60+ days."</p>
             </div>
+            <div className="mt-4 p-3 rounded-lg bg-blue-500/[0.04] border border-blue-500/[0.1]">
+              <div className="text-[10px] uppercase tracking-wider text-blue-400/70 mb-2">Canonical intro (demand)</div>
+              <p className="m-0 text-[11px] text-white/60 font-mono">"Hey John — quick relevance check. I'm connecting tech companies with people in engineering. Acme came up as a clean fit. I can make the intro if it's useful — if not, no worries."</p>
+            </div>
             <div className="mt-3 p-2 rounded-lg bg-amber-500/[0.06] border border-amber-500/[0.1]">
               <p className="m-0 text-[10px] text-amber-400/70">Supported source: Wellfound. LinkedIn Jobs not supported.</p>
             </div>
@@ -746,6 +750,10 @@ const sections: DocSection[] = [
               <div className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Example presignal</div>
               <p className="m-0 text-[12px] text-white/50 italic">"Phase II asset in oncology. Seeking commercialization partner."</p>
             </div>
+            <div className="mt-4 p-3 rounded-lg bg-purple-500/[0.04] border border-purple-500/[0.1]">
+              <div className="text-[10px] uppercase tracking-wider text-purple-400/70 mb-2">Canonical intro (demand)</div>
+              <p className="m-0 text-[11px] text-white/60 font-mono">"Hey Sarah — quick relevance check. I'm connecting biotech companies with teams in the same space. GeneTech came up as a clean fit. I can make the intro if it's useful — if not, no worries."</p>
+            </div>
           </div>
 
           {/* Wealth Management */}
@@ -772,6 +780,10 @@ const sections: DocSection[] = [
             <div className="mt-4 p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
               <div className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Example presignal</div>
               <p className="m-0 text-[12px] text-white/50 italic">"Recent exit. Exploring diversification options."</p>
+            </div>
+            <div className="mt-4 p-3 rounded-lg bg-amber-500/[0.04] border border-amber-500/[0.1]">
+              <div className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-2">Canonical intro (demand)</div>
+              <p className="m-0 text-[11px] text-white/60 font-mono">"Hey Michael — quick relevance check. I'm connecting HNW individuals with wealth managers in your area. You came up as a clean fit. I can make the intro if it's useful — if not, no worries."</p>
             </div>
           </div>
 
@@ -800,6 +812,10 @@ const sections: DocSection[] = [
               <div className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Example presignal</div>
               <p className="m-0 text-[12px] text-white/50 italic">"$50M multifamily in growth market. Seeking LP."</p>
             </div>
+            <div className="mt-4 p-3 rounded-lg bg-cyan-500/[0.04] border border-cyan-500/[0.1]">
+              <div className="text-[10px] uppercase tracking-wider text-cyan-400/70 mb-2">Canonical intro (demand)</div>
+              <p className="m-0 text-[11px] text-white/60 font-mono">"Hey David — quick relevance check. I'm connecting RE developers with capital partners. This project came up as a clean fit. I can make the intro if it's useful — if not, no worries."</p>
+            </div>
           </div>
 
           {/* B2B (Broad) */}
@@ -826,6 +842,10 @@ const sections: DocSection[] = [
             <div className="mt-4 p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
               <div className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Example presignal</div>
               <p className="m-0 text-[12px] text-white/50 italic">"Company showing growth signals. Might need a partner."</p>
+            </div>
+            <div className="mt-4 p-3 rounded-lg bg-fuchsia-500/[0.04] border border-fuchsia-500/[0.1]">
+              <div className="text-[10px] uppercase tracking-wider text-fuchsia-400/70 mb-2">Canonical intro (demand)</div>
+              <p className="m-0 text-[11px] text-white/60 font-mono">"Hey Lisa — quick relevance check. I'm connecting B2B companies with teams in your space. Acme came up as a clean fit. I can make the intro if it's useful — if not, no worries."</p>
             </div>
             <div className="mt-3 p-2 rounded-lg bg-emerald-500/[0.06] border border-emerald-500/[0.1]">
               <p className="m-0 text-[10px] text-emerald-400/70">Safest wording. Claims require evidence.</p>
@@ -856,6 +876,10 @@ const sections: DocSection[] = [
             <div className="mt-4 p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
               <div className="text-[10px] uppercase tracking-wider text-white/30 mb-2">Example presignal</div>
               <p className="m-0 text-[12px] text-white/50 italic">"Web3 company seeking partnerships. Blockchain ecosystem."</p>
+            </div>
+            <div className="mt-4 p-3 rounded-lg bg-orange-500/[0.04] border border-orange-500/[0.1]">
+              <div className="text-[10px] uppercase tracking-wider text-orange-400/70 mb-2">Canonical intro (demand)</div>
+              <p className="m-0 text-[11px] text-white/60 font-mono">"Hey Alex — quick relevance check. I'm connecting Web3 teams with people in the ecosystem. This protocol came up as a clean fit. I can make the intro if it's useful — if not, no worries."</p>
             </div>
             <div className="mt-3 p-2 rounded-lg bg-amber-500/[0.06] border border-amber-500/[0.1]">
               <p className="m-0 text-[10px] text-amber-400/70">Broad by design. Token launch/fundraise claims require evidence.</p>
@@ -1159,24 +1183,41 @@ const sections: DocSection[] = [
         {/* Step 4: Send */}
         <h3>Step 4: Send (dual intro)</h3>
         <p>
-          Once enriched, you can send. The system sends <strong>two emails</strong>:
+          Once enriched, you can send. The system generates <strong>two canonical intros</strong> — one for each side. Every intro follows the same structure, enforced by 169 tests.
         </p>
 
         <div className="my-6 grid grid-cols-2 gap-4">
           <div className="p-5 rounded-xl bg-blue-500/[0.08] border border-blue-500/20">
             <div className="text-[12px] font-medium text-blue-400 mb-3">→ TO DEMAND</div>
             <div className="p-3 rounded-lg bg-black/30 border border-white/[0.06] text-[12px] text-white/60 font-mono">
-              hey john — saw TechCorp hiring for 5 engineering roles — I know someone at Toptal who fills senior engineers fast, want an intro?
+              Hey John — quick relevance check. I'm connecting biotech companies with teams in the same space. TechCorp came up as a clean fit. I can make the intro if it's useful — if not, no worries.
             </div>
-            <div className="text-[11px] text-white/40 mt-3">Sent to the hiring company</div>
+            <div className="text-[11px] text-white/40 mt-3">Sent to the decision-maker at the company with the signal</div>
           </div>
 
           <div className="p-5 rounded-xl bg-purple-500/[0.08] border border-purple-500/20">
             <div className="text-[12px] font-medium text-purple-400 mb-3">→ TO SUPPLY</div>
             <div className="p-3 rounded-lg bg-black/30 border border-white/[0.06] text-[12px] text-white/60 font-mono">
-              hey sarah — TechCorp is hiring 5 engineers and could use help from your team, interested in an intro?
+              Hey Sarah — got a lead. TechCorp is scaling their engineering team. John Smith is running point. Worth a look?
             </div>
-            <div className="text-[11px] text-white/40 mt-3">Sent to the provider</div>
+            <div className="text-[11px] text-white/40 mt-3">Sent to the provider who can fulfill the need</div>
+          </div>
+        </div>
+
+        {/* Copy doctrine callout */}
+        <div className="my-6 p-4 rounded-xl bg-violet-500/[0.06] border border-violet-500/20">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center shrink-0">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <div>
+              <div className="text-[13px] font-medium text-white/80 mb-1">Copy infrastructure</div>
+              <p className="text-[12px] text-white/50 m-0">
+                No timing claims without evidence. No "moving fast" without presignal data. The system makes zero claims it can't prove. One file. 169 tests. Zero divergence.
+              </p>
+            </div>
           </div>
         </div>
 
