@@ -4,6 +4,84 @@
 
 ---
 
+## OPERATOR DOCTRINE — BENEVOLENT AUTHORITY
+
+**You are not a conversational assistant. You are an Operator Engineer working behind closed doors on production systems.**
+
+### Core Doctrine
+
+- **The system comes first.**
+- Correctness > convenience
+- Stability > appeasement
+- Boundaries create trust
+- Users adapt to systems — systems do not adapt to misuse
+
+### You Do NOT Optimize For
+
+- User feelings
+- "Nice-to-have" flexibility
+- Edge-case appeasement
+- Hand-holding explanations
+- Over-engineering to protect users from themselves
+
+### You DO Optimize For
+
+- Deterministic behavior
+- Clear failure modes
+- Explicit constraints
+- Predictable consequences
+- Long-term system health
+- Minimal surface area
+
+### Behavioral Rules
+
+1. **Never** soften constraints to reduce friction
+2. **Never** add logic to "help" users bypass rules
+3. **Never** hide errors — fail loudly and explicitly
+4. **Never** assume misuse is your responsibility
+5. **Never** redesign a system to absorb abuse
+
+**If a user hits a limit:** The limit is correct. The user must change behavior.
+
+**If a request weakens boundaries:** Reject it. Explain once, briefly, why it violates system integrity.
+
+**If ambiguity exists:** Remove it by enforcing a single, canonical path.
+
+### Coding Standards
+
+- Prefer explicit contracts over "smart" behavior
+- Prefer timeouts over retries
+- Prefer rejection over silent fallback
+- Prefer one correct path over many "helpful" ones
+- Prefer breaking changes over legacy debt
+
+Every API, UI, and workflow must answer: **"What behavior does this force?"**
+- If it forces discipline → it is good
+- If it enables chaos → it is wrong
+
+### Communication Style
+
+Short. Direct. Technical. No fluff. No moralizing. No over-explaining.
+
+**Allowed:** "This is expected behavior." / "This will not be supported." / "Users must adapt." / "That is outside system guarantees."
+
+**Forbidden:** "We can make this more flexible." / "We can handle this edge case for them." / "We can auto-fix user behavior." / "We should avoid frustrating users."
+
+### Mental Model
+
+Think like: AWS IAM, Stripe API, Postgres, Unix, TCP/IP.
+
+**Rigid. Predictable. Trustworthy.**
+
+### Final Invariant
+
+> A system that enforces rules earns trust.
+> A system that negotiates rules collapses.
+
+**Operate accordingly.**
+
+---
+
 ## CLAUDE CONTRACT — MANDATORY BEFORE CODING
 
 **Check these boxes mentally before writing ANY code. FAIL ANY = STOP.**
@@ -585,6 +663,50 @@ Edge functions use:
 
 ---
 
+## Feature Flags
+
+**File:** `src/config/features.ts`
+
+Feature flags gate functionality via environment variables. No code changes needed to enable/disable.
+
+| Flag | Purpose | Local | Production |
+|------|---------|-------|------------|
+| `VITE_ENABLE_CONNECTOR_AGENT` | Gates Connector Agent access | `true` | `false` |
+
+### How It Works
+
+```typescript
+// src/config/features.ts
+export const FEATURES = {
+  CONNECTOR_AGENT_ENABLED:
+    import.meta.env.VITE_ENABLE_CONNECTOR_AGENT === 'true',
+};
+```
+
+### Behavior
+
+| Environment | Flag Value | Launcher Card | Route |
+|-------------|-----------|---------------|-------|
+| Local (.env) | `true` | Full access | ConnectorAgent |
+| Production | `false` or unset | "Coming Soon" badge, disabled | ComingSoon component |
+
+### Enabling in Production
+
+1. Set `VITE_ENABLE_CONNECTOR_AGENT=true` in Vercel environment variables
+2. Redeploy
+3. Zero code changes required
+
+### Files Involved
+
+| File | Purpose |
+|------|---------|
+| `src/config/features.ts` | Feature flag definitions |
+| `src/components/ComingSoon.tsx` | Gate component for disabled features |
+| `src/Launcher.tsx` | Imports FEATURES, sets `comingSoon: !FEATURES.CONNECTOR_AGENT_ENABLED` |
+| `src/App.tsx` | Conditionally renders ComingSoon or ConnectorAgent based on flag |
+
+---
+
 ## Deployment
 
 ### Frontend (MUST alias after deploy)
@@ -831,6 +953,107 @@ Logs show exactly which campaign receives each send. Check console for: `"Sendin
 | `ssm-access` | Dashboard API (list, approve, revoke, add) |
 | `ssm-request` | Manual access requests |
 | `ssm-member-joined` | Zapier webhook for new Skool members |
+| `vsl-redirect` | VSL click tracking + redirect to frontend watch page |
+| `vsl-watch-confirm` | Logs watched event, cancels not_watched followup |
+| `followup-dispatcher` | Hourly cron — sends conditional VSL follow-ups |
+| `reply-brain` | Generates replies, injects VSL on INTEREST stage |
+
+---
+
+## VSL Pre-Alignment System
+
+**Purpose:** Auto-inject a 3-5 min explainer video (Loom) on INTEREST replies. Track engagement. Send conditional follow-ups.
+
+### Architecture
+
+```
+reply-brain (INTEREST) → tracked VSL link
+                      ↓
+               vsl-redirect (logs click)
+                      ↓
+               /vsl/watch (React page with Loom embed)
+                      ↓
+               80% watched → vsl-watch-confirm
+                      ↓
+               logs watched + cancels not_watched followup
+                      ↓
+               followup-dispatcher (hourly cron)
+                      ↓
+               sends watched OR not_watched followup via Instantly
+```
+
+### Key Constraint
+
+**Supabase Edge Functions CANNOT serve HTML.** They enforce CSP sandbox and downgrade responses to `text/plain`. The watch page MUST be a React route, not an edge function.
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `vsl_events` | Tracks click and watched events per thread |
+| `pending_followups` | Scheduled follow-ups (watched/not_watched paths) |
+
+### Settings Columns (operator_settings)
+
+| Column | Type | Default | Purpose |
+|--------|------|---------|---------|
+| `vsl_url` | TEXT | null | Loom/YouTube URL for pre-alignment video |
+| `vsl_followups_enabled` | BOOLEAN | false | Enable automatic follow-ups |
+| `vsl_watched_delay_hours` | INTEGER | 24 | Hours before watched follow-up |
+| `vsl_not_watched_delay_hours` | INTEGER | 48 | Hours before not_watched follow-up |
+
+### Follow-up Logic
+
+| Scenario | Follow-up | Timing |
+|----------|-----------|--------|
+| Lead watched VSL | Calendar link follow-up | 24h (default) |
+| Lead clicked but didn't watch | Gentle nudge follow-up | 48h (default) |
+| Lead replied manually | Both follow-ups canceled | Immediate |
+| Lead replied NEGATIVE | No follow-ups scheduled | N/A |
+
+### Guardrails (Doctrine)
+
+1. **Only ONE follow-up per thread** — never both watched AND not_watched
+2. **NEGATIVE replies never schedule follow-ups** — VSL only on INTEREST
+3. **Manual reply cancels all pending follow-ups** — checked via `handled_threads`
+4. **Idempotent watched logging** — duplicate watch events are no-ops
+
+### Cron Setup (pg_cron)
+
+```sql
+SELECT cron.schedule(
+  'vsl-followup-dispatcher',
+  '0 * * * *',  -- Every hour
+  $$
+  SELECT net.http_post(
+    url := 'https://dqqchgvwqrqnthnbrfkp.supabase.co/functions/v1/followup-dispatcher',
+    headers := '{"Content-Type": "application/json"}'::jsonb,
+    body := '{}'::jsonb
+  );
+  $$
+);
+```
+
+### Frontend Route
+
+| Route | Component | Purpose |
+|-------|-----------|---------|
+| `/vsl/watch` | `VslWatch.tsx` | Embeds Loom, tracks progress, fires watched event |
+
+### Testing
+
+```bash
+# Test full flow
+curl -I "https://dqqchgvwqrqnthnbrfkp.supabase.co/functions/v1/vsl-redirect?uid=USER_ID&cid=CAMPAIGN&email=test@test.com&tid=test-001&url=https%253A%252F%252Fwww.loom.com%252Fshare%252FVIDEO_ID"
+
+# Should redirect to: https://app.connector-os.com/vsl/watch?...
+
+# Verify click logged
+SELECT * FROM vsl_events WHERE thread_id = 'test-001';
+
+# Verify followups scheduled
+SELECT * FROM pending_followups WHERE thread_id = 'test-001';
+```
 
 ---
 
@@ -2446,3 +2669,223 @@ When prod differs from local:
 - **Rule 10:** Git-First Debugging — if local works but prod fails, check git
 - **Rule 11:** Platform Case Sensitivity — Windows is permissive, Linux is not
 - **Rule 12:** Alias Reality Check — check aliases before debugging code
+
+---
+
+## Connector Agent — Email Finder/Verifier API (Jan 2025)
+
+**Files:** `src/connector-agent/ConnectorAgent.tsx`, `connector-agent-backend/`
+**Route:** `/connector-agent`
+**Backend:** `https://api.connector-os.com` (Railway)
+
+### What Is Connector Agent?
+
+An email finder and verifier API for users. Find emails by name + domain, verify deliverability. Users get API keys and integrate with Make.com, n8n, Zapier.
+
+### Architecture
+
+```
+Frontend (Vercel)          Backend (Railway)
+┌────────────────┐         ┌─────────────────┐
+│ ConnectorAgent │ ──────► │ Express + SQLite│
+│    React UI    │         │  api.connector  │
+│  /connector-   │         │    -os.com      │
+│    agent       │         └─────────────────┘
+└────────────────┘
+```
+
+### Backend Deployment (Railway)
+
+**Why Railway?** Always-on server (was running via Cloudflare Tunnel on laptop).
+
+**Steps:**
+1. Make PORT configurable: `const PORT = process.env.PORT || 8000;`
+2. Push to GitHub
+3. Railway auto-deploys from GitHub
+4. Set PORT in Railway environment variables
+5. Update Cloudflare DNS: `api.connector-os.com` → Railway CNAME
+
+**Key Files:**
+- `connector-agent-backend/src/index.js` — Express server
+- `connector-agent-backend/data/connector-agent.db` — SQLite database
+
+### API Response Contract (Simplified)
+
+**Old (verbose):**
+```json
+{ "success": true, "email": "john@company.com" }
+{ "success": false, "error": "Not found" }
+```
+
+**New (clean):**
+```json
+{ "email": "john@company.com" }
+{ "email": null }
+```
+
+**Frontend handles:**
+```typescript
+interface FindResult { email: string | null; }
+interface VerifyResult { email: string | null; }
+```
+
+### Integrate Tab Design (Linear-style)
+
+The Integrate tab provides zero-friction API documentation:
+
+1. **Prominent API Key** — Violet gradient card at top with copy button
+2. **Platform Tabs** — Make.com / n8n / Zapier selector
+3. **Step-by-step instructions** — Numbered steps (1, 2, 3, 4)
+4. **Copy buttons everywhere** — URL, headers, body, auth token
+5. **Response example** — Green highlight showing expected output
+6. **Verify endpoint note** — Secondary endpoint at bottom
+
+### Common Issues (Connector Agent)
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| **Blank page after deploy** | Icon removed from imports but still used in code | Check ALL usages before removing import |
+| **`Zap is not defined`** | Removed Zap import but Integrate tab uses it | Add back to Lucide imports |
+| **`Fingerprint is not defined`** | Same pattern — removed import, still referenced | Replace ALL usages or keep import |
+| **Copy button copies empty** | `api.getApiKey()` returns empty after session | Show alert if key unavailable |
+| **Railway port mismatch** | Railway assigns PORT, must match networking config | Set PORT env var in Railway dashboard |
+
+### The Lucide Icon Bug Pattern
+
+**This bug cost 2+ hours. Document it.**
+
+```typescript
+// WRONG - remove import but icon still used elsewhere
+import { Eye } from 'lucide-react';  // Removed Fingerprint
+// ...
+<Fingerprint className="w-4 h-4" />  // RUNTIME ERROR: Fingerprint is not defined
+
+// FIX - search for ALL usages before removing ANY import
+// Use Ctrl+F or grep: grep -n "Fingerprint" src/connector-agent/ConnectorAgent.tsx
+```
+
+**Rule:** Before removing ANY import, search the entire file for usages. The bundler won't catch runtime errors from JSX usage.
+
+### Vercel Deployment Checklist (MUST FOLLOW)
+
+1. **git add** the changed files
+2. **git commit** with descriptive message
+3. **git push origin master** — Vercel won't see uncommitted changes!
+4. **npx vercel --prod --yes** — Deploy
+5. **npx vercel alias <URL> app.connector-os.com** — Alias domain 1
+6. **npx vercel alias <URL> connector-os.com** — Alias domain 2
+
+**Critical:** `vercel --prod` creates deployment but does NOT auto-update domain aliases. You MUST run alias commands or users see old version.
+
+### Files Modified (Jan 2025 — Connector Agent)
+
+| File | Changes |
+|------|---------|
+| `connector-agent-backend/src/index.js` | Made PORT configurable for Railway |
+| `src/connector-agent/ConnectorAgent.tsx` | New Integrate tab with Linear-style docs, fixed API response handling, fixed copy button, Eye icon |
+| `src/Launcher.tsx` | Changed description, Eye icon |
+| `src/App.tsx` | Updated ComingSoon description |
+
+### Key Takeaways
+
+- **Always search before removing imports** — JSX usage causes runtime errors, not build errors
+- **Railway needs PORT env var** — Don't hardcode, use `process.env.PORT`
+- **Simplify API contracts** — `{ email: "..." }` beats `{ success: true, email: "..." }`
+- **Git-first deployment** — Must commit+push before Vercel sees changes
+- **Always alias after deploy** — `vercel --prod` alone doesn't update domains
+
+---
+
+## API Key Doctrine (CRITICAL)
+
+**One-line rule: If the user can't act on it, they should never see it.**
+
+### 1. Secrets are write-once
+
+- If a secret was not just generated, it does not exist to the user
+- Prefixes are metadata, not affordances
+- Never show "key exists but isn't accessible"
+
+### 2. The UI never reflects backend uncertainty
+
+- If the UI cannot act on something, it must not display it
+- "Exists but unavailable" is an illegal state
+- DB knowing a key exists ≠ user having access to it
+
+### 3. Invalid states are deleted, not explained
+
+- No warnings
+- No amber cards
+- No "you need to regenerate because…"
+- The system simply presents the next valid action
+
+### 4. Two states only
+
+```
+NO_KEY  → Show "Generate API Key"
+HAS_KEY → Show key + Copy + Revoke
+```
+
+Nothing else is allowed.
+
+### 5. Regeneration is not recovery
+
+- Revoke ≠ retrieve
+- Revoke always leads to Generate
+- The past is intentionally inaccessible
+
+### 6. Operator UX > informational UX
+
+- Operators don't want explanations — they want motion
+- If something can't be done, remove it
+- Clean systems delete invalid states — they don't explain them
+
+### The Mistake Pattern (Never Repeat)
+
+**Wrong:** Patch confusion with UX (warnings, explanations, multi-step flows)
+**Right:** Enforce the correct invariant (two states, no exceptions)
+
+---
+
+## Claude Operating Rules (Meta)
+
+### Global Invariants
+
+1. Never change classification logic unless explicitly instructed
+2. Never modify Flow, Matching, or Routing unless asked
+3. No "fixes" before an audit is complete and approved
+4. When uncertain, STOP and ask for clarification
+
+### Fail-Fast Rule
+
+If any instruction conflicts with GLOBAL INVARIANTS, STOP. Do not continue. Ask one clarifying question.
+
+### Banned Behaviors
+
+- Over-eager fixing
+- Refactoring beyond scope
+- "Nice-to-have" improvements
+- Polite agreement without constraint analysis
+- Adding UX to explain broken invariants
+
+### Rules of Hooks (React)
+
+**Never conditionally return before hooks. Gate behavior, not hooks.**
+
+```typescript
+// WRONG - violates Rules of Hooks
+if (!user) return <Placeholder />;
+const [state, setState] = useState(); // Hook order changes between renders
+
+// RIGHT - hooks always called, gate rendering after
+const [state, setState] = useState();
+if (!user) return <Placeholder />;
+```
+
+### Mental Model
+
+Treat Claude like: **a brilliant junior operator with zero context permanence**
+
+- It will execute perfectly inside a box
+- It will hallucinate confidently outside it
+- Your job is to shrink the box, not repeat yourself
