@@ -240,6 +240,17 @@ function safeRender(value: unknown): string {
   return String(value);
 }
 
+/**
+ * Normalize presignal/context values to string at state boundaries.
+ * JSONB columns default to {} which is truthy — this catches that.
+ */
+function normalizeToString(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return ''; // {} from JSONB default
+  return String(value);
+}
+
 // =============================================================================
 // USER-FRIENDLY ERROR MESSAGES
 // =============================================================================
@@ -483,8 +494,8 @@ export default function Flow() {
             demandCampaignId,
             supplyCampaignId,
             aiConfig,
-            presignalDemand: data?.presignal_demand || '',
-            presignalSupply: data?.presignal_supply || '',
+            presignalDemand: normalizeToString(data?.presignal_demand),
+            presignalSupply: normalizeToString(data?.presignal_supply),
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
@@ -532,8 +543,8 @@ export default function Flow() {
           demandCampaignId,
           supplyCampaignId,
           aiConfig,
-          presignalDemand: s.presignalDemand || '',
-          presignalSupply: s.presignalSupply || '',
+          presignalDemand: normalizeToString(s.presignalDemand),
+          presignalSupply: normalizeToString(s.presignalSupply),
         });
 
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
