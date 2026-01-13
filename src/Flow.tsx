@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -74,6 +74,10 @@ import {
   validateCopy,
   canSend,
   type CopyValidationResult,
+  hasPresignal,
+  containsActivityTimingLanguage,
+  getPresignalStatus,
+  COPY_ERROR_CODES,
 } from './services/CopyValidator';
 
 // Observability
@@ -314,10 +318,9 @@ interface Settings {
   aiConfig: AIConfig | null;
   // FIX 1: Connector mode (persisted per operator)
   connectorMode?: ConnectorMode | null;
-  // FIX 4: Pre-signal context split by side (keyed by domain)
-  preSignalContext?: Record<string, PreSignalContextEntry>;  // Legacy - single field
-  presignalDemand?: Record<string, PreSignalContextEntry>;   // NEW - demand side
-  presignalSupply?: Record<string, PreSignalContextEntry>;   // NEW - supply side
+  // CANONICAL: Per-side presignal (applies to ALL contacts on that side)
+  presignalDemand?: string;   // Text for ALL demand contacts
+  presignalSupply?: string;   // Text for ALL supply contacts
 }
 
 // =============================================================================
@@ -349,14 +352,22 @@ export default function Flow() {
 
   const [settings, setSettings] = useState<Settings | null>(null);
 
-  // Pre-signal context editing state
-  const [editingContextDomain, setEditingContextDomain] = useState<string | null>(null);
-  const [contextText, setContextText] = useState('');
-  const [contextSource, setContextSource] = useState<'linkedin' | 'news' | 'prior_convo' | 'job_post' | 'other'>('other');
-  const [savingContext, setSavingContext] = useState(false);
+  // CANONICAL: Per-side presignal editing state
+  const [editingPresignalSide, setEditingPresignalSide] = useState<'demand' | 'supply' | null>(null);
+  const [presignalText, setPresignalText] = useState('');
+  const [savingPresignal, setSavingPresignal] = useState(false);
 
   // Supply Annotations — Operator judgment (render-only, no matching impact)
   const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
+
+  // Markets banner (dismissible)
+  const [showMarketsBanner, setShowMarketsBanner] = useState(() => {
+    return !localStorage.getItem('flow_markets_banner_dismissed');
+  });
+  const dismissMarketsBanner = () => {
+    setShowMarketsBanner(false);
+    localStorage.setItem('flow_markets_banner_dismissed', 'true');
+  };
 
   const abortRef = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
@@ -447,7 +458,8 @@ export default function Flow() {
             demandCampaignId,
             supplyCampaignId,
             aiConfig,
-            preSignalContext: data?.pre_signal_context || {},
+            presignalDemand: data?.presignal_demand || '',
+            presignalSupply: data?.presignal_supply || '',
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
@@ -495,7 +507,8 @@ export default function Flow() {
           demandCampaignId,
           supplyCampaignId,
           aiConfig,
-          preSignalContext: s.preSignalContext || {},
+          presignalDemand: s.presignalDemand || '',
+          presignalSupply: s.presignalSupply || '',
         });
 
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
@@ -566,69 +579,57 @@ export default function Flow() {
     }
   }, [supplyAnnotations, isAuthenticated, user?.id]);
 
-  // Save pre-signal context for a domain
-  const saveContext = useCallback(async (domain: string) => {
-    const normalizedKey = normalizeDomain(domain);
-    if (!normalizedKey || !contextText.trim()) {
-      setEditingContextDomain(null);
+  // CANONICAL: Save presignal for a side (demand or supply)
+  const savePresignal = useCallback(async (side: 'demand' | 'supply') => {
+    if (!presignalText.trim()) {
+      setEditingPresignalSide(null);
       return;
     }
 
-    setSavingContext(true);
+    setSavingPresignal(true);
     try {
-      const entry: PreSignalContextEntry = {
-        text: contextText.trim(),
-        source: contextSource,
-        updatedAt: new Date().toISOString(),
-      };
-
-      const updatedContext = {
-        ...(settings?.preSignalContext || {}),
-        [normalizedKey]: entry,  // Use normalized domain as key
-      };
-      console.log('[Flow] Saving context with normalized key:', normalizedKey);
+      const fieldName = side === 'demand' ? 'presignalDemand' : 'presignalSupply';
+      const text = presignalText.trim();
 
       // Update local state immediately
-      setSettings(prev => prev ? { ...prev, preSignalContext: updatedContext } : prev);
+      setSettings(prev => prev ? { ...prev, [fieldName]: text } : prev);
 
       // Persist based on auth state
       if (isAuthenticated && user?.id) {
         await supabase.from('operator_settings').upsert({
           user_id: user.id,
-          pre_signal_context: updatedContext,
+          [fieldName === 'presignalDemand' ? 'presignal_demand' : 'presignal_supply']: text,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
-        console.log('[Flow] Saved context to Supabase:', domain);
+        console.log(`[Flow] Saved ${side} presignal to Supabase`);
       } else {
         // Guest: update localStorage
         const stored = localStorage.getItem('guest_settings');
         const parsed = stored ? JSON.parse(stored) : { settings: {} };
-        const updatedSettings = { ...parsed.settings, preSignalContext: updatedContext };
+        const updatedSettings = { ...parsed.settings, [fieldName]: text };
         localStorage.setItem('guest_settings', JSON.stringify({ settings: updatedSettings }));
-        console.log('[Flow] Saved context to localStorage:', domain);
+        console.log(`[Flow] Saved ${side} presignal to localStorage`);
       }
 
-      setEditingContextDomain(null);
-      setContextText('');
+      setEditingPresignalSide(null);
+      setPresignalText('');
     } catch (e) {
-      console.error('[Flow] Failed to save context:', e);
+      console.error('[Flow] Failed to save presignal:', e);
     }
-    setSavingContext(false);
-  }, [contextText, contextSource, settings, isAuthenticated, user?.id]);
+    setSavingPresignal(false);
+  }, [presignalText, isAuthenticated, user?.id]);
 
-  // Start editing context for a domain
-  const startEditContext = useCallback((domain: string, side: 'demand' | 'supply') => {
-    const normalizedKey = normalizeDomain(domain);
-    const existing = normalizedKey ? settings?.preSignalContext?.[normalizedKey] : undefined;
-    setContextText(existing?.text || '');
-    setContextSource(existing?.source || 'other');
-    setEditingContextDomain(domain);  // Keep original for display
+  // CANONICAL: Start editing presignal for a side
+  const startEditPresignal = useCallback((side: 'demand' | 'supply') => {
+    const existing = side === 'demand' ? settings?.presignalDemand : settings?.presignalSupply;
+    setPresignalText(existing || '');
+    setEditingPresignalSide(side);
   }, [settings]);
 
-  // Cancel editing
-  const cancelEditContext = useCallback(() => {
-    setEditingContextDomain(null);
-    setContextText('');
+  // CANONICAL: Cancel editing presignal
+  const cancelEditPresignal = useCallback(() => {
+    setEditingPresignalSide(null);
+    setPresignalText('');
   }, []);
 
   // Auto-start when coming from Connector Hub (ref to avoid dependency issues)
@@ -1159,11 +1160,8 @@ export default function Flow() {
       const roleCount = roleCountByDomain.get(match.demand.domain) || 1;
 
       try {
-        // Normalize domain for consistent preSignalContext lookup
-        const demandDomainKey = normalizeDomain(match.demand.domain);
-        const demandPreSignalContext = demandDomainKey
-          ? settings?.preSignalContext?.[demandDomainKey]?.text
-          : undefined;
+        // CANONICAL: Use per-side presignal (applies to ALL demand contacts)
+        const demandPreSignalContext = settings?.presignalDemand;
 
         // Build rich context from ALL available data
         // Pass: firstName, enriched title (e.g., "VP Engineering"), role count
@@ -1172,12 +1170,11 @@ export default function Flow() {
           firstName,
           enriched.title || undefined,  // Enriched title from Apollo
           roleCount,
-          demandPreSignalContext  // Operator context (normalized lookup)
+          demandPreSignalContext,  // CANONICAL: Same presignal for ALL demand
+          state.connectorMode || undefined  // CANONICAL: Mode for language routing (biotech vs recruiting)
         );
         console.log(`[Flow] Generating demand intro for ${firstName} at ${match.demand.company}...`);
-        console.log(`[Flow] Domain lookup:`, demandDomainKey);
-        console.log(`[Flow] PreSignalContext keys:`, Object.keys(settings?.preSignalContext || {}));
-        console.log(`[Flow] Injected preSignalContext:`, demandPreSignalContext || '(none)');
+        console.log(`[Flow] Using per-side presignalDemand:`, demandPreSignalContext || '(none)');
         console.log(`[Flow] Context:`, {
           signal: ctx.signal,
           contactTitle: ctx.contactTitle,
@@ -1186,6 +1183,7 @@ export default function Flow() {
           hasFunding: !!ctx.companyFunding,
           industry: ctx.industry,
           preSignalContext: ctx.preSignalContext || '(none)',
+          connectorMode: ctx.connectorMode || '(not set)',
         });
 
         // Generate with validation (retries up to 3x if validation fails)
@@ -1195,10 +1193,12 @@ export default function Flow() {
 
       } catch (err) {
         console.error('[Flow] Demand intro failed:', match.demand.domain, err);
-        // Fallback to template
+        // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
         demandIntros.set(match.demand.domain, generateDemandIntro({
           ...match.demand,
           firstName,
+          connectorMode: state.connectorMode || undefined,
+          preSignalContext: settings?.presignalDemand,
         }));
       }
 
@@ -1241,16 +1241,12 @@ export default function Flow() {
       const demandEnriched = enrichedDemand.get(agg.bestMatch.demand.domain);
       const contactName = demandEnriched?.firstName || agg.bestMatch.demand.firstName || null;
 
-      // Normalize domain for consistent preSignalContext lookup
-      const supplyDomainKey = normalizeDomain(agg.supply.domain);
-      const supplyPreSignalContext = supplyDomainKey
-        ? settings?.preSignalContext?.[supplyDomainKey]?.text
-        : undefined;
+      // CANONICAL: Use per-side presignal (applies to ALL supply contacts)
+      const supplyPreSignalContext = settings?.presignalSupply;
 
       console.log(`[Flow] Generating supply intro for ${firstName} via antifragile path...`);
       console.log(`[Flow] Signal: "${commonSignal}" → sanitized: "${sanitizedSignal}"`);
-      console.log(`[Flow] Supply domain lookup:`, supplyDomainKey);
-      console.log(`[Flow] Injected supply preSignalContext:`, supplyPreSignalContext || '(none)');
+      console.log(`[Flow] Using per-side presignalSupply:`, supplyPreSignalContext || '(none)');
 
       // ANTIFRAGILE PATH: AIService.generateIntro (signal-only, no enrichment)
       // FIX 1 + FIX 3: Pass connector mode and job signal for mode-appropriate language
@@ -1364,10 +1360,13 @@ export default function Flow() {
         const enriched = enrichedDemand.get(match.demand.domain)!;
 
         // Use pre-generated AI intro (fall back to template if missing)
+        // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
         const intro = state.demandIntros.get(match.demand.domain) || generateDemandIntro({
           ...match.demand,
           firstName: enriched.firstName || match.demand.firstName,
           email: enriched.email,
+          connectorMode: state.connectorMode || undefined,
+          preSignalContext: settings?.presignalDemand,
         });
 
         // ENTERPRISE: Validate copy before send (if mode is set)
@@ -1384,6 +1383,7 @@ export default function Flow() {
             mode: state.connectorMode,
             side: 'demand',
             evidence,
+            presignal_context: settings?.presignalDemand,
           });
 
           if (!validation.canSend) {
@@ -1440,8 +1440,15 @@ export default function Flow() {
         const enriched = enrichedSupply.get(agg.supply.domain)!;
 
         // Use pre-generated AI intro (fall back to template if missing)
+        // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
         const intro = state.supplyIntros.get(agg.supply.domain) || generateSupplyIntro(
-          { ...agg.supply, firstName: enriched.firstName || agg.supply.firstName, email: enriched.email },
+          {
+            ...agg.supply,
+            firstName: enriched.firstName || agg.supply.firstName,
+            email: enriched.email,
+            connectorMode: state.connectorMode || undefined,
+            preSignalContext: settings?.presignalSupply,
+          },
           agg.bestMatch.demand
         );
 
@@ -1454,6 +1461,7 @@ export default function Flow() {
             mode: state.connectorMode,
             side: 'supply',
             evidence,
+            presignal_context: settings?.presignalSupply,
           });
 
           if (!validation.canSend) {
@@ -1551,6 +1559,45 @@ export default function Flow() {
         </button>
       </div>
 
+      {/* Markets Banner - Platinum */}
+      {showMarketsBanner && (
+        <div className="px-8 pt-4">
+          <div className="max-w-[520px] mx-auto">
+            <div className="relative bg-gradient-to-r from-zinc-400/[0.06] via-slate-300/[0.04] to-zinc-400/[0.06] rounded-xl border border-zinc-400/10 px-4 py-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-400/15">
+                    <span className="text-[10px] text-zinc-300">◆</span>
+                    <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">New</span>
+                  </div>
+                  <p className="text-[12px] text-white/60">
+                    <span className="font-medium text-zinc-200">Pick your market</span>
+                    <span className="mx-1.5 text-white/20">—</span>
+                    <span className="text-white/50">7 modes or go custom</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => navigate('/library?page=modes')}
+                    className="group flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-400/15 hover:bg-zinc-400/25 text-zinc-300 text-[11px] font-medium transition-all"
+                  >
+                    Learn more
+                    <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                  <button
+                    onClick={dismissMarketsBanner}
+                    className="p-1 text-white/20 hover:text-white/50 transition-colors"
+                    aria-label="Dismiss"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main content */}
       <div className="flex-1 flex items-center justify-center pb-24">
         <div className="w-full max-w-[520px] px-6">
@@ -1630,25 +1677,11 @@ export default function Flow() {
               {/* Connector Mode Selector — All modes from registry with tooltips */}
               <div className="mb-6">
                 <div className="flex items-center justify-center gap-2 mb-3">
-                  <span className="text-[11px] text-white/30">Connector Mode</span>
-                  <TooltipHint
-                    content={
-                      <div className="space-y-2">
-                        <p className="font-medium text-white/90">What's your connector play?</p>
-                        <p className="text-white/60">Each mode configures the supply filters, intro language, and validation rules for your specific market.</p>
-                        <p className="text-white/50 text-[10px]">Hover each mode to see what it does and blocks.</p>
-                      </div>
-                    }
-                    position="bottom"
-                  />
-                  <InlineHelpLink href={DOCS.modes} label="Learn" />
+                  <span className="text-[12px] text-white/40">Mode</span>
                 </div>
-                <div className="grid grid-cols-3 gap-2 max-w-lg mx-auto">
+                <div className="grid grid-cols-4 gap-2 max-w-2xl mx-auto">
                   {getModesForUI().map((mode) => {
                     const isCustom = mode.id === 'custom';
-                    const contract = getModeContract(mode.id);
-                    const demandExamples = getPresignalExamples(mode.id, 'demand');
-                    const supplyExamples = getPresignalExamples(mode.id, 'supply');
 
                     return (
                       <button
@@ -1656,63 +1689,22 @@ export default function Flow() {
                         onClick={() => setState(prev => ({
                           ...prev,
                           connectorMode: mode.id,
-                          // Reset acknowledgement when switching modes
                           customModeAcknowledged: mode.id === 'custom' ? false : prev.customModeAcknowledged,
                         }))}
-                        className={`group relative px-3 py-2.5 text-[12px] rounded-lg border transition-all text-left ${
+                        className={`px-3 py-2.5 text-[12px] rounded-lg border transition-all text-left ${
                           state.connectorMode === mode.id
                             ? 'bg-white/10 border-white/20 text-white/90'
                             : 'border-white/[0.08] text-white/40 hover:border-white/20 hover:text-white/60'
                         }`}
                       >
                         <span className="font-medium block">{mode.label}</span>
-                        <span className="block text-[9px] text-white/30 mt-0.5 truncate">
+                        <span className="block text-[10px] text-white/30 mt-0.5 truncate">
                           {isCustom ? 'You define' : mode.description.split('→')[0].trim()}
                         </span>
-
-                        {/* Hover tooltip — uses contract.ui */}
-                        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-72 p-3 rounded-lg bg-[#1a1a1a] border border-white/10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 pointer-events-none">
-                          <p className="text-[10px] text-white/70 mb-2">{contract.ui.tooltip}</p>
-                          <div className="mb-2">
-                            <p className="text-[9px] font-medium text-emerald-400/80 uppercase mb-0.5">Does</p>
-                            <p className="text-[10px] text-white/50 leading-tight">{contract.ui.whatItDoes}</p>
-                          </div>
-                          <div className="mb-2">
-                            <p className="text-[9px] font-medium text-red-400/80 uppercase mb-0.5">Blocks</p>
-                            <p className="text-[10px] text-white/50 leading-tight">{contract.ui.whatItBlocks}</p>
-                          </div>
-                          {!isCustom && (
-                            <div className="pt-2 border-t border-white/5">
-                              <div className="mb-1.5">
-                                <p className="text-[9px] font-medium text-violet-400/80 uppercase mb-0.5">Demand example</p>
-                                <p className="text-[10px] text-white/40 leading-tight">{demandExamples[0]}</p>
-                              </div>
-                              <div>
-                                <p className="text-[9px] font-medium text-cyan-400/80 uppercase mb-0.5">Supply example</p>
-                                <p className="text-[10px] text-white/40 leading-tight">{supplyExamples[0]}</p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
                       </button>
                     );
                   })}
                 </div>
-
-                {/* Mode selection hint */}
-                {!state.connectorMode && (
-                  <p className="text-[10px] text-amber-400/60 mt-3 flex items-center justify-center gap-1">
-                    <span>Select a mode to continue</span>
-                    <span className="text-amber-400/40">— required</span>
-                  </p>
-                )}
-
-                {/* B2B (Broad) explanation */}
-                {state.connectorMode === 'enterprise_partnerships' && (
-                  <p className="text-[10px] text-white/40 mt-3 text-center max-w-sm mx-auto">
-                    For general B2B intros across industries. Safest wording. Claims require evidence.
-                  </p>
-                )}
 
                 {/* Custom mode safety interlock */}
                 {state.connectorMode === 'custom' && (
@@ -1853,34 +1845,12 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <div className="w-14 h-14 mx-auto mb-6 rounded-full bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                <svg className="w-6 h-6 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-
-              <h1 className="text-[17px] font-medium text-white/90 mb-1">Ready to route</h1>
-
-              {/* Surface existing state.error */}
-              {state.error && (
-                <p className="text-[12px] text-red-400/80 mb-4">{state.error}</p>
-              )}
-
-              {/* FIX 5: Count Consistency — Enhanced breakdown with clear labels */}
+{/* Ready to Route — Vercel/Linear Level */}
               {(() => {
-                // Calculate counts for detailed breakdown
+                // Calculate total sendable
                 const demandMatches = state.matchingResult?.demandMatches || [];
                 const supplyAggregates = state.matchingResult?.supplyAggregates || [];
 
-                // Loaded = total from dataset
-                const demandLoaded = state.demandRecords.length;
-                const supplyLoaded = state.supplyRecords.length;
-
-                // Matched = passed matching filter
-                const demandMatched = demandMatches.length;
-                const supplyMatched = supplyAggregates.length;
-
-                // Enriched = has contact info
                 const demandEnriched = demandMatches.filter(m => {
                   const e = state.enrichedDemand.get(m.demand.domain);
                   return e?.success && e?.email;
@@ -1891,339 +1861,185 @@ export default function Flow() {
                   return e?.success && e?.email;
                 }).length;
 
-                // Timed out (blocked)
-                const demandTimedOut = demandMatches.filter(m => {
-                  const e = state.enrichedDemand.get(m.demand.domain);
-                  return e?.source === 'timeout';
-                }).length;
-
-                const supplyTimedOut = supplyAggregates.filter(a => {
-                  const e = state.enrichedSupply.get(a.supply.domain);
-                  return e?.source === 'timeout';
-                }).length;
-
-                // Blocked = matched but not enriched (excluding timeouts)
-                const demandBlocked = demandMatched - demandEnriched - demandTimedOut;
-                const supplyBlocked = supplyMatched - supplyEnriched - supplyTimedOut;
-
-                // Show detailed breakdown panel
-                const hasDiscrepancy = demandEnriched !== demandMatched || supplyEnriched !== supplyMatched;
+                const totalReady = demandEnriched + supplyEnriched;
+                const hasContext = settings?.presignalDemand || settings?.presignalSupply;
+                const isEditingContext = editingPresignalSide !== null;
 
                 return (
-                  <div className="mb-8">
-                    {/* Summary line */}
-                    <div className="flex items-center justify-center gap-2 mb-3">
-                      <span className="text-[13px] text-white/40">
-                        {demandEnriched + supplyEnriched} ready to route
-                      </span>
-                      <TooltipHint
-                        position="bottom"
-                        content={
-                          <div className="space-y-2 text-[11px]">
-                            <p className="font-medium text-white/90">Count breakdown</p>
-                            <p className="text-white/60">Loaded: Raw records from dataset</p>
-                            <p className="text-white/60">Matched: Passed mode filter</p>
-                            <p className="text-white/60">Sendable: Has enriched contact</p>
-                            <p className="text-white/60">Blocked: Failed enrichment</p>
-                          </div>
-                        }
-                      />
-                    </div>
-
-                    {/* Detailed breakdown (shown when there's drop-off) */}
-                    {hasDiscrepancy && (
-                      <div className="max-w-xs mx-auto p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-                        <div className="grid grid-cols-2 gap-4 text-[11px]">
-                          {/* Demand column */}
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-medium text-violet-400/80 uppercase mb-2">Demand</p>
-                            <div className="flex justify-between">
-                              <span className="text-white/40">Loaded</span>
-                              <span className="text-white/60">{demandLoaded}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-white/40">Matched</span>
-                              <span className="text-white/60">{demandMatched}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-white/40">Sendable</span>
-                              <span className="text-emerald-400/80">{demandEnriched}</span>
-                            </div>
-                            {(demandBlocked > 0 || demandTimedOut > 0) && (
-                              <div className="flex justify-between">
-                                <span className="text-white/40">Blocked</span>
-                                <span className="text-amber-400/70">
-                                  {demandBlocked + demandTimedOut}
-                                  {demandTimedOut > 0 && (
-                                    <span className="text-white/30 ml-1">({demandTimedOut} timeout)</span>
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Supply column */}
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-medium text-emerald-400/80 uppercase mb-2">Supply</p>
-                            <div className="flex justify-between">
-                              <span className="text-white/40">Loaded</span>
-                              <span className="text-white/60">{supplyLoaded}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-white/40">Matched</span>
-                              <span className="text-white/60">{supplyMatched}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-white/40">Sendable</span>
-                              <span className="text-emerald-400/80">{supplyEnriched}</span>
-                            </div>
-                            {(supplyBlocked > 0 || supplyTimedOut > 0) && (
-                              <div className="flex justify-between">
-                                <span className="text-white/40">Blocked</span>
-                                <span className="text-amber-400/70">
-                                  {supplyBlocked + supplyTimedOut}
-                                  {supplyTimedOut > 0 && (
-                                    <span className="text-white/30 ml-1">({supplyTimedOut} timeout)</span>
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                  <div className="flex flex-col items-center">
+                    {/* Checkmark with glow animation */}
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                      className="relative w-16 h-16 mb-8"
+                    >
+                      <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" />
+                      <div className="relative w-full h-full rounded-full bg-gradient-to-b from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 flex items-center justify-center">
+                        <motion.svg
+                          initial={{ pathLength: 0 }}
+                          animate={{ pathLength: 1 }}
+                          transition={{ duration: 0.5, delay: 0.2 }}
+                          className="w-7 h-7 text-emerald-400"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                        >
+                          <motion.path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M5 13l4 4L19 7"
+                            initial={{ pathLength: 0 }}
+                            animate={{ pathLength: 1 }}
+                            transition={{ duration: 0.5, delay: 0.2 }}
+                          />
+                        </motion.svg>
                       </div>
+                    </motion.div>
+
+                    {/* Count — THE thing */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                      className="text-center mb-10"
+                    >
+                      <span className="text-[48px] font-light text-white/90 tracking-tight">{totalReady}</span>
+                      <p className="text-[13px] text-white/40 mt-1">Ready to Route</p>
+                    </motion.div>
+
+                    {/* Error surface */}
+                    {state.error && (
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="text-[12px] text-red-400/80 mb-6 text-center max-w-sm"
+                      >
+                        {state.error}
+                      </motion.p>
                     )}
+
+                    {/* Route Context — Single card, route-level */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.4 }}
+                      className="w-full max-w-sm mb-10"
+                    >
+                      {(() => {
+                        const currentContext = settings?.presignalDemand || settings?.presignalSupply || '';
+
+                        // Not editing, no context
+                        if (!isEditingContext && !currentContext) {
+                          return (
+                            <button
+                              onClick={() => startEditPresignal('demand')}
+                              className="w-full group"
+                            >
+                              <div className="p-4 rounded-xl border border-dashed border-white/[0.08] hover:border-white/[0.15] transition-all duration-300">
+                                <p className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors text-center">
+                                  Route Context <span className="text-white/20">(Optional)</span>
+                                </p>
+                                <p className="text-[10px] text-white/20 mt-1 text-center">
+                                  Prior conversations or observations
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        }
+
+                        // Editing
+                        if (isEditingContext) {
+                          return (
+                            <motion.div
+                              initial={{ opacity: 0, scale: 0.98 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08]"
+                            >
+                              <p className="text-[11px] text-white/40 mb-3 text-center">Route Context</p>
+                              <textarea
+                                value={presignalText}
+                                onChange={(e) => setPresignalText(e.target.value)}
+                                placeholder="e.g., I've been speaking with a few founders who recently raised..."
+                                className="w-full h-20 bg-transparent text-[13px] text-white/70 resize-none outline-none placeholder:text-white/20 leading-relaxed"
+                                autoFocus
+                              />
+                              <div className="flex justify-end gap-2 mt-3">
+                                <button
+                                  onClick={cancelEditPresignal}
+                                  className="px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    // Save to both sides (route-level context)
+                                    await savePresignal('demand');
+                                    if (presignalText.trim()) {
+                                      // Also sync to supply side
+                                      setSettings(prev => prev ? { ...prev, presignalSupply: presignalText.trim() } : prev);
+                                      if (user?.id) {
+                                        await supabase.from('operator_settings').update({ presignal_supply: presignalText.trim() }).eq('user_id', user.id);
+                                      }
+                                    }
+                                  }}
+                                  disabled={savingPresignal}
+                                  className="px-4 py-1.5 text-[11px] bg-white/10 hover:bg-white/15 text-white/80 rounded-lg transition-all disabled:opacity-50"
+                                >
+                                  {savingPresignal ? 'Saving...' : 'Save'}
+                                </button>
+                              </div>
+                            </motion.div>
+                          );
+                        }
+
+                        // Has context, show it
+                        return (
+                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                            <div className="flex items-center justify-between mb-3">
+                              <span className="text-[10px] text-white/30 uppercase tracking-wider">Route Context</span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => startEditPresignal('demand')}
+                                  className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                                >
+                                  Edit
+                                </button>
+                                <span className="text-white/10">·</span>
+                                <button
+                                  onClick={async () => {
+                                    // Clear both sides
+                                    setSettings(prev => prev ? { ...prev, presignalDemand: '', presignalSupply: '' } : prev);
+                                    if (user?.id) {
+                                      await supabase.from('operator_settings').update({ presignal_demand: '', presignal_supply: '' }).eq('user_id', user.id);
+                                    } else {
+                                      const stored = localStorage.getItem('guest_settings');
+                                      if (stored) {
+                                        const parsed = JSON.parse(stored);
+                                        parsed.presignalDemand = '';
+                                        parsed.presignalSupply = '';
+                                        localStorage.setItem('guest_settings', JSON.stringify(parsed));
+                                      }
+                                    }
+                                  }}
+                                  className="text-[10px] text-white/30 hover:text-red-400/70 transition-colors"
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-[13px] text-white/60 leading-relaxed text-center">{currentContext}</p>
+                          </div>
+                        );
+                      })()}
+                    </motion.div>
                   </div>
                 );
               })()}
 
-              {/* Preview Section — Clean Linear Style */}
-              {state.matchingResult && (
-                <div className="mb-8 max-w-md mx-auto">
-                  {/* Single cohesive panel */}
-                  <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden">
-
-                    {/* Demand Section */}
-                    <div className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Demand</span>
-                      </div>
-
-                      <div className="space-y-3">
-                        {state.matchingResult.demandMatches.slice(0, 2).map((match, idx) => {
-                          const enriched = state.enrichedDemand.get(match.demand.domain);
-                          const intro = state.demandIntros.get(match.demand.domain);
-
-                          if (enriched?.source === 'timeout') {
-                            return (
-                              <div key={`demand-timeout-${match.demand.domain}`} className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                                <p className="text-[11px] text-white/30">{match.demand.company || match.demand.domain}</p>
-                                <p className="text-[10px] text-amber-400/50 mt-1">Skipped</p>
-                              </div>
-                            );
-                          }
-
-                          if (!enriched?.success) return null;
-
-                          const domain = match.demand.domain;
-                          const normalizedDomainKey = normalizeDomain(domain);
-                          const demandPresignal = normalizedDomainKey ? settings?.preSignalContext?.[normalizedDomainKey] : undefined;
-                          const isEditing = editingContextDomain === domain;
-
-                          return (
-                            <motion.div
-                              key={`demand-${domain}`}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ delay: idx * 0.05 }}
-                            >
-                              {/* Contact row */}
-                              <div className="flex items-center gap-2 mb-2">
-                                <span className="text-[11px] text-white/60">{enriched.firstName} at {match.demand.company}</span>
-                                <button
-                                  onClick={() => startEditContext(domain, 'demand')}
-                                  className="ml-auto text-[10px] text-white/25 hover:text-white/50 transition-colors"
-                                >
-                                  <Pencil size={10} />
-                                </button>
-                              </div>
-
-                              {/* Presignal (if exists) */}
-                              {demandPresignal && !isEditing && (
-                                <div className="mb-2 px-3 py-2 rounded-lg bg-white/[0.03] border-l-2 border-white/[0.08]">
-                                  <p className="text-[11px] text-white/40 leading-relaxed">{demandPresignal.text}</p>
-                                </div>
-                              )}
-
-                              {/* Editor */}
-                              {isEditing && (
-                                <div className="mb-2 p-3 rounded-lg bg-white/[0.03] border border-white/[0.08]">
-                                  <textarea
-                                    value={contextText}
-                                    onChange={(e) => setContextText(e.target.value)}
-                                    placeholder="Context about this company..."
-                                    className="w-full h-14 bg-transparent text-[11px] text-white/60 resize-none outline-none placeholder:text-white/20"
-                                    autoFocus
-                                  />
-                                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.04]">
-                                    <select
-                                      value={contextSource}
-                                      onChange={(e) => setContextSource(e.target.value as any)}
-                                      className="text-[10px] bg-transparent text-white/40 outline-none cursor-pointer"
-                                    >
-                                      <option value="prior_convo">Prior Convo</option>
-                                      <option value="linkedin">LinkedIn</option>
-                                      <option value="news">News</option>
-                                      <option value="job_post">Job Post</option>
-                                      <option value="other">Other</option>
-                                    </select>
-                                    <div className="flex gap-2">
-                                      <button onClick={cancelEditContext} className="p-1 text-white/20 hover:text-white/40"><X size={12} /></button>
-                                      <button onClick={() => saveContext(domain)} disabled={savingContext} className="p-1 text-white/40 hover:text-white/60 disabled:opacity-50"><Check size={12} /></button>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Intro */}
-                              <div className="p-3 rounded-lg bg-white/[0.02]">
-                                <p className="text-[12px] leading-relaxed text-white/50">
-                                  {intro || <span className="text-white/20">Generates on route</span>}
-                                </p>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Divider */}
-                    <div className="border-t border-white/[0.04]" />
-
-                    {/* Supply Section */}
-                    <div className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Supply</span>
-                      </div>
-
-                      <div className="space-y-3">
-                        {state.matchingResult.supplyAggregates.slice(0, 1).map((agg, idx) => {
-                          const enriched = state.enrichedSupply.get(agg.supply.domain);
-                          const intro = state.supplyIntros.get(agg.supply.domain);
-
-                          if (enriched?.source === 'timeout') {
-                            return (
-                              <div key={`supply-timeout-${agg.supply.domain}`} className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                                <p className="text-[11px] text-white/30">{agg.supply.company || agg.supply.domain}</p>
-                                <p className="text-[10px] text-amber-400/50 mt-1">Skipped</p>
-                              </div>
-                            );
-                          }
-
-                          if (!enriched?.success) return null;
-
-                          const domain = agg.supply.domain;
-                          const normalizedDomainKey = normalizeDomain(domain);
-                          const supplyPresignal = normalizedDomainKey ? settings?.preSignalContext?.[normalizedDomainKey] : undefined;
-                          const isEditing = editingContextDomain === domain;
-
-                          const fingerprint = fingerprintFromSupply({
-                            domain: agg.supply.domain,
-                            email: enriched.email,
-                            contactName: enriched.firstName,
-                            companyName: agg.supply.company,
-                          });
-                          const annotation = supplyAnnotations.get(fingerprint);
-                          const isStarred = annotation?.starred ?? false;
-                          const isExcluded = annotation?.excluded ?? false;
-
-                          return (
-                            <motion.div
-                              key={`supply-${domain}`}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ delay: 0.1 + idx * 0.05 }}
-                              className={isExcluded ? 'opacity-40' : ''}
-                            >
-                              {/* Contact row */}
-                              <div className="flex items-center gap-2 mb-2">
-                                <button
-                                  onClick={() => handleToggleStar(fingerprint)}
-                                  className={`${isStarred ? 'text-amber-400' : 'text-white/15 hover:text-white/30'} transition-colors`}
-                                >
-                                  <Star size={11} fill={isStarred ? 'currentColor' : 'none'} />
-                                </button>
-                                <span className="text-[11px] text-white/60">{enriched.firstName} at {agg.supply.company}</span>
-                                {agg.totalMatches > 1 && (
-                                  <span className="text-[10px] text-white/20">+{agg.totalMatches - 1}</span>
-                                )}
-                                <button
-                                  onClick={() => startEditContext(domain, 'supply')}
-                                  className="ml-auto text-[10px] text-white/25 hover:text-white/50 transition-colors"
-                                >
-                                  <Pencil size={10} />
-                                </button>
-                              </div>
-
-                              {/* Presignal */}
-                              {supplyPresignal && !isEditing && (
-                                <div className="mb-2 px-3 py-2 rounded-lg bg-white/[0.03] border-l-2 border-white/[0.08]">
-                                  <p className="text-[11px] text-white/40 leading-relaxed">{supplyPresignal.text}</p>
-                                </div>
-                              )}
-
-                              {/* Editor */}
-                              {isEditing && (
-                                <div className="mb-2 p-3 rounded-lg bg-white/[0.03] border border-white/[0.08]">
-                                  <textarea
-                                    value={contextText}
-                                    onChange={(e) => setContextText(e.target.value)}
-                                    placeholder="Context about this supplier..."
-                                    className="w-full h-14 bg-transparent text-[11px] text-white/60 resize-none outline-none placeholder:text-white/20"
-                                    autoFocus
-                                  />
-                                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/[0.04]">
-                                    <select
-                                      value={contextSource}
-                                      onChange={(e) => setContextSource(e.target.value as any)}
-                                      className="text-[10px] bg-transparent text-white/40 outline-none cursor-pointer"
-                                    >
-                                      <option value="prior_convo">Prior Convo</option>
-                                      <option value="linkedin">LinkedIn</option>
-                                      <option value="news">News</option>
-                                      <option value="other">Other</option>
-                                    </select>
-                                    <div className="flex gap-2">
-                                      <button onClick={cancelEditContext} className="p-1 text-white/20 hover:text-white/40"><X size={12} /></button>
-                                      <button onClick={() => saveContext(domain)} disabled={savingContext} className="p-1 text-white/40 hover:text-white/60 disabled:opacity-50"><Check size={12} /></button>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Intro */}
-                              <div className="p-3 rounded-lg bg-white/[0.02]">
-                                <p className="text-[12px] leading-relaxed text-white/50">
-                                  {intro || <span className="text-white/20">Generates on route</span>}
-                                </p>
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Queue count */}
-                  {(state.matchingResult.demandMatches.length > 2 || state.matchingResult.supplyAggregates.length > 1) && (
-                    <p className="text-[10px] text-white/20 text-center mt-3">
-                      +{Math.max(0, state.matchingResult.demandMatches.length - 2 + state.matchingResult.supplyAggregates.length - 1)} more queued
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Run Audit Panel — Observability */}
-              {state.connectorMode && (
+              {/* Run Audit Panel — Observability (debug only) */}
+              {isDebugMode && state.connectorMode && (
                 <div className="mb-6 max-w-sm mx-auto">
                   <RunAuditPanel
                     data={state.auditData || {
@@ -2245,20 +2061,57 @@ export default function Flow() {
                 </div>
               )}
 
-              <div className="flex items-center justify-center gap-3">
-                <button
-                  onClick={reset}
-                  className="px-4 py-2 text-[13px] text-white/50 hover:text-white/70 transition-colors"
-                >
-                  Start over
-                </button>
-                <button
-                  onClick={startSending}
-                  className="px-5 py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 active:scale-[0.98] transition-all"
-                >
-                  Route to Instantly
-                </button>
-              </div>
+              {/* Route button with presignal gate */}
+              {(() => {
+                // CANONICAL: Check for presignal violations using per-side presignal
+                const hasPresignalViolation = (() => {
+                  if (!state.matchingResult) return false;
+
+                  // Check demand intros (use per-side presignalDemand)
+                  const demandPresignal = settings?.presignalDemand;
+                  for (const match of state.matchingResult.demandMatches.slice(0, 2)) {
+                    const intro = state.demandIntros.get(match.demand.domain) || '';
+                    if (!hasPresignal(demandPresignal) && containsActivityTimingLanguage(intro).found) {
+                      return true;
+                    }
+                  }
+
+                  // Check supply intros (use per-side presignalSupply)
+                  const supplyPresignal = settings?.presignalSupply;
+                  for (const agg of state.matchingResult.supplyAggregates.slice(0, 1)) {
+                    const intro = state.supplyIntros.get(agg.supply.domain) || '';
+                    if (!hasPresignal(supplyPresignal) && containsActivityTimingLanguage(intro).found) {
+                      return true;
+                    }
+                  }
+
+                  return false;
+                })();
+
+                return (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="flex items-center justify-center gap-3">
+                      <button
+                        onClick={reset}
+                        className="px-4 py-2 text-[13px] text-white/50 hover:text-white/70 transition-colors"
+                      >
+                        Start Over
+                      </button>
+                      <button
+                        onClick={startSending}
+                        disabled={hasPresignalViolation}
+                        className={`px-5 py-2.5 text-[13px] font-medium rounded-lg transition-all ${
+                          hasPresignalViolation
+                            ? 'bg-white/20 text-white/30 cursor-not-allowed'
+                            : 'bg-white text-black hover:bg-white/90 active:scale-[0.98]'
+                        }`}
+                      >
+                        Route to Instantly
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </motion.div>
           )}
 
