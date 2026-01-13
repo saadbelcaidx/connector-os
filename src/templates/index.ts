@@ -1,83 +1,75 @@
 /**
- * TEMPLATES — The Intros
+ * TEMPLATES — PHASE 3 CANONICAL WRAPPERS
  *
- * Two scrapers. Simple templates.
+ * All intro generation now routes through introDoctrine.ts.
+ * These are thin wrappers that preserve function signatures for backwards compatibility.
  *
- * DEMAND (Startup Jobs): "Hey [name] — noticed [company] is hiring for [role]. I know someone. Want an intro?"
- * SUPPLY (B2B Contacts): "Hey [name] — got a lead. [company] is hiring for [role]. Worth a look?"
+ * NO string templates allowed in this file.
+ * NO timing defaults allowed in this file.
  */
 
 import { NormalizedRecord } from '../schemas';
-import { humanGreeting } from '../services/AIService';
+import { composeIntro, IntroContext, ConnectorMode } from '../copy/introDoctrine';
 
 // =============================================================================
-// DEMAND TEMPLATE
+// DEMAND TEMPLATE — Routes to canonical doctrine
 // =============================================================================
 
 /**
  * Intro to DEMAND side (company hiring).
- *
- * Signal = job title from Startup Jobs scraper
+ * PHASE 3: Now routes through introDoctrine.composeIntro()
  */
-export function generateDemandIntro(record: NormalizedRecord): string {
-  const firstName = record.firstName || record.fullName?.split(' ')[0];
-  const { greeting } = humanGreeting(firstName);
+export function generateDemandIntro(record: NormalizedRecord & { connectorMode?: ConnectorMode; preSignalContext?: string }): string {
+  const firstName = record.firstName || record.fullName?.split(' ')[0] || 'there';
   const company = record.company || 'your company';
-  const role = cleanRole(record.signal);
 
-  return `${greeting} — noticed ${company} is hiring for ${role}. I know someone who does this. Want an intro?`;
+  const ctx: IntroContext = {
+    firstName,
+    company,
+    industry: Array.isArray(record.industry) ? record.industry[0] : record.industry || undefined,
+    contactTitle: record.title || undefined,
+    preSignalContext: record.preSignalContext,
+  };
+
+  return composeIntro({
+    side: 'demand',
+    mode: record.connectorMode || 'b2b_general',
+    ctx,
+  });
 }
 
 // =============================================================================
-// SUPPLY TEMPLATE
+// SUPPLY TEMPLATE — Routes to canonical doctrine
 // =============================================================================
 
 /**
  * Intro to SUPPLY side (recruiter/agency).
- *
- * bestDemandMatch = the company they're being matched to
+ * PHASE 3: Now routes through introDoctrine.composeIntro()
  */
 export function generateSupplyIntro(
-  provider: NormalizedRecord,
+  provider: NormalizedRecord & { connectorMode?: ConnectorMode; preSignalContext?: string },
   bestDemandMatch: NormalizedRecord
 ): string {
-  const firstName = provider.firstName || provider.fullName?.split(' ')[0];
-  const { greeting } = humanGreeting(firstName);
+  const firstName = provider.firstName || provider.fullName?.split(' ')[0] || 'there';
   const company = bestDemandMatch.company || 'a company';
-  const role = cleanRole(bestDemandMatch.signal);
 
-  return `${greeting} — got a lead. ${company} is hiring for ${role}. Worth a look?`;
+  const ctx: IntroContext = {
+    firstName,
+    company,
+    industry: Array.isArray(bestDemandMatch.industry) ? bestDemandMatch.industry[0] : bestDemandMatch.industry || undefined,
+    preSignalContext: provider.preSignalContext,
+  };
+
+  return composeIntro({
+    side: 'supply',
+    mode: provider.connectorMode || 'b2b_general',
+    ctx,
+  });
 }
 
 // =============================================================================
-// HELPERS
+// HELPERS — Validation only (no generation logic)
 // =============================================================================
-
-/**
- * Clean up a job title for use in intro.
- * "software engineer ii, frontend platform" → "a Software Engineer"
- */
-function cleanRole(signal: string): string {
-  if (!signal) return 'a role';
-
-  // Remove level indicators (ii, iii, I, II, senior, junior, etc.)
-  let clean = signal
-    .replace(/\b(i{1,3}|iv|v|vi|vii|viii|ix|x)\b/gi, '')
-    .replace(/\b(senior|junior|staff|principal|lead|head of)\b/gi, '')
-    .replace(/,.*$/, '')  // Remove everything after comma
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Capitalize first letter of each word
-  clean = clean
-    .split(' ')
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
-
-  // Add article
-  const startsWithVowel = /^[aeiou]/i.test(clean);
-  return startsWithVowel ? `an ${clean}` : `a ${clean}`;
-}
 
 /**
  * Check if an intro is valid.

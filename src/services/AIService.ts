@@ -1,10 +1,21 @@
 /**
- * AI SERVICE — Intro Generation Only
+ * AI SERVICE — PHASE 4 CANONICALIZED
  *
- * Single entry point. Silent fallback. No retries.
+ * This file is now a thin consumer of introDoctrine.ts.
+ * NO prompts defined here. NO templates defined here. NO examples defined here.
+ *
+ * All intro generation flows through canonical doctrine.
  */
 
 import { allowAICall, AI_LIMITS } from './aiRateLimit';
+import {
+  buildCanonicalPrompt,
+  validateIntro,
+  composeIntro,
+  ConnectorMode,
+  IntroSide,
+  IntroContext,
+} from '../copy/introDoctrine';
 
 // =============================================================================
 // TYPES
@@ -29,6 +40,13 @@ export interface IntroArgs {
     company: string;
     contactName?: string;
     contactTitle?: string;
+    preSignalContext?: string;
+  };
+  connectorMode?: ConnectorMode | null;
+  jobSignal?: {
+    hasJobPostingUrl?: boolean;
+    hasScrapedJobTitle?: boolean;
+    openRolesCount?: number;
   };
 }
 
@@ -41,12 +59,9 @@ export function AI_ENABLED(cfg: AIConfig | null): boolean {
 }
 
 // =============================================================================
-// GREETING HELPER
+// GREETING HELPER (kept for external use)
 // =============================================================================
 
-/**
- * Human greeting - never "Hey there"
- */
 export function humanGreeting(firstName?: string): { greeting: string; hasName: boolean } {
   const name = firstName?.trim();
   if (name && name.toLowerCase() !== 'there' && name.length > 1) {
@@ -56,22 +71,23 @@ export function humanGreeting(firstName?: string): { greeting: string; hasName: 
 }
 
 // =============================================================================
-// FALLBACK (AUTHORITATIVE)
+// PHASE 4: CANONICAL FALLBACK — routes through introDoctrine
 // =============================================================================
 
-function templateFallback({ type, signalDetail, context }: IntroArgs): string {
-  const signal = signalDetail || 'showing momentum';
-  const { greeting } = humanGreeting(context.firstName);
+function canonicalFallback(args: IntroArgs): string {
+  const ctx: IntroContext = {
+    firstName: args.context.firstName || 'there',
+    company: args.context.company || 'a company',
+    contactTitle: args.context.contactTitle,
+    preSignalContext: args.context.preSignalContext,
+    hasWellfoundData: hasJobEvidence(args.jobSignal),
+  };
 
-  if (type === 'demand') {
-    return `${greeting} — ${context.company} is ${signal}. I know someone who does this. Want an intro?`;
-  }
-
-  // supply
-  const contactPhrase = context.contactName && context.contactName !== 'the decision maker'
-    ? `${context.contactName} is running point.`
-    : '';
-  return `${greeting} — got a lead. ${context.company} is ${signal}. ${contactPhrase} Worth a look?`.replace(/\s+/g, ' ').trim();
+  return composeIntro({
+    side: args.type as IntroSide,
+    mode: (args.connectorMode as ConnectorMode) || 'b2b_general',
+    ctx,
+  });
 }
 
 // =============================================================================
@@ -85,20 +101,37 @@ export async function generateIntro(
 ): Promise<string> {
   // Gate 1: AI not configured
   if (!AI_ENABLED(cfg)) {
-    return templateFallback(args);
+    return canonicalFallback(args);
   }
 
   // Gate 2: Rate limit
   const limit = userId === 'guest' ? AI_LIMITS.guest : AI_LIMITS.paid;
   if (!allowAICall(userId, limit)) {
-    return templateFallback(args);
+    return canonicalFallback(args);
   }
 
   // Try AI, fallback on any error
   try {
-    return await callAIProvider(cfg!, args);
+    const result = await callAIProvider(cfg!, args);
+
+    // PHASE 4: Validate AI output against doctrine
+    const ctx: IntroContext = {
+      firstName: args.context.firstName || 'there',
+      company: args.context.company || 'a company',
+      contactTitle: args.context.contactTitle,
+      preSignalContext: args.context.preSignalContext,
+      hasWellfoundData: hasJobEvidence(args.jobSignal),
+    };
+
+    const validation = validateIntro(result, ctx);
+    if (!validation.valid) {
+      console.warn('[AIService] AI output violated doctrine:', validation);
+      return canonicalFallback(args);
+    }
+
+    return result;
   } catch {
-    return templateFallback(args);
+    return canonicalFallback(args);
   }
 }
 
@@ -107,7 +140,20 @@ export async function generateIntro(
 // =============================================================================
 
 async function callAIProvider(cfg: AIConfig, args: IntroArgs): Promise<string> {
-  const prompt = buildIntroPrompt(args);
+  // PHASE 4: Use canonical prompt from introDoctrine
+  const ctx: IntroContext = {
+    firstName: args.context.firstName || 'there',
+    company: args.context.company || 'a company',
+    contactTitle: args.context.contactTitle,
+    preSignalContext: args.context.preSignalContext,
+    hasWellfoundData: hasJobEvidence(args.jobSignal),
+  };
+
+  const prompt = buildCanonicalPrompt({
+    side: args.type as IntroSide,
+    ctx,
+    mode: (args.connectorMode as ConnectorMode) || 'b2b_general',
+  });
 
   switch (cfg.provider) {
     case 'azure':
@@ -122,52 +168,20 @@ async function callAIProvider(cfg: AIConfig, args: IntroArgs): Promise<string> {
 }
 
 // =============================================================================
-// PROMPT
+// HELPER: Job evidence check (for Wellfound factual claims)
 // =============================================================================
 
-function buildIntroPrompt(args: IntroArgs): string {
-  const { type, signalDetail, context } = args;
-  const signal = signalDetail || 'showing momentum';
-
-  if (type === 'demand') {
-    return `Write a 2-sentence intro for ${context.firstName} at ${context.company}.
-
-Signal: ${signal}
-
-FORMULA:
-"Hey [Name] — [company] is [signal]. I know someone who does this. Want an intro?"
-
-RULES:
-- Exactly 2 sentences
-- Never explain who the provider is
-- Keep signal to 3-5 words
-
-Output the intro only.`;
-  }
-
-  // supply
-  const contactLine = context.contactName && context.contactName !== 'the decision maker'
-    ? `Decision maker: ${context.contactName}${context.contactTitle ? `, ${context.contactTitle}` : ''}`
-    : '';
-
-  return `Write a 2-sentence intro offering ${context.firstName} a lead.
-
-Lead: ${context.company} is ${signal}
-${contactLine}
-
-FORMULA:
-"Hey [Name] — got a lead. [Company] is [signal]. [Contact] is running it. Interested?"
-
-RULES:
-- Exactly 2-3 sentences
-- Start with "Hey [Name] — got a lead."
-- End with "Interested?" or "Worth a look?"
-
-Output the intro only.`;
+function hasJobEvidence(jobSignal?: IntroArgs['jobSignal']): boolean {
+  if (!jobSignal) return false;
+  return Boolean(
+    jobSignal.hasJobPostingUrl ||
+    jobSignal.hasScrapedJobTitle ||
+    (jobSignal.openRolesCount && jobSignal.openRolesCount > 0)
+  );
 }
 
 // =============================================================================
-// PROVIDER ADAPTERS
+// PROVIDER ADAPTERS (unchanged — just make API calls)
 // =============================================================================
 
 async function callAzure(cfg: AIConfig, prompt: string): Promise<string> {
@@ -235,12 +249,9 @@ async function callAnthropic(cfg: AIConfig, prompt: string): Promise<string> {
 }
 
 // =============================================================================
-// GENERIC AI CALL (for external use)
+// GENERIC AI CALL (for external use — DatasetIntelligence, etc.)
 // =============================================================================
 
-/**
- * Generic AI call for any prompt. Used by DatasetIntelligence for niche detection.
- */
 export async function callAI(cfg: AIConfig, prompt: string): Promise<string> {
   if (!AI_ENABLED(cfg)) {
     throw new Error('AI not configured');
@@ -248,7 +259,7 @@ export async function callAI(cfg: AIConfig, prompt: string): Promise<string> {
 
   const proxyUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
 
-  let body: Record<string, any>;
+  let body: Record<string, unknown>;
 
   switch (cfg.provider) {
     case 'azure':

@@ -5978,9 +5978,10 @@ function MatchingEngineV3() {
         }
 
         // Fallback if AI failed or not configured
+        // PHASE 6: Removed timing claims ("moving fast", "right now")
         if (!aggregatedIntro) {
           const { greeting: aggGreeting } = humanGreeting(group.firstName);
-          aggregatedIntro = `${aggGreeting}, I've got ${group.matches.length} companies actively looking for help in ${category} right now. A few are moving fast. Worth a quick look to see if any fit?`;
+          aggregatedIntro = `${aggGreeting}, I've got ${group.matches.length} companies that could use help in ${category}. Worth a quick look to see if any fit?`;
         }
 
         // Create ONE supply item with aggregated intro

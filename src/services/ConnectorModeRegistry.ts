@@ -12,7 +12,12 @@
  * No mode = Start disabled
  * Unknown mode = blocked
  * AI may rewrite, never decide
+ *
+ * PHASE 6: copyTemplates in ModeContract are LEGACY (never used).
+ * getCopyTemplate() now routes through introDoctrine for canonical output.
  */
+
+import { composeIntro, ConnectorMode as DoctrineMode } from '../copy/introDoctrine';
 
 // =============================================================================
 // TYPES
@@ -24,6 +29,7 @@ export type ConnectorMode =
   | 'wealth_management'
   | 'real_estate_capital'
   | 'enterprise_partnerships'
+  | 'logistics'
   | 'crypto'
   | 'custom';
 
@@ -168,8 +174,8 @@ const GLOBAL_EVIDENCE_RULES: EvidenceRule[] = [
 
 const RECRUITING_CONTRACT: ModeContract = {
   id: 'recruiting',
-  label: 'IT Recruitment',
-  description: 'Tech companies hiring → IT recruiters and staffing agencies',
+  label: 'Recruiting',
+  description: 'Companies hiring → Recruiters',
   docsAnchor: 'recruiting',
 
   supportedSources: ['wellfound'],
@@ -181,9 +187,9 @@ const RECRUITING_CONTRACT: ModeContract = {
   },
 
   ui: {
-    tooltip: 'For IT/tech recruitment. Wellfound supported. LinkedIn Jobs not supported.',
-    whatItDoes: 'Matches tech companies with open roles to IT recruiters',
-    whatItBlocks: 'Biotech/pharma language, licensing terms, non-recruiting industries on supply side',
+    tooltip: 'For connecting companies who need help hiring with recruiters who can help them.',
+    whatItDoes: 'Finds recruiters for companies with open jobs',
+    whatItBlocks: 'Pharma words, licensing words',
   },
 
   demand: {
@@ -237,7 +243,7 @@ const RECRUITING_CONTRACT: ModeContract = {
   evidenceRules: [],
 
   copyTemplates: {
-    demand: 'Hey {firstName} — noticed {company} is {signal}. I know someone who does this. Worth an intro?',
+    demand: 'Hey {firstName} — {company} came up is {signal}. I know someone who does this. Worth an intro?',
     supply: 'Hey {firstName} — got a lead. {company} is {signal}. {contactName} is running point. Worth a look?',
   },
 
@@ -257,8 +263,8 @@ const RECRUITING_CONTRACT: ModeContract = {
 
 const BIOTECH_LICENSING_CONTRACT: ModeContract = {
   id: 'biotech_licensing',
-  label: 'Biotech',
-  description: 'Biotech companies → Pharma BD partners',
+  label: 'Biotech/Pharma',
+  description: 'Biotech → Pharma partners',
   docsAnchor: 'biotech',
 
   supportedSources: ['linkedin', 'apollo', 'csv'],
@@ -270,9 +276,9 @@ const BIOTECH_LICENSING_CONTRACT: ModeContract = {
   },
 
   ui: {
-    tooltip: 'Biotech and life sciences companies. Broad by design. No stage gating.',
-    whatItDoes: 'Matches biotech companies with pharma BD teams for licensing/partnership',
-    whatItBlocks: 'Recruiting language, staffing industries, non-life-sciences companies',
+    tooltip: 'For connecting biotech companies with pharma business development teams.',
+    whatItDoes: 'Finds pharma partners for biotech companies',
+    whatItBlocks: 'Recruiting words, hiring words',
   },
 
   demand: {
@@ -348,7 +354,7 @@ const BIOTECH_LICENSING_CONTRACT: ModeContract = {
   evidenceRules: [],
 
   copyTemplates: {
-    demand: 'Hey {firstName} — noticed {company} is {signal}. Know a pharma partner that could help. Interested?',
+    demand: 'Hey {firstName} — {company} came up is {signal}. Know a pharma partner that could help. Interested?',
     supply: 'Hey {firstName} — got a biotech opportunity. {company} is {signal}. {contactName} is leading the deal. Worth exploring?',
   },
 
@@ -369,8 +375,8 @@ const BIOTECH_LICENSING_CONTRACT: ModeContract = {
 
 const WEALTH_MANAGEMENT_CONTRACT: ModeContract = {
   id: 'wealth_management',
-  label: 'Wealth Management',
-  description: 'Wealth advisory clients → Wealth managers and family offices',
+  label: 'Wealth',
+  description: 'Wealthy People → Advisors',
   docsAnchor: 'wealth-management',
 
   supportedSources: ['linkedin', 'apollo', 'csv'],
@@ -382,10 +388,9 @@ const WEALTH_MANAGEMENT_CONTRACT: ModeContract = {
   },
 
   ui: {
-    // REMOVED: HNW references (Broad ICP doctrine - no client segment assumptions)
-    tooltip: 'Wealth advisory clients and providers. Broad by design. No AUM thresholds.',
-    whatItDoes: 'Matches wealth advisory clients with wealth managers and family offices',
-    whatItBlocks: 'Recruiting language, staffing industries, retail banking',
+    tooltip: 'For connecting people with wealth managers and family offices.',
+    whatItDoes: 'Finds wealth advisors for people who need them',
+    whatItBlocks: 'Recruiting words, retail banking',
   },
 
   demand: {
@@ -466,7 +471,7 @@ const WEALTH_MANAGEMENT_CONTRACT: ModeContract = {
 const REAL_ESTATE_CAPITAL_CONTRACT: ModeContract = {
   id: 'real_estate_capital',
   label: 'Real Estate',
-  description: 'Real estate companies → Capital partners and investors',
+  description: 'Deals → Capital',
   docsAnchor: 'real-estate',
 
   supportedSources: ['linkedin', 'apollo', 'csv'],
@@ -478,10 +483,9 @@ const REAL_ESTATE_CAPITAL_CONTRACT: ModeContract = {
   },
 
   ui: {
-    // REMOVED: Commercial vs residential logic (Broad ICP doctrine)
-    tooltip: 'Real estate companies and capital partners. Broad by design. No property type gating.',
-    whatItDoes: 'Matches real estate companies with capital partners and investors',
-    whatItBlocks: 'Recruiting language, staffing industries',
+    tooltip: 'For connecting real estate projects with investors and capital partners.',
+    whatItDoes: 'Finds investors for real estate projects',
+    whatItBlocks: 'Recruiting words',
   },
 
   demand: {
@@ -547,7 +551,7 @@ const REAL_ESTATE_CAPITAL_CONTRACT: ModeContract = {
   evidenceRules: [],
 
   copyTemplates: {
-    demand: 'Hey {firstName} — noticed {company} has a project in motion. I know capital partners actively deploying. Worth an intro?',
+    demand: 'Hey {firstName} — {company} came up has a project in motion. I know capital partners actively deploying. Worth an intro?',
     supply: 'Hey {firstName} — got a deal. {company} is {signal}. Fits your criteria. Worth a look?',
   },
 
@@ -568,22 +572,22 @@ const REAL_ESTATE_CAPITAL_CONTRACT: ModeContract = {
 
 const ENTERPRISE_PARTNERSHIPS_CONTRACT: ModeContract = {
   id: 'enterprise_partnerships',
-  label: 'B2B (Broad)',
-  description: 'General B2B intros across industries with safe wording',
+  label: 'General B2B',
+  description: 'Any market → Any partners',
   docsAnchor: 'b2b-broad',
 
   supportedSources: ['linkedin', 'apollo', 'csv', 'wellfound'],
 
   contracts: {
-    deterministicFilters: true,  // Now enforced with minimal guardrails
+    deterministicFilters: true,
     safeVocabularyProfile: 'broad',
     requiresOperatorConfirmation: false,
   },
 
   ui: {
-    tooltip: 'For general B2B intros across industries. Safest wording. Claims require evidence.',
-    whatItDoes: 'Matches companies with potential partners using neutral language',
-    whatItBlocks: 'Hiring/funding/partnership claims without evidence. Staffing agencies on supply side.',
+    tooltip: 'For connecting any business with potential partners. Uses safe, neutral wording.',
+    whatItDoes: 'Finds business partners using safe language',
+    whatItBlocks: 'Unproven claims (hiring, funding)',
   },
 
   demand: {
@@ -670,7 +674,7 @@ const ENTERPRISE_PARTNERSHIPS_CONTRACT: ModeContract = {
   evidenceRules: [],
 
   copyTemplates: {
-    demand: 'Hey {firstName} — noticed some activity at {company} that might be relevant. I know someone who could help. Worth a quick intro?',
+    demand: 'Hey {firstName} — some activity at {company} that might be relevant. I know someone who could help. Worth a quick intro?',
     supply: 'Hey {firstName} — got a potential opportunity. {company} is showing activity. Might be worth exploring?',
   },
 
@@ -689,27 +693,148 @@ const ENTERPRISE_PARTNERSHIPS_CONTRACT: ModeContract = {
 };
 
 // =============================================================================
+// LOGISTICS MODE — BROAD SUPPLY CHAIN/TRANSPORTATION (No sub-niche logic)
+// =============================================================================
+
+const LOGISTICS_CONTRACT: ModeContract = {
+  id: 'logistics',
+  label: 'Logistics',
+  description: 'Supply Chain → Partners',
+  docsAnchor: 'logistics',
+
+  supportedSources: ['linkedin', 'apollo', 'csv'],
+
+  contracts: {
+    deterministicFilters: true,
+    safeVocabularyProfile: 'strict',
+    requiresOperatorConfirmation: false,
+  },
+
+  ui: {
+    tooltip: 'For connecting logistics and supply chain operators.',
+    whatItDoes: 'Routes logistics operators to partners',
+    whatItBlocks: 'Recruiting words, staffing language',
+  },
+
+  demand: {
+    allowedIndustries: [
+      'Logistics and Supply Chain',
+      'Transportation/Trucking/Railroad',
+      'Warehousing',
+      'Package/Freight Delivery',
+      'Import and Export',
+      'Maritime',
+      'Airlines/Aviation',
+    ],
+    forbiddenIndustries: [
+      'Staffing and Recruiting',
+      'Staffing & Recruiting',
+      'Human Resources',
+      'Executive Search',
+      'Consulting',
+      'Marketing Agency',
+    ],
+    requiredFields: ['company', 'domain'],
+    defaultTitles: ['Founder', 'CEO', 'COO', 'VP', 'Director', 'Head of', 'GM'],
+  },
+
+  supply: {
+    allowedIndustries: [
+      'Logistics and Supply Chain',
+      'Transportation/Trucking/Railroad',
+      'Warehousing',
+      'Package/Freight Delivery',
+      'Import and Export',
+      'Maritime',
+      'Airlines/Aviation',
+    ],
+    forbiddenIndustries: [
+      'Staffing and Recruiting',
+      'Staffing & Recruiting',
+      'Human Resources',
+      'Executive Search',
+      'Consulting',
+      'Marketing Agency',
+    ],
+    defaultTitles: [
+      'Founder',
+      'CEO',
+      'COO',
+      'VP Operations',
+      'VP Supply Chain',
+      'Director of Logistics',
+      'Head of Operations',
+      'General Manager',
+    ],
+  },
+
+  vocabulary: {
+    allowed: [
+      'logistics',
+      'supply chain',
+      'freight',
+      'carrier',
+      'shipment',
+      'route',
+      'fleet',
+      'distribution',
+      'warehouse',
+      'fulfillment',
+    ],
+    forbidden: [
+      'hiring',
+      'recruiting',
+      'staffing',
+      'talent',
+      'candidates',
+      'role',
+      'position',
+      'headhunter',
+      'placement',
+    ],
+  },
+
+  evidenceRules: [],
+
+  copyTemplates: {
+    demand: 'Hey {firstName} — {company} came up in the space. Know an operator that could help. Interested?',
+    supply: 'Hey {firstName} — got an opportunity. {company} could be a fit. Worth a look?',
+  },
+
+  presignalExamples: {
+    demand: [
+      'Looking for logistics partners',
+      'Exploring distribution options',
+    ],
+    supply: [
+      'Capacity available',
+      'Looking for new routes',
+    ],
+  },
+};
+
+// =============================================================================
 // CRYPTO MODE — BROAD WEB3/BLOCKCHAIN (No sub-niche logic)
 // =============================================================================
 
 const CRYPTO_CONTRACT: ModeContract = {
   id: 'crypto',
-  label: 'Crypto',
-  description: 'Crypto-native companies and protocols across Web3',
+  label: 'Crypto/Web3',
+  description: 'Crypto → Partners',
   docsAnchor: 'crypto',
 
   supportedSources: ['linkedin', 'apollo', 'csv'],
 
   contracts: {
     deterministicFilters: true,
-    safeVocabularyProfile: 'broad',  // Uses broad vocabulary (evidence-gated claims)
+    safeVocabularyProfile: 'broad',
     requiresOperatorConfirmation: false,
   },
 
   ui: {
-    tooltip: 'Crypto companies and protocols across Web3. Broad by design. Claims like fundraising or token launches require evidence.',
-    whatItDoes: 'Matches crypto-native companies with potential partners and investors',
-    whatItBlocks: 'Token launch/fundraise/listing claims without evidence. Staffing agencies, marketing agencies.',
+    tooltip: 'For connecting crypto and Web3 companies with partners.',
+    whatItDoes: 'Finds partners for crypto companies',
+    whatItBlocks: 'Unproven claims (token launch, fundraising)',
   },
 
   demand: {
@@ -810,7 +935,7 @@ const CRYPTO_CONTRACT: ModeContract = {
   ],
 
   copyTemplates: {
-    demand: 'Hey {firstName} — noticed some activity at {company}. I know someone in the space who might be relevant. Worth a quick intro?',
+    demand: 'Hey {firstName} — some activity at {company}. I know someone in the space who might be relevant. Worth a quick intro?',
     supply: 'Hey {firstName} — got a potential opportunity. {company} is showing activity. Worth exploring?',
   },
 
@@ -832,21 +957,21 @@ const CRYPTO_CONTRACT: ModeContract = {
 const CUSTOM_CONTRACT: ModeContract = {
   id: 'custom',
   label: 'Custom',
-  description: 'Freeform mode — requires acknowledgement and correct datasets',
+  description: 'You define the rules',
   docsAnchor: 'custom',
 
   supportedSources: ['linkedin', 'apollo', 'csv', 'wellfound', 'any'],
 
   contracts: {
-    deterministicFilters: false,  // No auto-filtering
+    deterministicFilters: false,
     safeVocabularyProfile: 'custom',
-    requiresOperatorConfirmation: true,  // Safety interlock
+    requiresOperatorConfirmation: true,
   },
 
   ui: {
-    tooltip: 'Freeform mode. No auto-filtering. You must choose correct datasets. Requires acknowledgement.',
-    whatItDoes: 'Allows any dataset combination without industry filtering',
-    whatItBlocks: 'Confident claims without evidence (hiring/funding/partnered). Requires manual dataset selection.',
+    tooltip: 'You pick everything. No auto-filtering. You must confirm before starting.',
+    whatItDoes: 'Lets you use any data without filtering',
+    whatItBlocks: 'Unproven claims (hiring, funding). You pick the datasets.',
   },
 
   demand: {
@@ -894,7 +1019,7 @@ const CUSTOM_CONTRACT: ModeContract = {
   evidenceRules: [],
 
   copyTemplates: {
-    demand: 'Hey {firstName} — noticed some activity at {company}. I know someone who might be relevant. Worth a quick intro?',
+    demand: 'Hey {firstName} — some activity at {company}. I know someone who might be relevant. Worth a quick intro?',
     supply: 'Hey {firstName} — got a potential lead. {company} is showing activity. Might be worth a look?',
   },
 
@@ -920,6 +1045,7 @@ const MODE_REGISTRY: Record<ConnectorMode, ModeContract> = {
   wealth_management: WEALTH_MANAGEMENT_CONTRACT,
   real_estate_capital: REAL_ESTATE_CAPITAL_CONTRACT,
   enterprise_partnerships: ENTERPRISE_PARTNERSHIPS_CONTRACT,
+  logistics: LOGISTICS_CONTRACT,
   crypto: CRYPTO_CONTRACT,
   custom: CUSTOM_CONTRACT,
 };
@@ -982,11 +1108,25 @@ export function getAllowedVocabulary(mode: ConnectorMode): string[] {
 }
 
 /**
- * Get copy template for a side
+ * Get copy template for a side.
+ * PHASE 6: Routes through introDoctrine for canonical, doctrine-compliant output.
+ * Legacy copyTemplates in ModeContract are ignored.
  */
 export function getCopyTemplate(mode: ConnectorMode, side: 'demand' | 'supply'): string {
-  const contract = getModeContract(mode);
-  return contract.copyTemplates[side];
+  // Map ConnectorMode to DoctrineMode (they overlap but have different type definitions)
+  const doctrineMode: DoctrineMode = mode === 'recruiting' ? 'recruiting'
+    : mode === 'biotech_licensing' ? 'biotech_licensing'
+    : mode === 'crypto' ? 'crypto'
+    : 'b2b_general';
+
+  return composeIntro({
+    side: side === 'demand' ? 'demand' : 'supply',
+    mode: doctrineMode,
+    ctx: {
+      firstName: '{firstName}',
+      company: '{company}',
+    },
+  });
 }
 
 /**

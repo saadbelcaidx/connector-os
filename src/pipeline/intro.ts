@@ -10,6 +10,7 @@
 import type { CanonicalEntity, Evidence, BlockReason } from './types';
 import type { MatchResult } from './match';
 import { isRoutable } from './contact';
+import { composeIntro } from '../copy/introDoctrine';
 
 // =============================================================================
 // INTRO TYPES
@@ -100,6 +101,7 @@ export function clearIntroCache(): void {
 /**
  * Generate deterministic template intro.
  * Used when AI fails or is disabled.
+ * PHASE 6: Routes through introDoctrine.composeIntro() for canonical output.
  */
 function generateTemplateIntro(
   demand: CanonicalEntity,
@@ -110,10 +112,18 @@ function generateTemplateIntro(
                      demand.person?.fullName?.split(' ')[0] ||
                      'there';
   const demandCompany = demand.company.name || demand.company.domain || 'your company';
-  const supplyCompany = supply.company.name || supply.company.domain || 'a provider';
 
   const subject = `Quick intro - ${demandCompany}`;
-  const body = `Hey ${demandName},\n\nNoticed ${demandCompany} is showing momentum. Thought you might want to connect with ${supplyCompany} - they work with similar companies.\n\nWorth a quick look?`;
+
+  // CANONICAL: Route through introDoctrine for doctrine-compliant output
+  const body = composeIntro({
+    side: 'demand',
+    mode: 'b2b_general',
+    ctx: {
+      firstName: demandName,
+      company: demandCompany,
+    },
+  });
 
   return {
     demandEntityId: demand.entityId,

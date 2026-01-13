@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { humanGreeting } from './AIService';
+import { composeIntro } from '../copy/introDoctrine';
 
 interface InstantlyLeadPayload {
   campaign: string;  // Note: "campaign" not "campaign_id"
@@ -36,35 +36,17 @@ export interface DualSendParams {
 
 /**
  * Generate fallback intro text when AI is not configured.
- * NICHE-AGNOSTIC: Uses generic language that works for any domain.
+ * PHASE 3: Routes through introDoctrine.composeIntro() — NO timing defaults.
  */
-function generateIntroText(type: 'DEMAND' | 'SUPPLY', firstName: string, companyName: string, signal?: string): string {
-  const { greeting } = humanGreeting(firstName);
-  const greetingLower = greeting.toLowerCase();
-
-  if (type === 'DEMAND') {
-    // Map signal to a generic observation
-    const signalContext = signal === 'hiring'
-      ? "noticed you're growing the team"
-      : signal === 'funding'
-      ? "saw the recent funding news"
-      : signal === 'expansion'
-      ? "saw you're expanding"
-      : "noticed some activity that caught my eye";
-
-    return `${greetingLower} — ${signalContext}.\nwhen things move fast, timing matters.\ni know someone who helps in situations like this. want me to connect you?`;
-  } else {
-    // Generic supply-side intro
-    const opportunityContext = signal === 'hiring'
-      ? "that's growing their team right now"
-      : signal === 'funding'
-      ? "that just raised and is moving fast"
-      : signal === 'expansion'
-      ? "that's expanding quickly"
-      : "with momentum right now";
-
-    return `${greetingLower} — found a company ${opportunityContext}.\nfeels like the kind of situation you're built for.\nwant an intro?`;
-  }
+function generateIntroText(type: 'DEMAND' | 'SUPPLY', firstName: string, companyName: string, _signal?: string): string {
+  return composeIntro({
+    side: type === 'DEMAND' ? 'demand' : 'supply',
+    mode: 'b2b_general',
+    ctx: {
+      firstName: firstName || 'there',
+      company: companyName || 'a company',
+    },
+  });
 }
 
 export async function sendToInstantly(

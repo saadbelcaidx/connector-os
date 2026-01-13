@@ -22,6 +22,7 @@ import type {
   PipelineDependencies,
 } from './contract';
 import { supabase } from '../lib/supabase';
+import { composeIntro } from '../copy/introDoctrine';
 
 // =============================================================================
 // TYPES FROM EXISTING SERVICES
@@ -281,12 +282,12 @@ export function createIntroFn(aiConfig: AIConfig | null) {
     const signals = (demand.signals || []).join(', ') || 'showing activity';
 
     if (!aiConfig?.apiKey) {
-      // Fallback intros
+      // PHASE 6: Route fallbacks through introDoctrine
       return {
         demandId: demand.id,
         supplyId: supply.id,
-        demandIntro: `Hey - noticed ${demandName} is ${signals}. Quick thought on how to help.`,
-        supplyIntro: `Hey - got a company ${signals}. Thought of you.`,
+        demandIntro: composeIntro({ side: 'demand', mode: 'b2b_general', ctx: { firstName: demandName, company: demand.companyName || demand.domain || 'your company' } }),
+        supplyIntro: composeIntro({ side: 'supply', mode: 'b2b_general', ctx: { firstName: supplyName, company: demand.companyName || demand.domain || 'a company' } }),
         matchContext: match.reason,
       };
     }
@@ -305,19 +306,24 @@ Response format: { "demandIntro": "...", "supplyIntro": "..." }`;
       const response = await callAI(aiConfig, prompt);
       const parsed = JSON.parse(response);
 
+      // PHASE 6: Use doctrine fallbacks if AI output missing
+      const doctrineDemand = composeIntro({ side: 'demand', mode: 'b2b_general', ctx: { firstName: demandName, company: demand.companyName || demand.domain || 'your company' } });
+      const doctrineSupply = composeIntro({ side: 'supply', mode: 'b2b_general', ctx: { firstName: supplyName, company: demand.companyName || demand.domain || 'a company' } });
+
       return {
         demandId: demand.id,
         supplyId: supply.id,
-        demandIntro: parsed.demandIntro || `Hey - noticed ${demandName} is ${signals}.`,
-        supplyIntro: parsed.supplyIntro || `Hey - got a company ${signals}.`,
+        demandIntro: parsed.demandIntro || doctrineDemand,
+        supplyIntro: parsed.supplyIntro || doctrineSupply,
         matchContext: match.reason,
       };
     } catch {
+      // PHASE 6: Route through introDoctrine on error
       return {
         demandId: demand.id,
         supplyId: supply.id,
-        demandIntro: `Hey - noticed ${demandName} is ${signals}.`,
-        supplyIntro: `Hey - got a company ${signals}.`,
+        demandIntro: composeIntro({ side: 'demand', mode: 'b2b_general', ctx: { firstName: demandName, company: demand.companyName || demand.domain || 'your company' } }),
+        supplyIntro: composeIntro({ side: 'supply', mode: 'b2b_general', ctx: { firstName: supplyName, company: demand.companyName || demand.domain || 'a company' } }),
         matchContext: match.reason,
       };
     }
