@@ -1560,43 +1560,63 @@ export default function Flow() {
       </div>
 
       {/* Markets Banner - Platinum */}
-      {showMarketsBanner && (
-        <div className="px-8 pt-4">
-          <div className="max-w-[520px] mx-auto">
-            <div className="relative bg-gradient-to-r from-zinc-400/[0.06] via-slate-300/[0.04] to-zinc-400/[0.06] rounded-xl border border-zinc-400/10 px-4 py-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-400/15">
-                    <span className="text-[10px] text-zinc-300">◆</span>
-                    <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">New</span>
+      <AnimatePresence>
+        {showMarketsBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            className="px-8 pt-4"
+          >
+            <div className="max-w-[520px] mx-auto">
+              <div className="relative bg-gradient-to-r from-zinc-400/[0.06] via-slate-300/[0.04] to-zinc-400/[0.06] rounded-xl border border-zinc-400/10 px-4 py-2.5 overflow-hidden">
+                {/* Shimmer effect */}
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.04] to-transparent -skew-x-12"
+                  initial={{ x: '-100%' }}
+                  animate={{ x: '200%' }}
+                  transition={{ duration: 2, ease: 'easeInOut', delay: 0.5, repeat: Infinity, repeatDelay: 4 }}
+                />
+                <div className="relative flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.3, delay: 0.2 }}
+                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-400/15"
+                    >
+                      <span className="text-[10px] text-zinc-300">◆</span>
+                      <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">New</span>
+                    </motion.div>
+                    <p className="text-[12px] text-white/60">
+                      <span className="font-medium text-zinc-200">Pick your market</span>
+                      <span className="mx-1.5 text-white/20">—</span>
+                      <span className="text-white/50">7 modes or go custom</span>
+                    </p>
                   </div>
-                  <p className="text-[12px] text-white/60">
-                    <span className="font-medium text-zinc-200">Pick your market</span>
-                    <span className="mx-1.5 text-white/20">—</span>
-                    <span className="text-white/50">7 modes or go custom</span>
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => navigate('/library?page=modes')}
-                    className="group flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-400/15 hover:bg-zinc-400/25 text-zinc-300 text-[11px] font-medium transition-all"
-                  >
-                    Learn more
-                    <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
-                  </button>
-                  <button
-                    onClick={dismissMarketsBanner}
-                    className="p-1 text-white/20 hover:text-white/50 transition-colors"
-                    aria-label="Dismiss"
-                  >
-                    <X size={12} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => navigate('/library?page=modes')}
+                      className="group flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-400/15 hover:bg-zinc-400/25 text-zinc-300 text-[11px] font-medium transition-all"
+                    >
+                      Learn more
+                      <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+                    <button
+                      onClick={dismissMarketsBanner}
+                      className="p-1 text-white/20 hover:text-white/50 transition-colors"
+                      aria-label="Dismiss"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main content */}
       <div className="flex-1 flex items-center justify-center pb-24">
