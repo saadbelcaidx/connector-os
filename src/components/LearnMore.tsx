@@ -7,6 +7,23 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronRight } from 'lucide-react';
 
+// =============================================================================
+// SAFE RENDER — Prevent React error #31
+// =============================================================================
+
+function safeRender(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value instanceof Error) return value.message;
+  if (typeof value === 'object') {
+    console.warn('[LearnMore] safeRender caught object:', value);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 interface LearnMoreProps {
   title: string;
   children: React.ReactNode;
@@ -92,7 +109,7 @@ export function LearnMoreList({ items }: LearnMoreListProps) {
       {items.map((item, i) => (
         <li key={i} className="flex items-start gap-2 text-[12px] text-white/60">
           <span className="text-emerald-400/60 mt-0.5">→</span>
-          <span>{item}</span>
+          <span>{safeRender(item)}</span>
         </li>
       ))}
     </ul>

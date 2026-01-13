@@ -2077,7 +2077,7 @@ export default function Flow() {
                                 </button>
                               </div>
                             </div>
-                            <p className="text-[13px] text-white/60 leading-relaxed text-center">{currentContext}</p>
+                            <p className="text-[13px] text-white/60 leading-relaxed text-center">{safeRender(currentContext)}</p>
                           </div>
                         );
                       })()}

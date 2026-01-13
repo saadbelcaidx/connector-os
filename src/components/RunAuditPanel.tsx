@@ -179,13 +179,13 @@ function Section({
         )}
         <Icon size={14} className="text-white/50" />
         <span className="text-xs font-medium text-white/70 flex-1 text-left">
-          {title}
+          {safeRender(title)}
         </span>
         {badge !== undefined && (
           <span
             className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${badgeColorClasses[badgeColor]}`}
           >
-            {badge}
+            {safeRender(badge)}
           </span>
         )}
       </button>

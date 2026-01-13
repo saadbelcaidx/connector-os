@@ -10,6 +10,23 @@ import { Check, Copy, Database, Users, Mail, Target, ChevronRight, Loader2, Circ
 import type { DatasetHealth, CounterpartyFilters, MatchPrediction } from '../services/DatasetIntelligence';
 import { formatFiltersForScraper, formatFiltersForLeadsFinder } from '../services/DatasetIntelligence';
 
+// =============================================================================
+// SAFE RENDER — Prevent React error #31
+// =============================================================================
+
+function safeRender(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value instanceof Error) return value.message;
+  if (typeof value === 'object') {
+    console.warn('[DatasetHealthCard] safeRender caught object:', value);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 interface DatasetHealthCardProps {
   title: string;
   health: DatasetHealth | null;
@@ -82,8 +99,8 @@ export function DatasetHealthCard({
               <Database className="w-4 h-4 text-white/50" />
             </div>
             <div>
-              <h3 className="text-[13px] font-medium text-white/90">{title}</h3>
-              <p className="text-[11px] text-white/40">{health.niche}</p>
+              <h3 className="text-[13px] font-medium text-white/90">{safeRender(title)}</h3>
+              <p className="text-[11px] text-white/40">{safeRender(health.niche)}</p>
             </div>
           </div>
           <div className="text-right">
@@ -132,7 +149,7 @@ export function DatasetHealthCard({
       <div className="px-4 pb-3">
         <div className="flex items-center gap-2">
           <span className="text-white/30 text-[11px]">Top industry</span>
-          <span className="text-white/60 text-[11px] bg-white/[0.04] px-2 py-0.5 rounded">{health.topIndustry}</span>
+          <span className="text-white/60 text-[11px] bg-white/[0.04] px-2 py-0.5 rounded">{safeRender(health.topIndustry)}</span>
         </div>
       </div>
 
@@ -146,7 +163,7 @@ export function DatasetHealthCard({
             <div className="flex items-center gap-2">
               <ChevronRight className={`w-3.5 h-3.5 text-white/40 transition-transform duration-200 ${showFilters ? 'rotate-90' : ''}`} />
               <span className="text-white/70 text-[12px] font-medium">Counterparty Filters</span>
-              <span className="text-white/30 text-[11px]">{counterpartyFilters.description}</span>
+              <span className="text-white/30 text-[11px]">{safeRender(counterpartyFilters.description)}</span>
             </div>
           </button>
 
@@ -158,7 +175,7 @@ export function DatasetHealthCard({
                 <div className="flex flex-wrap gap-1">
                   {counterpartyFilters.jobTitlesInclude.slice(0, 8).map((title, i) => (
                     <span key={i} className="text-[11px] bg-white/[0.04] text-white/60 px-2 py-0.5 rounded">
-                      {title}
+                      {safeRender(title)}
                     </span>
                   ))}
                   {counterpartyFilters.jobTitlesInclude.length > 8 && (
@@ -173,7 +190,7 @@ export function DatasetHealthCard({
                 <div className="flex flex-wrap gap-1">
                   {counterpartyFilters.keywordsInclude.slice(0, 6).map((kw, i) => (
                     <span key={i} className="text-[11px] bg-white/[0.04] text-white/60 px-2 py-0.5 rounded">
-                      {kw}
+                      {safeRender(kw)}
                     </span>
                   ))}
                   {counterpartyFilters.keywordsInclude.length > 6 && (
