@@ -196,6 +196,43 @@ function normalizeDomain(input?: string): string | null {
 }
 
 /**
+ * Clean company name by stripping business suffixes.
+ * "Centurion Wealth Management, Llc" → "Centurion Wealth Management"
+ * "Acme Corp." → "Acme"
+ */
+function cleanCompanyName(name: string | null | undefined): string {
+  if (!name) return '';
+
+  // Patterns to remove (case insensitive, with optional punctuation)
+  const suffixes = [
+    /,?\s*(llc|l\.l\.c\.?)\.?\s*$/i,
+    /,?\s*(ltd|l\.t\.d\.?)\.?\s*$/i,
+    /,?\s*(inc|incorporated)\.?\s*$/i,
+    /,?\s*(corp|corporation)\.?\s*$/i,
+    /,?\s*(co|company)\.?\s*$/i,
+    /,?\s*(pllc|p\.l\.l\.c\.?)\.?\s*$/i,
+    /,?\s*(plc|p\.l\.c\.?)\.?\s*$/i,
+    /,?\s*(llp|l\.l\.p\.?)\.?\s*$/i,
+    /,?\s*(lp|l\.p\.?)\.?\s*$/i,
+    /,?\s*(gmbh)\.?\s*$/i,
+    /,?\s*(ag)\.?\s*$/i,
+    /,?\s*(sa|s\.a\.?)\.?\s*$/i,
+    /,?\s*(nv|n\.v\.?)\.?\s*$/i,
+    /,?\s*(bv|b\.v\.?)\.?\s*$/i,
+  ];
+
+  let cleaned = name.trim();
+  for (const suffix of suffixes) {
+    cleaned = cleaned.replace(suffix, '');
+  }
+
+  // Also clean trailing commas and whitespace
+  cleaned = cleaned.replace(/[,\s]+$/, '').trim();
+
+  return cleaned || name.trim(); // Return original if cleaning leaves empty
+}
+
+/**
  * SIGNAL CONTRACT ENFORCER
  * - 3-8 words max
  * - Must start with action verb
@@ -311,10 +348,10 @@ function buildDemandExportRows(data: ExportData): (string | null)[][] {
       enriched.email,
       enriched.firstName || '',
       enriched.lastName || '',
-      match.demand.company || '',
+      cleanCompanyName(match.demand.company),
       domain || '',
       intro,
-      match.supply.company || '',
+      cleanCompanyName(match.supply.company),
       String(match.score),
       match.reasons.join('; '),
     ]);
@@ -352,7 +389,7 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
       enriched.email,
       enriched.firstName || '',
       enriched.lastName || '',
-      agg.supply.company || '',
+      cleanCompanyName(agg.supply.company),
       domain || '',
       intro,
       String(agg.matches.length),
@@ -615,6 +652,7 @@ export default function Flow() {
   // Export Receipt — Trust Layer (show what's filtered before download)
   const [showExportReceipt, setShowExportReceipt] = useState(false);
   const [exportReceiptData, setExportReceiptData] = useState<{ demand: ExportReceipt; supply: ExportReceipt } | null>(null);
+  const [exportModalKey, setExportModalKey] = useState(0); // Force modal remount on reopen
 
   // Supply Annotations — Operator judgment (render-only, no matching impact)
   const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
@@ -1513,10 +1551,6 @@ export default function Flow() {
   const openExportReceipt = useCallback(() => {
     if (!state.matchingResult) return;
 
-    // Reset modal state first to ensure clean re-open
-    setShowExportReceipt(false);
-    setExportReceiptData(null);
-
     // Build demand receipt
     const demandInput: DemandExportInput = {
       matches: state.matchingResult.demandMatches,
@@ -1538,11 +1572,10 @@ export default function Flow() {
       supply: { matched: supplyReceipt.totalMatched, exported: supplyReceipt.totalExported },
     });
 
-    // Use setTimeout to ensure state reset is processed before re-opening
-    setTimeout(() => {
-      setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
-      setShowExportReceipt(true);
-    }, 0);
+    // FIX: Increment key to force modal remount, set data and show in one tick
+    setExportModalKey(k => k + 1);
+    setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
+    setShowExportReceipt(true);
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
@@ -2168,7 +2201,7 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* MATCHING */}
+          {/* MATCHING — Stripe-style: brief transition, no numbers */}
           {state.step === 'matching' && (
             <motion.div
               key="matching"
@@ -2177,18 +2210,18 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <div className="text-[48px] font-light text-white mb-2">
-                {state.demandRecords.length}
-              </div>
-              <p className="text-[13px] text-white/40">
-                {state.isHubFlow
-                  ? 'Routing contacts to Flow...'
-                  : 'Matching supply to demand...'}
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
+                className="w-8 h-8 mx-auto mb-6 rounded-full border-2 border-white/10 border-t-white/50"
+              />
+              <p className="text-[14px] text-white/50 font-medium">
+                {state.isHubFlow ? 'Routing contacts...' : 'Finding matches...'}
               </p>
             </motion.div>
           )}
 
-          {/* ENRICHING */}
+          {/* ENRICHING — Stripe-style: clean progress bar */}
           {state.step === 'enriching' && (
             <motion.div
               key="enriching"
@@ -2197,19 +2230,21 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <div className="text-[48px] font-light text-white mb-2">
-                {state.progress.current}<span className="text-white/30">/{state.progress.total}</span>
-              </div>
-              <p className="text-[13px] text-white/40 mb-8">Finding decision makers</p>
-              <div className="w-48 mx-auto">
+              <p className="text-[14px] text-white/50 font-medium mb-4">Finding contacts</p>
+              <p className="text-[28px] font-light text-white/80 mb-6">
+                {state.progress.current} <span className="text-white/30">of {state.progress.total}</span>
+              </p>
+              <div className="w-56 mx-auto">
                 <div className="h-[3px] bg-white/[0.08] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-violet-400/60 rounded-full transition-all"
-                    style={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                  <motion.div
+                    className="h-full bg-white/40 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
                   />
                 </div>
               </div>
-              <p className="mt-6 text-[11px] text-white/25">Safe to leave — progress saves</p>
+              <p className="mt-8 text-[11px] text-white/20">Safe to leave</p>
             </motion.div>
           )}
 
@@ -2342,7 +2377,7 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* GENERATING */}
+          {/* GENERATING — Stripe-style: clean progress */}
           {state.step === 'generating' && (
             <motion.div
               key="generating"
@@ -2351,17 +2386,17 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <div className="text-[48px] font-light text-white mb-2">
-                {state.progress.current}<span className="text-white/30">/{state.progress.total}</span>
-              </div>
-              <p className="text-[13px] text-white/40 mb-8">
-                {settings?.aiConfig ? 'Generating intros' : 'Building intros'}
+              <p className="text-[14px] text-white/50 font-medium mb-4">Writing intros</p>
+              <p className="text-[28px] font-light text-white/80 mb-6">
+                {state.progress.current} <span className="text-white/30">of {state.progress.total}</span>
               </p>
-              <div className="w-48 mx-auto">
+              <div className="w-56 mx-auto">
                 <div className="h-[3px] bg-white/[0.08] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-emerald-400/60 rounded-full transition-all"
-                    style={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                  <motion.div
+                    className="h-full bg-emerald-400/50 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
                   />
                 </div>
               </div>
@@ -2435,10 +2470,13 @@ export default function Flow() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3 }}
-                      className="text-center mb-10"
+                      className="text-center mb-8"
                     >
-                      <span className="text-[48px] font-light text-white/90 tracking-tight">{totalReady}</span>
-                      <p className="text-[13px] text-white/40 mt-1">Ready to Route</p>
+                      <span className="text-[56px] font-light text-white tracking-tight">{totalReady}</span>
+                      <p className="text-[15px] text-white/50 mt-1 font-medium">emails ready</p>
+                      <p className="text-[12px] text-white/25 mt-2">
+                        {demandEnriched} demand · {supplyEnriched} supply
+                      </p>
                     </motion.div>
 
                     {/* Error surface */}
@@ -2538,7 +2576,7 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* SENDING */}
+          {/* SENDING — Stripe-style: clean progress */}
           {state.step === 'sending' && (
             <motion.div
               key="sending"
@@ -2547,22 +2585,24 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <div className="text-[48px] font-light text-white mb-2">
-                {state.progress.current}<span className="text-white/30">/{state.progress.total}</span>
-              </div>
-              <p className="text-[13px] text-white/40 mb-8">{safeRender(state.progress.message)}</p>
-              <div className="w-48 mx-auto">
+              <p className="text-[14px] text-white/50 font-medium mb-4">Sending</p>
+              <p className="text-[28px] font-light text-white/80 mb-6">
+                {state.progress.current} <span className="text-white/30">of {state.progress.total}</span>
+              </p>
+              <div className="w-56 mx-auto">
                 <div className="h-[3px] bg-white/[0.08] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-violet-400/60 rounded-full transition-all"
-                    style={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                  <motion.div
+                    className="h-full bg-violet-400/50 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                    transition={{ duration: 0.3, ease: "easeOut" }}
                   />
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* COMPLETE */}
+          {/* COMPLETE — Stripe-style: clean success */}
           {state.step === 'complete' && (
             <motion.div
               key="complete"
@@ -2570,24 +2610,57 @@ export default function Flow() {
               animate={{ opacity: 1, scale: 1 }}
               className="text-center"
             >
-              <div className="w-16 h-16 mx-auto mb-8 rounded-full bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                <svg className="w-7 h-7 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
+              {/* Animated checkmark */}
+              <motion.div
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                className="relative w-16 h-16 mx-auto mb-8"
+              >
+                <div className="absolute inset-0 rounded-full bg-violet-500/20 blur-xl" />
+                <div className="relative w-full h-full rounded-full bg-gradient-to-b from-violet-500/20 to-violet-500/5 border border-violet-500/30 flex items-center justify-center">
+                  <motion.svg
+                    className="w-7 h-7 text-violet-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                  >
+                    <motion.path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M5 13l4 4L19 7"
+                      initial={{ pathLength: 0 }}
+                      animate={{ pathLength: 1 }}
+                      transition={{ duration: 0.5, delay: 0.2 }}
+                    />
+                  </motion.svg>
+                </div>
+              </motion.div>
 
-              <h1 className="text-[17px] font-medium text-white/90 mb-1">Complete</h1>
+              {/* Count */}
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mb-8"
+              >
+                <span className="text-[56px] font-light text-white tracking-tight">{state.sentDemand + state.sentSupply}</span>
+                <p className="text-[15px] text-white/50 mt-1 font-medium">emails sent</p>
+                <p className="text-[12px] text-white/25 mt-2">
+                  {state.sentDemand} demand · {state.sentSupply} supply
+                </p>
+              </motion.div>
 
-              <p className="text-[13px] text-white/40 mb-10">
-                {state.sentDemand} demand · {state.sentSupply} supply routed
-              </p>
-
-              <button
+              <motion.button
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.5 }}
                 onClick={reset}
-                className="px-4 py-2 text-[13px] font-medium rounded-md bg-white text-black hover:bg-white/90 active:scale-[0.98]"
+                className="px-5 py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 active:scale-[0.98] transition-all"
               >
                 Run again
-              </button>
+              </motion.button>
             </motion.div>
           )}
 
@@ -2596,9 +2669,10 @@ export default function Flow() {
       </div>
 
       {/* Export Receipt Modal — Trust Layer */}
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {showExportReceipt && exportReceiptData && (
           <motion.div
+            key={`export-modal-${exportModalKey}`}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
