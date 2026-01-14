@@ -255,11 +255,13 @@ export function matchRecordsSync(
 /**
  * PHASE-1 FIX: Build neutral narrative for "why this match"
  * Uses industry + title, NOT signals or timing.
+ * MODE-AWARE: Uses mode-specific vocabulary for all 8 modes.
  */
 function buildNarrative(
   demand: NormalizedRecord,
   supply: NormalizedRecord,
-  reasons: string[]
+  reasons: string[],
+  mode?: ConnectorMode
 ): MatchNarrative {
   // Extract demand type from industry (fallback: "company")
   const dIndustryRaw = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
@@ -287,16 +289,21 @@ function buildNarrative(
 
   // ==========================================================================
   // COS (Connector Overlap Statement) — Deterministic relational copy
+  // MODE-AWARE: Pass mode for correct vocabulary per connector type
+  // If extractSupplyRole() returns null → COS overlap = undefined
   // ==========================================================================
 
-  // Extract demandValue from description (deterministic, non-AI)
-  const demandValue = extractDemandValue(demand);
+  // Extract demandValue from description (deterministic, non-AI, mode-aware)
+  const demandValue = extractDemandValue(demand, mode);
 
-  // Extract supplyRole from title (deterministic, non-AI)
-  const supplyRole = extractSupplyRole(supply);
+  // Extract supplyRole from title (deterministic, non-AI, mode-aware)
+  // Returns null in strict modes (crypto) if no safe token matches
+  const supplyRole = extractSupplyRole(supply, mode);
 
-  // Construct overlap sentence
-  const overlap = `I connect ${supplyRole} working closely with ${demandValue}.`;
+  // If supplyRole is null, COS overlap is undefined (per user.txt spec)
+  const overlap = supplyRole
+    ? `I connect ${supplyRole} working closely with ${demandValue}.`
+    : undefined;
 
   return {
     demandType,
@@ -304,8 +311,8 @@ function buildNarrative(
     why,
     neutral: true,
     demandValue,
-    supplyRole,
-    overlap,
+    supplyRole: supplyRole || 'teams in this space', // Fallback for display only
+    overlap: overlap || '', // Empty string if null (intro gen will handle)
   };
 }
 
@@ -350,99 +357,236 @@ const MODE_KEYWORD_PACKS: Record<string, { keywords: string[]; default: string }
   },
 };
 
+// =============================================================================
+// MODE-AWARE DEMAND VALUE TOKENS (per user.txt spec)
+// Each mode has explicit allowed vocabulary. Mode is EXPLICIT from user selection.
+// =============================================================================
+
+const DEMAND_VALUE_TOKENS_BY_MODE: Record<ConnectorMode, { tokens: Array<{ pattern: RegExp; value: string }>; fallback: string }> = {
+  crypto: {
+    tokens: [
+      { pattern: /crypto|blockchain|web3/, value: 'crypto platforms' },
+      { pattern: /defi|protocol/, value: 'DeFi protocols' },
+      { pattern: /exchange|trading/, value: 'crypto exchanges' },
+      { pattern: /nft|collectible/, value: 'NFT platforms' },
+      { pattern: /fintech|payment/, value: 'fintech companies' },
+    ],
+    fallback: 'web3 projects',
+  },
+  wealth_management: {
+    tokens: [
+      { pattern: /ria|registered.?investment/, value: 'RIA firms' },
+      { pattern: /wealth|advisory/, value: 'wealth advisory firms' },
+      { pattern: /family.?office/, value: 'family offices' },
+      { pattern: /cfp|financial.?planning/, value: 'financial planning firms' },
+    ],
+    fallback: 'wealth advisory firms',
+  },
+  biotech_licensing: {
+    tokens: [
+      { pattern: /biotech|pharma/, value: 'biotech companies' },
+      { pattern: /clinical|therapeutic/, value: 'clinical-stage biotechs' },
+      { pattern: /drug|molecule|pipeline/, value: 'drug development companies' },
+    ],
+    fallback: 'biotech companies',
+  },
+  recruiting: {
+    tokens: [
+      { pattern: /hiring|talent|headcount/, value: 'companies scaling teams' },
+      { pattern: /startup|series/, value: 'high-growth startups' },
+      { pattern: /enterprise|large/, value: 'enterprise companies' },
+    ],
+    fallback: 'companies hiring',
+  },
+  real_estate_capital: {
+    tokens: [
+      { pattern: /developer|development/, value: 'RE developers' },
+      { pattern: /sponsor|gp/, value: 'RE sponsors' },
+      { pattern: /commercial|cre/, value: 'commercial RE firms' },
+      { pattern: /multifamily|residential/, value: 'multifamily operators' },
+    ],
+    fallback: 'RE developers',
+  },
+  logistics: {
+    tokens: [
+      { pattern: /shipper|manufacturer/, value: 'shippers' },
+      { pattern: /ecommerce|brand|retail/, value: 'ecommerce brands' },
+      { pattern: /cpg|consumer/, value: 'CPG companies' },
+    ],
+    fallback: 'shippers',
+  },
+  enterprise_partnerships: {
+    tokens: [
+      { pattern: /enterprise|b2b/, value: 'enterprise companies' },
+      { pattern: /saas|platform/, value: 'SaaS platforms' },
+      { pattern: /software|tech/, value: 'software companies' },
+    ],
+    fallback: 'enterprise companies',
+  },
+  custom: {
+    tokens: [],
+    fallback: 'companies',
+  },
+};
+
 /**
  * COS: Extract demand value from description (deterministic, non-AI)
- * MODE-AWARE + CONFIDENCE-GATED per user.txt directive:
- * 1. Determine mode first (from description/industry patterns)
- * 2. Count keyword hits in company_description
- * 3. If hits >= 2 → emit specific demandValue
- * 4. If hits < 2 or description missing → fall back to mode-default phrase
+ * MODE-AWARE: Uses EXPLICIT mode from user selection (not inferred)
+ * Per user.txt: "Mode comes from Flow.tsx (already user-selected)"
  */
-function extractDemandValue(demand: NormalizedRecord): string {
+function extractDemandValue(demand: NormalizedRecord, mode?: ConnectorMode): string {
   const desc = toStringSafe(demand.companyDescription).toLowerCase();
   const industry = toStringSafe(
     Array.isArray(demand.industry) ? demand.industry[0] : demand.industry
   ).toLowerCase();
+  const combined = `${desc} ${industry}`;
 
-  // Combined text for mode detection
-  const combinedText = `${desc} ${industry}`;
+  // If mode is provided, use mode-specific tokens (EXPLICIT, not inferred)
+  if (mode && mode !== 'custom') {
+    const modeConfig = DEMAND_VALUE_TOKENS_BY_MODE[mode];
 
-  // Step 1: Determine mode from data (mode-first resolution)
-  let detectedMode = 'custom';
+    // Check for matches in order
+    for (const { pattern, value } of modeConfig.tokens) {
+      if (pattern.test(combined)) {
+        return value;
+      }
+    }
+
+    // Return mode fallback
+    return modeConfig.fallback;
+  }
+
+  // No mode or custom mode: use generic detection (backward compatible)
+  // Fall back to old MODE_KEYWORD_PACKS logic
+  let detectedMode: keyof typeof MODE_KEYWORD_PACKS = 'custom';
   let maxHits = 0;
 
-  for (const [mode, pack] of Object.entries(MODE_KEYWORD_PACKS)) {
-    if (mode === 'custom') continue; // Skip custom, it's the fallback
-
-    const hits = pack.keywords.filter(kw => combinedText.includes(kw)).length;
+  for (const [modeKey, pack] of Object.entries(MODE_KEYWORD_PACKS)) {
+    if (modeKey === 'custom') continue;
+    const hits = pack.keywords.filter(kw => combined.includes(kw)).length;
     if (hits > maxHits) {
       maxHits = hits;
-      detectedMode = mode;
+      detectedMode = modeKey as keyof typeof MODE_KEYWORD_PACKS;
     }
   }
 
-  const pack = MODE_KEYWORD_PACKS[detectedMode] || MODE_KEYWORD_PACKS.custom;
-
-  // Step 2: Confidence gate - count hits in description only (not industry)
-  // Per directive: "Count keyword hits in company_description"
-  const descHits = pack.keywords.filter(kw => desc.includes(kw)).length;
-
-  // Step 3: If hits >= 2 → emit specific demandValue
-  if (descHits >= 2) {
-    // Build specific phrase based on detected keywords
-    const matchedKeywords = pack.keywords.filter(kw => desc.includes(kw)).slice(0, 2);
-
-    // Mode-specific specific phrases
-    if (detectedMode === 'wealth_management') {
-      if (desc.includes('personalized') || desc.includes('client-first') || desc.includes('boutique')) {
-        return 'advisory firms focused on long-term, personalized planning';
-      }
-      if (desc.includes('trust') || desc.includes('estate')) {
-        return 'advisory firms offering comprehensive planning and trust services';
-      }
-      return 'wealth advisory firms';
-    }
-
-    if (detectedMode === 'biotech_licensing') {
-      if (desc.includes('clinical') || desc.includes('pipeline')) {
-        return 'clinical-stage biotech companies';
-      }
-      return 'biotech and life sciences companies';
-    }
-
-    if (detectedMode === 'real_estate_capital') {
-      if (desc.includes('commercial') || desc.includes('cre')) {
-        return 'commercial real estate firms';
-      }
-      return 'real estate investment firms';
-    }
-
-    if (detectedMode === 'enterprise_partnerships') {
-      if (desc.includes('enterprise')) {
-        return 'enterprise software companies';
-      }
-      return 'b2b technology companies';
-    }
-
-    // Generic specific for other modes
-    return pack.default;
-  }
-
-  // Step 4: If hits < 2 or description missing → fall back to mode-default
-  // Per directive: "If confidence is low, be boring and correct"
+  const pack = MODE_KEYWORD_PACKS[detectedMode];
   return pack.default;
 }
 
+// =============================================================================
+// MODE-AWARE SUPPLY ROLE TOKENS (per user.txt spec)
+// Each mode has explicit allowed vocabulary. Crypto mode is STRICT.
+// =============================================================================
+
+const SUPPLY_ROLE_TOKENS_BY_MODE: Record<ConnectorMode, { tokens: Array<{ pattern: RegExp; role: string }>; fallback: string | null }> = {
+  crypto: {
+    tokens: [
+      { pattern: /crypto|blockchain|web3|defi/, role: 'crypto platforms' },
+      { pattern: /fintech|payment|acquiring|merchant/, role: 'fintech product teams' },
+      { pattern: /exchange|trading/, role: 'exchanges' },
+      { pattern: /on.?ramp|off.?ramp|fiat/, role: 'on/off-ramp infrastructure' },
+      { pattern: /compliance|kyc|aml|fraud/, role: 'payment & compliance infrastructure' },
+      { pattern: /product|engineering/, role: 'fintech product teams' },
+    ],
+    fallback: null, // STRICT: no generic fallback for crypto
+  },
+  wealth_management: {
+    tokens: [
+      { pattern: /hnw|high.?net.?worth|uhnw/, role: 'HNW individuals' },
+      { pattern: /family.?office/, role: 'family offices' },
+      { pattern: /private.?client|affluent/, role: 'private clients' },
+      { pattern: /estate|trust/, role: 'estate planning clients' },
+    ],
+    fallback: 'HNW individuals',
+  },
+  biotech_licensing: {
+    tokens: [
+      { pattern: /pharma|biotech/, role: 'pharma BD teams' },
+      { pattern: /licensing|partnership/, role: 'licensing teams' },
+      { pattern: /clinical|therapeutic/, role: 'clinical development teams' },
+    ],
+    fallback: 'pharma BD teams',
+  },
+  recruiting: {
+    tokens: [
+      { pattern: /recruit|staffing|talent|headhunt/, role: 'recruiting teams' },
+      { pattern: /executive.?search/, role: 'executive search teams' },
+      { pattern: /hr|human.?resources/, role: 'HR teams' },
+    ],
+    fallback: 'hiring teams',
+  },
+  real_estate_capital: {
+    tokens: [
+      { pattern: /developer|sponsor/, role: 'RE developers' },
+      { pattern: /operator|owner/, role: 'property operators' },
+      { pattern: /gp|general.?partner/, role: 'GP sponsors' },
+    ],
+    fallback: 'RE developers',
+  },
+  logistics: {
+    tokens: [
+      { pattern: /shipper|manufacturer/, role: 'shippers' },
+      { pattern: /retailer|ecommerce|brand/, role: 'ecommerce brands' },
+      { pattern: /3pl|fulfillment/, role: 'fulfillment operators' },
+    ],
+    fallback: 'shippers',
+  },
+  enterprise_partnerships: {
+    tokens: [
+      { pattern: /enterprise|b2b/, role: 'enterprise teams' },
+      { pattern: /saas|platform/, role: 'SaaS platforms' },
+      { pattern: /integration|api/, role: 'integration teams' },
+    ],
+    fallback: 'enterprise teams',
+  },
+  custom: {
+    tokens: [],
+    fallback: 'teams in this space',
+  },
+};
+
+// Forbidden words for crypto mode (never use these)
+const CRYPTO_FORBIDDEN_WORDS = ['financial services', 'wealth', 'advisory', 'banks', 'banking', 'ria', 'advisor'];
+
 /**
  * COS: Extract supply role from title (deterministic, non-AI)
- * Maps title keywords to connector-friendly role categories.
+ * MODE-AWARE: Uses explicit mode vocabulary. Crypto mode is STRICT.
+ * Returns null if no safe token matches in strict modes.
  */
-function extractSupplyRole(supply: NormalizedRecord): string {
+function extractSupplyRole(supply: NormalizedRecord, mode?: ConnectorMode): string | null {
   const title = toStringSafe(supply.title).toLowerCase();
   const industry = toStringSafe(
     Array.isArray(supply.industry) ? supply.industry[0] : supply.industry
   ).toLowerCase();
+  const desc = toStringSafe(supply.companyDescription).toLowerCase();
+  const combined = `${title} ${industry} ${desc}`;
 
+  // If mode provided, use mode-specific tokens
+  if (mode && mode !== 'custom') {
+    const modeConfig = SUPPLY_ROLE_TOKENS_BY_MODE[mode];
+
+    // Check for matches in order
+    for (const { pattern, role } of modeConfig.tokens) {
+      if (pattern.test(combined)) {
+        return role;
+      }
+    }
+
+    // Crypto mode: check for forbidden words and return null
+    if (mode === 'crypto') {
+      const hasForbidden = CRYPTO_FORBIDDEN_WORDS.some(word => combined.includes(word));
+      if (hasForbidden) {
+        console.log(`[COS] Crypto mode: forbidden word detected, returning null role`);
+        return null;
+      }
+    }
+
+    // Return mode fallback (null for crypto, specific for others)
+    return modeConfig.fallback;
+  }
+
+  // No mode or custom mode: use generic detection (backward compatible)
   // Product / Payments teams
   if (/product owner|product manager|product lead/.test(title)) {
     if (/payment|merchant|acquiring/.test(title) || /payment|fintech/.test(industry)) {
@@ -589,7 +733,8 @@ function scoreMatch(
   }
 
   // PHASE-1 FIX: Build neutral narrative for intro context
-  const narrative = score > 0 ? buildNarrative(demand, supply, reasons) : undefined;
+  // Pass mode to buildNarrative for mode-aware COS vocabulary
+  const narrative = score > 0 ? buildNarrative(demand, supply, reasons, mode) : undefined;
 
   return { score: Math.min(score, 100), reasons, narrative, buyerSellerValid };
 }
