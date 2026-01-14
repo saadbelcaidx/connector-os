@@ -135,6 +135,18 @@ export interface EnrichmentConfig {
   anymailApiKey?: string;
   connectorAgentApiKey?: string;
   circuitBreaker?: CircuitBreaker;
+  fetchSignals?: boolean; // Fetch company signals for B2B Contacts (default false)
+}
+
+/**
+ * Signals — optional metadata extracted from Apollo organization data.
+ * Read-only overlay. Never affects matching, intros, or validation.
+ */
+export interface Signals {
+  funding_total: number | null;
+  latest_funding_round_date: string | null;
+  estimated_num_employees: number | null;
+  technologies: string[] | null;
 }
 
 export interface EnrichmentResult {
@@ -145,6 +157,33 @@ export interface EnrichmentResult {
   title: string;
   verified: boolean;
   source: 'existing' | 'anymail' | 'apollo' | 'timeout';
+  signals?: Signals; // Optional metadata overlay — never required
+}
+
+/**
+ * Extract signals from Apollo organization object.
+ * Pure function — no side effects, no inference, no interpretation.
+ * Returns undefined if organization is missing or empty.
+ */
+function extractSignalsFromApollo(organization: any): Signals | undefined {
+  if (!organization || typeof organization !== 'object') {
+    return undefined;
+  }
+
+  const signals: Signals = {
+    funding_total: organization.funding_total ?? null,
+    latest_funding_round_date: organization.latest_funding_round_date ?? null,
+    estimated_num_employees: organization.estimated_num_employees ?? null,
+    technologies: Array.isArray(organization.technologies) ? organization.technologies : null,
+  };
+
+  // Return undefined if all fields are null (no signal data)
+  const hasAnySignal = signals.funding_total !== null ||
+    signals.latest_funding_round_date !== null ||
+    signals.estimated_num_employees !== null ||
+    (signals.technologies !== null && signals.technologies.length > 0);
+
+  return hasAnySignal ? signals : undefined;
 }
 
 // =============================================================================
@@ -246,6 +285,21 @@ async function enrichRecordInternal(
   // B2B Contacts - has contact info
   if (schema.hasContacts) {
 
+    // Helper: Fetch company signals if enabled (B2B Contacts only)
+    // DOCTRINE: Only after verification success, fail silently, no new fan-out
+    const maybeAttachSignals = async (r: EnrichmentResult): Promise<EnrichmentResult> => {
+      if (
+        config.fetchSignals === true &&
+        config.apolloApiKey &&
+        r.verified === true &&
+        !r.signals &&
+        record.domain
+      ) {
+        r.signals = await orgEnrich(record.domain, config.apolloApiKey, correlationId);
+      }
+      return r;
+    };
+
     if (record.email) {
       // Has email → verify
       const verified = await verifyEmail(record.email, config, correlationId, breaker);
@@ -260,6 +314,8 @@ async function enrichRecordInternal(
           verified: true,
           source: 'existing',
         };
+        // Fetch signals if enabled (B2B Contacts overlay)
+        await maybeAttachSignals(result);
         // Don't cache existing emails, only enriched ones
         return result;
       }
@@ -267,12 +323,14 @@ async function enrichRecordInternal(
       // Email invalid, try Anymail with name + domain
       result = await anymailEnrich(record.fullName, record.domain, config, correlationId, breaker);
       if (result.success) {
+        await maybeAttachSignals(result);
         await storeInCache(record.domain, result);
         return result;
       }
 
       // Anymail failed, try Connector Agent
       result = await connectorAgentEnrich(record.firstName, record.lastName, record.domain, config, correlationId, breaker);
+      await maybeAttachSignals(result);
       await storeInCache(record.domain, result);
       return result;
     }
@@ -281,12 +339,14 @@ async function enrichRecordInternal(
     if (record.fullName && record.domain) {
       result = await anymailEnrich(record.fullName, record.domain, config, correlationId, breaker);
       if (result.success) {
+        await maybeAttachSignals(result);
         await storeInCache(record.domain, result);
         return result;
       }
 
       // Anymail failed, try Connector Agent
       result = await connectorAgentEnrich(record.firstName, record.lastName, record.domain, config, correlationId, breaker);
+      await maybeAttachSignals(result);
       await storeInCache(record.domain, result);
       return result;
     }
@@ -580,6 +640,58 @@ async function connectorAgentEnrich(
 }
 
 // =============================================================================
+// ORG ENRICH — Company Signals (B2B Contacts overlay)
+// =============================================================================
+
+/**
+ * Fetch organization data from Apollo for company signals.
+ * Used ONLY for B2B Contacts when fetchSignals is enabled.
+ *
+ * DOCTRINE:
+ * - No retries (single attempt)
+ * - Fail silently (return undefined on any error)
+ * - Never blocks or affects enrichment flow
+ */
+async function orgEnrich(
+  domain: string,
+  apolloApiKey: string,
+  correlationId: string
+): Promise<Signals | undefined> {
+  if (!domain || !apolloApiKey) return undefined;
+
+  try {
+    const data = await fetchJson<any>(
+      `${SUPABASE_FUNCTIONS_URL}/apollo-enrichment`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'org_enrich',
+          apiKey: apolloApiKey,
+          domain,
+        }),
+        timeoutMs: APOLLO_TIMEOUT_MS,
+        retries: 0, // No retries — fail fast
+        correlationId,
+      }
+    );
+
+    if (data.organization) {
+      const signals = extractSignalsFromApollo(data.organization);
+      if (signals) {
+        console.log(`[Enrichment] cid=${correlationId} step=ORG_SIGNALS domain=${domain} ok=1`);
+      }
+      return signals;
+    }
+  } catch (err) {
+    // Fail silently — signals are optional metadata
+    console.log(`[Enrichment] cid=${correlationId} step=ORG_SIGNALS domain=${domain} ok=0 reason=error`);
+  }
+
+  return undefined;
+}
+
+// =============================================================================
 // APOLLO ENRICHMENT
 // =============================================================================
 
@@ -644,6 +756,9 @@ async function apolloEnrich(
       const firstName = candidate.first_name;
       const lastName = candidate.last_name || candidate.last_name_obfuscated?.replace(/\*+/g, '') || '';
 
+      // Extract signals from organization (optional metadata overlay)
+      const signals = extractSignalsFromApollo(candidate.organization);
+
       // If search already returned email, use it
       const directEmail = candidate.email || candidate.email_from_pdl;
       if (directEmail && firstName) {
@@ -657,6 +772,7 @@ async function apolloEnrich(
           title: candidate.title || '',
           verified: true,
           source: 'apollo',
+          signals, // Optional metadata — never affects flow
         };
       }
 
@@ -695,6 +811,7 @@ async function apolloEnrich(
             title: matchedPerson.title || candidate.title || '',
             verified: true,
             source: 'apollo',
+            signals, // Optional metadata — never affects flow
           };
         }
       }

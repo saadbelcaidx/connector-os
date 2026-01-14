@@ -18,13 +18,20 @@ import type { AIConfig } from './services/AIService';
 // TYPES
 // =============================================================================
 
+// Pre-signal context entry for a single entity (keyed by domain)
+interface PreSignalContextEntry {
+  text: string;
+  source?: 'linkedin' | 'news' | 'prior_convo' | 'job_post' | 'other';
+  updatedAt: string;
+}
+
 interface Settings {
   apifyToken: string;
   demandDatasetId: string;
   supplyDatasetId: string;
   apolloApiKey: string;
   anymailApiKey: string;
-  ssmApiKey: string;
+  connectorAgentApiKey: string;
   // Sending provider
   sendingProvider: 'instantly' | 'plusvibe';
   instantlyApiKey: string;
@@ -32,8 +39,16 @@ interface Settings {
   instantlyCampaignSupply: string;
   plusvibeApiKey: string;
   plusvibeWorkspaceId: string;
+  plusvibeCampaignDemand: string;
+  plusvibeCampaignSupply: string;
   senderName: string;
   calendarLink: string;
+  vslUrl: string;
+  vslFollowupsEnabled: boolean;
+  vslWatchedDelayHours: number;
+  vslNotWatchedDelayHours: number;
+  // Targeting (for reply-brain)
+  targetIndustries: string[];
   // AI (3 providers: OpenAI, Azure, Claude)
   aiProvider: 'openai' | 'azure' | 'anthropic';
   openaiApiKey: string;
@@ -42,6 +57,10 @@ interface Settings {
   azureDeployment: string;
   claudeApiKey: string;
   aiModel: string;
+  // Pre-signal context (operator-written, keyed by domain)
+  preSignalContext: Record<string, PreSignalContextEntry>;
+  // Signals toggle — fetch company signals for B2B Contacts (default false)
+  fetchSignals: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -50,7 +69,7 @@ const DEFAULT_SETTINGS: Settings = {
   supplyDatasetId: '',
   apolloApiKey: '',
   anymailApiKey: '',
-  ssmApiKey: '',
+  connectorAgentApiKey: '',
   // Sending provider
   sendingProvider: 'instantly',
   instantlyApiKey: '',
@@ -58,8 +77,16 @@ const DEFAULT_SETTINGS: Settings = {
   instantlyCampaignSupply: '',
   plusvibeApiKey: '',
   plusvibeWorkspaceId: '',
+  plusvibeCampaignDemand: '',
+  plusvibeCampaignSupply: '',
   senderName: '',
   calendarLink: '',
+  vslUrl: '',
+  vslFollowupsEnabled: false,
+  vslWatchedDelayHours: 24,
+  vslNotWatchedDelayHours: 48,
+  // Targeting
+  targetIndustries: [],
   // AI
   aiProvider: 'openai',
   openaiApiKey: '',
@@ -68,9 +95,38 @@ const DEFAULT_SETTINGS: Settings = {
   azureDeployment: '',
   claudeApiKey: '',
   aiModel: 'gpt-4o-mini',
+  // Pre-signal context
+  preSignalContext: {},
+  // Signals toggle (default off)
+  fetchSignals: false,
 };
 
 type Section = 'data' | 'outreach' | 'ai' | 'identity' | 'account';
+
+// =============================================================================
+// VSL URL VALIDATION
+// =============================================================================
+
+function validateVslUrl(url: string): { valid: boolean; provider: 'loom' | 'youtube' | null; error?: string } {
+  if (!url) return { valid: true, provider: null };
+
+  // Loom: loom.com/share/* or loom.com/embed/*
+  if (/loom\.com\/(share|embed)\/[a-f0-9]+/i.test(url)) {
+    return { valid: true, provider: 'loom' };
+  }
+
+  // YouTube: youtube.com/watch?v=VIDEO_ID or youtu.be/VIDEO_ID
+  if (/youtube\.com\/watch\?v=[a-zA-Z0-9_-]{11}/.test(url) || /youtu\.be\/[a-zA-Z0-9_-]{11}/.test(url)) {
+    return { valid: true, provider: 'youtube' };
+  }
+
+  // Invalid format
+  return {
+    valid: false,
+    provider: null,
+    error: 'Invalid URL. Use Loom (loom.com/share/...) or YouTube (youtube.com/watch?v=... or youtu.be/...)'
+  };
+}
 
 // =============================================================================
 // COMPONENTS
@@ -179,14 +235,22 @@ export default function Settings() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [changingPassword, setChangingPassword] = useState(false);
 
-  // Webhook
+  // Webhook URLs
   const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [copiedPlusvibeWebhook, setCopiedPlusvibeWebhook] = useState(false);
   const webhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/instantly-webhook`;
+  const plusvibeWebhookUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/plusvibe-webhook`;
 
   const copyWebhook = async () => {
     await navigator.clipboard.writeText(webhookUrl);
     setCopiedWebhook(true);
     setTimeout(() => setCopiedWebhook(false), 1500);
+  };
+
+  const copyPlusvibeWebhook = async () => {
+    await navigator.clipboard.writeText(plusvibeWebhookUrl);
+    setCopiedPlusvibeWebhook(true);
+    setTimeout(() => setCopiedPlusvibeWebhook(false), 1500);
   };
 
   // Dataset Analysis
@@ -278,7 +342,8 @@ export default function Settings() {
           supplyDatasetId: data.supply_dataset_id || '',
           apolloApiKey: data.enrichment_api_key || '',
           anymailApiKey: data.anymail_finder_api_key || '',
-          ssmApiKey: data.ssm_api_key || '',
+          connectorAgentApiKey: data.connector_agent_api_key || '',
+          fetchSignals: data.fetch_signals === true,
           // Sending provider
           sendingProvider: data.sending_provider || 'instantly',
           instantlyApiKey: data.instantly_api_key || '',
@@ -286,8 +351,16 @@ export default function Settings() {
           instantlyCampaignSupply: data.instantly_campaign_supply || '',
           plusvibeApiKey: data.plusvibe_api_key || '',
           plusvibeWorkspaceId: data.plusvibe_workspace_id || '',
+          plusvibeCampaignDemand: data.plusvibe_campaign_demand || '',
+          plusvibeCampaignSupply: data.plusvibe_campaign_supply || '',
           senderName: data.sender_name || '',
           calendarLink: data.calendar_link || '',
+          vslUrl: data.vsl_url || '',
+          vslFollowupsEnabled: data.vsl_followups_enabled || false,
+          vslWatchedDelayHours: data.vsl_watched_delay_hours || 24,
+          vslNotWatchedDelayHours: data.vsl_not_watched_delay_hours || 48,
+          // Targeting
+          targetIndustries: data.target_industries || [],
           // AI from localStorage
           aiProvider: aiParsed.aiProvider || 'openai',
           openaiApiKey: aiParsed.openaiApiKey || '',
@@ -296,6 +369,8 @@ export default function Settings() {
           azureDeployment: aiParsed.azureDeployment || '',
           claudeApiKey: aiParsed.claudeApiKey || '',
           aiModel: aiParsed.aiModel || 'gpt-4o-mini',
+          // Pre-signal context (JSONB from DB, defaults to empty)
+          preSignalContext: data.pre_signal_context || {},
         });
       } else {
         // No DB data, just load AI settings
@@ -318,6 +393,15 @@ export default function Settings() {
 
   // Save
   const save = async () => {
+    // Validate VSL URL before saving
+    if (settings.vslUrl) {
+      const vslValidation = validateVslUrl(settings.vslUrl);
+      if (!vslValidation.valid) {
+        console.error('[Settings] Invalid VSL URL, blocking save');
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       // Always save AI settings to localStorage (sensitive keys)
@@ -341,26 +425,79 @@ export default function Settings() {
           supply_dataset_id: settings.supplyDatasetId,
           enrichment_api_key: settings.apolloApiKey,
           anymail_finder_api_key: settings.anymailApiKey,
-          ssm_api_key: settings.ssmApiKey,
+          connector_agent_api_key: settings.connectorAgentApiKey,
+          fetch_signals: settings.fetchSignals,
           // Sending provider (always sent)
           sending_provider: settings.sendingProvider,
-          // Instantly fields (only when provider = instantly)
-          ...(settings.sendingProvider === 'instantly' ? {
-            instantly_api_key: settings.instantlyApiKey,
-            instantly_campaign_demand: settings.instantlyCampaignDemand,
-            instantly_campaign_supply: settings.instantlyCampaignSupply,
-          } : {}),
-          // Plusvibe fields (only when provider = plusvibe)
-          // INVARIANT: Payload only includes fields relevant to the selected sending provider.
-          // Never send cross-provider credentials.
+          // Instantly fields (always persist - campaign IDs are configuration)
+          instantly_api_key: settings.instantlyApiKey,
+          instantly_campaign_demand: settings.instantlyCampaignDemand,
+          instantly_campaign_supply: settings.instantlyCampaignSupply,
+          // Plusvibe campaign IDs (always persist - campaign IDs are configuration)
+          plusvibe_campaign_demand: settings.plusvibeCampaignDemand,
+          plusvibe_campaign_supply: settings.plusvibeCampaignSupply,
+          // Plusvibe credentials (only when provider = plusvibe)
           ...(settings.sendingProvider === 'plusvibe' ? {
             plusvibe_api_key: settings.plusvibeApiKey,
             plusvibe_workspace_id: settings.plusvibeWorkspaceId,
           } : {}),
           sender_name: settings.senderName,
           calendar_link: settings.calendarLink,
+          vsl_url: settings.vslUrl,
+          vsl_followups_enabled: settings.vslFollowupsEnabled,
+          vsl_watched_delay_hours: settings.vslWatchedDelayHours,
+          vsl_not_watched_delay_hours: settings.vslNotWatchedDelayHours,
+          // Targeting
+          target_industries: settings.targetIndustries,
+          // Pre-signal context (JSONB)
+          pre_signal_context: settings.preSignalContext,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
+
+        // Register campaigns to user_campaigns for multi-tenant webhook lookup
+        const campaignsToRegister: { campaign_id: string; provider: string; campaign_name: string }[] = [];
+
+        // Instantly campaigns
+        if (settings.instantlyCampaignDemand) {
+          campaignsToRegister.push({
+            campaign_id: settings.instantlyCampaignDemand,
+            provider: 'instantly',
+            campaign_name: 'Demand Campaign',
+          });
+        }
+        if (settings.instantlyCampaignSupply) {
+          campaignsToRegister.push({
+            campaign_id: settings.instantlyCampaignSupply,
+            provider: 'instantly',
+            campaign_name: 'Supply Campaign',
+          });
+        }
+
+        // PlusVibe campaigns
+        if (settings.plusvibeCampaignDemand) {
+          campaignsToRegister.push({
+            campaign_id: settings.plusvibeCampaignDemand,
+            provider: 'plusvibe',
+            campaign_name: 'Demand Campaign',
+          });
+        }
+        if (settings.plusvibeCampaignSupply) {
+          campaignsToRegister.push({
+            campaign_id: settings.plusvibeCampaignSupply,
+            provider: 'plusvibe',
+            campaign_name: 'Supply Campaign',
+          });
+        }
+
+        // Upsert each campaign (ignore duplicates)
+        for (const campaign of campaignsToRegister) {
+          await supabase.from('user_campaigns').upsert({
+            user_id: user!.id,
+            campaign_id: campaign.campaign_id,
+            provider: campaign.provider,
+            campaign_name: campaign.campaign_name,
+          }, { onConflict: 'campaign_id' });
+        }
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -660,9 +797,9 @@ export default function Settings() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-[13px] font-medium text-white/90">Supply</span>
-                          <InfoTip content="People who fulfill the need. Recruiters, consultants, agencies — the system matches them to demand." />
+                          <InfoTip content="We always fetch fresh data. Your notes and decisions are saved." />
                         </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">People who can help</p>
+                        <p className="text-[12px] text-white/40 mt-0.5">Refreshed from source each run</p>
 
                         <LearnMore title="What counts as supply?">
                           <LearnMoreCard>
@@ -897,27 +1034,54 @@ export default function Settings() {
                   </div>
                 </div>
 
-                {/* SSM Verify */}
-                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                {/* Connector Agent */}
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1] mb-3">
                   <div className="flex items-start justify-between gap-6">
                     <div className="flex items-start gap-3 flex-1">
-                      <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
-                        <img src="/ssm-logo.png" alt="SSM" className="w-full h-full object-cover" />
+                      <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
+                        <Zap size={16} strokeWidth={1.5} className="text-violet-400" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-white/90">SSM Verify</span>
-                          <InfoTip content="Exclusive to SSM community members. Verified lookups." />
-                          <a href="https://www.skool.com/ssmasters" target="_blank" rel="noopener noreferrer" className="text-[11px] text-emerald-400/70 hover:text-emerald-400 transition-colors">
-                            Join for access →
-                          </a>
+                          <span className="text-[13px] font-medium text-white/90">Connector Agent</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wider bg-violet-500/10 text-violet-400/70 border border-violet-500/20">SSM</span>
                         </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Community members only</p>
+                        <p className="text-[12px] text-white/40 mt-0.5">
+                          SSM private · <a href="https://www.skool.com/ssmasters/" target="_blank" rel="noopener noreferrer" className="text-white/50 hover:text-white/70 transition-colors">Join SSM for access</a>
+                        </p>
                       </div>
                     </div>
                     <div className="w-[200px]">
-                      <Input type="password" value={settings.ssmApiKey} onChange={(v) => setSettings({ ...settings, ssmApiKey: v })} placeholder="sk_..." />
+                      <Input type="password" value={settings.connectorAgentApiKey} onChange={(v) => setSettings({ ...settings, connectorAgentApiKey: v })} placeholder="ca_..." />
                     </div>
+                  </div>
+                </div>
+
+                {/* Company Signals Toggle */}
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="flex items-start gap-3 flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                        <Sparkles size={16} strokeWidth={1.5} className="text-amber-400/70" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-white/90">Company Signals</span>
+                          <InfoTip content="Fetch funding, employees, and tech stack for B2B Contacts. One extra Apollo call per verified domain." />
+                        </div>
+                        <p className="text-[12px] text-white/40 mt-0.5">Optional metadata for verified contacts</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSettings({ ...settings, fetchSignals: !settings.fetchSignals })}
+                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                        settings.fetchSignals ? 'bg-amber-500/70' : 'bg-white/[0.08]'
+                      }`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${
+                        settings.fetchSignals ? 'left-6' : 'left-1'
+                      }`} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1065,7 +1229,7 @@ export default function Settings() {
                         <span className="text-[12px] font-medium text-white/80">Demand campaign</span>
                         <InfoTip content="Intros sent to companies with timing signals go here." />
                       </div>
-                      <Input value={settings.instantlyCampaignDemand} onChange={(v) => setSettings({ ...settings, instantlyCampaignDemand: v })} placeholder="Campaign ID" width="w-full" />
+                      <Input value={settings.plusvibeCampaignDemand} onChange={(v) => setSettings({ ...settings, plusvibeCampaignDemand: v })} placeholder="Campaign ID" width="w-full" />
                     </div>
                     <div className="p-4 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
                       <div className="flex items-center gap-2 mb-2">
@@ -1073,42 +1237,74 @@ export default function Settings() {
                         <span className="text-[12px] font-medium text-white/80">Supply campaign</span>
                         <InfoTip content="Intros sent to service providers go here." />
                       </div>
-                      <Input value={settings.instantlyCampaignSupply} onChange={(v) => setSettings({ ...settings, instantlyCampaignSupply: v })} placeholder="Campaign ID" width="w-full" />
+                      <Input value={settings.plusvibeCampaignSupply} onChange={(v) => setSettings({ ...settings, plusvibeCampaignSupply: v })} placeholder="Campaign ID" width="w-full" />
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Webhook */}
+              {/* Webhooks */}
               <div>
                 <div className="flex items-center gap-2 mb-3">
-                  <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Webhook</h2>
+                  <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Webhooks</h2>
                 </div>
-                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex items-start gap-3 flex-1">
-                      <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0">
-                        <Send size={16} strokeWidth={1.5} className="text-white/50" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-white/90">Reply webhook</span>
-                          <InfoTip content="Receives replies from Instantly. Add to: Settings → Webhooks → reply_received" />
+                <div className="space-y-3">
+                  {/* Instantly Webhook */}
+                  <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0">
+                          <Send size={16} strokeWidth={1.5} className="text-white/50" />
                         </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Add to Instantly → Webhooks → reply_received</p>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-medium text-white/90">Instantly webhook</span>
+                            <InfoTip content="Receives replies from Instantly. Add to: Settings → Webhooks → reply_received" />
+                          </div>
+                          <p className="text-[12px] text-white/40 mt-0.5">Add to Instantly → Webhooks → reply_received</p>
+                        </div>
                       </div>
+                      <button
+                        onClick={copyWebhook}
+                        className={`h-9 px-4 rounded-lg text-[12px] font-medium flex items-center gap-2 transition-all ${
+                          copiedWebhook
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-white/[0.06] text-white/60 hover:text-white/90 hover:bg-white/[0.1]'
+                        }`}
+                      >
+                        {copiedWebhook ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedWebhook ? 'Copied' : 'Copy URL'}
+                      </button>
                     </div>
-                    <button
-                      onClick={copyWebhook}
-                      className={`h-9 px-4 rounded-lg text-[12px] font-medium flex items-center gap-2 transition-all ${
-                        copiedWebhook
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : 'bg-white/[0.06] text-white/60 hover:text-white/90 hover:bg-white/[0.1]'
-                      }`}
-                    >
-                      {copiedWebhook ? <Check size={14} /> : <Copy size={14} />}
-                      {copiedWebhook ? 'Copied' : 'Copy URL'}
-                    </button>
+                  </div>
+
+                  {/* PlusVibe Webhook */}
+                  <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                          <Send size={16} strokeWidth={1.5} className="text-violet-400/70" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-medium text-white/90">PlusVibe webhook</span>
+                            <InfoTip content="Receives replies from PlusVibe. Add to: Workspace → Webhooks" />
+                          </div>
+                          <p className="text-[12px] text-white/40 mt-0.5">Add to PlusVibe → Workspace → Webhooks</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={copyPlusvibeWebhook}
+                        className={`h-9 px-4 rounded-lg text-[12px] font-medium flex items-center gap-2 transition-all ${
+                          copiedPlusvibeWebhook
+                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            : 'bg-white/[0.06] text-white/60 hover:text-white/90 hover:bg-white/[0.1]'
+                        }`}
+                      >
+                        {copiedPlusvibeWebhook ? <Check size={14} /> : <Copy size={14} />}
+                        {copiedPlusvibeWebhook ? 'Copied' : 'Copy URL'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1227,17 +1423,22 @@ export default function Settings() {
                           <p className="text-[12px] text-white/40 mt-0.5">Which model to use</p>
                         </div>
                       </div>
-                      <div className="w-[200px]">
+                      <div className="w-[200px] relative">
                         <select
                           value={settings.aiModel}
                           onChange={(e) => setSettings({ ...settings, aiModel: e.target.value })}
-                          className="w-full h-8 px-3 rounded-lg bg-white/[0.06] border border-white/[0.08] text-[13px] text-white/90 focus:outline-none focus:border-white/20 cursor-pointer"
+                          className="w-full h-9 pl-3 pr-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white/90 appearance-none cursor-pointer transition-all duration-200 hover:bg-white/[0.06] hover:border-white/[0.12] focus:outline-none focus:border-white/20 focus:ring-1 focus:ring-white/10"
                           style={{ colorScheme: 'dark' }}
                         >
                           <option value="gpt-4o-mini">GPT-4o Mini (Fast)</option>
                           <option value="gpt-4o">GPT-4o (Best)</option>
                           <option value="gpt-4-turbo">GPT-4 Turbo</option>
                         </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/40">
+                            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1362,16 +1563,21 @@ export default function Settings() {
                           <p className="text-[12px] text-white/40 mt-0.5">Which Claude model to use</p>
                         </div>
                       </div>
-                      <div className="w-[200px]">
+                      <div className="w-[200px] relative">
                         <select
                           value={settings.aiModel}
                           onChange={(e) => setSettings({ ...settings, aiModel: e.target.value })}
-                          className="w-full h-8 px-3 rounded-lg bg-white/[0.06] border border-white/[0.08] text-[13px] text-white/90 focus:outline-none focus:border-white/20 cursor-pointer"
+                          className="w-full h-9 pl-3 pr-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white/90 appearance-none cursor-pointer transition-all duration-200 hover:bg-white/[0.06] hover:border-white/[0.12] focus:outline-none focus:border-white/20 focus:ring-1 focus:ring-white/10"
                           style={{ colorScheme: 'dark' }}
                         >
                           <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fast)</option>
                           <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Best)</option>
                         </select>
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/40">
+                            <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1442,7 +1648,7 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1] mb-3">
                   <div className="flex items-start justify-between gap-6">
                     <div className="flex items-start gap-3 flex-1">
                       <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0">
@@ -1458,6 +1664,141 @@ export default function Settings() {
                     </div>
                     <div className="w-[240px]">
                       <Input value={settings.calendarLink} onChange={(v) => setSettings({ ...settings, calendarLink: v })} placeholder="https://cal.com/you" width="w-full" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="flex items-start gap-3 flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                        <Zap size={16} strokeWidth={1.5} className="text-cyan-400/70" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-white/90">Pre-Alignment VSL</span>
+                          <InfoTip content="Auto-sent on positive replies. 3-5 min video explaining how you work. Loom or YouTube unlisted link." />
+                        </div>
+                        <p className="text-[12px] text-white/40 mt-0.5">Auto-injected on interest</p>
+                      </div>
+                    </div>
+                    <div className="w-[280px]">
+                      <div className="space-y-1.5">
+                        <Input
+                          value={settings.vslUrl}
+                          onChange={(v) => setSettings({ ...settings, vslUrl: v })}
+                          placeholder="https://loom.com/share/... or youtu.be/..."
+                          width="w-full"
+                        />
+                        {settings.vslUrl && (() => {
+                          const validation = validateVslUrl(settings.vslUrl);
+                          if (!validation.valid) {
+                            return <p className="text-[11px] text-red-400">{validation.error}</p>;
+                          }
+                          if (validation.provider) {
+                            return (
+                              <p className="text-[11px] text-emerald-400/80">
+                                Detected: {validation.provider === 'loom' ? 'Loom' : 'YouTube'}
+                              </p>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* VSL Follow-ups — only show if VSL URL is set */}
+                {settings.vslUrl && (
+                  <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                          <TrendingUp size={16} strokeWidth={1.5} className="text-amber-400/70" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-medium text-white/90">VSL Follow-ups</span>
+                            <InfoTip content="Automatically follow up based on whether they watched the VSL. Watched = calendar link. Not watched = gentle nudge." />
+                          </div>
+                          <p className="text-[12px] text-white/40 mt-0.5">Behavior-aware routing</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <button
+                          onClick={() => setSettings({ ...settings, vslFollowupsEnabled: !settings.vslFollowupsEnabled })}
+                          className={`relative w-11 h-6 rounded-full transition-colors ${
+                            settings.vslFollowupsEnabled ? 'bg-emerald-500/80' : 'bg-white/10'
+                          }`}
+                        >
+                          <div
+                            className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                              settings.vslFollowupsEnabled ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                    {settings.vslFollowupsEnabled && (
+                      <div className="mt-4 pt-4 border-t border-white/[0.06] grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[11px] text-white/50 uppercase tracking-wider mb-1.5 block">Watched delay</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="1"
+                              max="72"
+                              value={settings.vslWatchedDelayHours}
+                              onChange={(e) => setSettings({ ...settings, vslWatchedDelayHours: parseInt(e.target.value) || 24 })}
+                              className="w-16 h-8 px-2 text-[13px] bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/90 focus:outline-none focus:border-white/20"
+                            />
+                            <span className="text-[12px] text-white/40">hours</span>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-white/50 uppercase tracking-wider mb-1.5 block">Not watched delay</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min="1"
+                              max="168"
+                              value={settings.vslNotWatchedDelayHours}
+                              onChange={(e) => setSettings({ ...settings, vslNotWatchedDelayHours: parseInt(e.target.value) || 48 })}
+                              className="w-16 h-8 px-2 text-[13px] bg-white/[0.04] border border-white/[0.08] rounded-lg text-white/90 focus:outline-none focus:border-white/20"
+                            />
+                            <span className="text-[12px] text-white/40">hours</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="flex items-start gap-3 flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                        <Briefcase size={16} strokeWidth={1.5} className="text-violet-400/70" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-white/90">Industries</span>
+                          <InfoTip content="Used when prospects ask 'what industries do you work with?' — reply-brain will use these instead of saying 'varies'." />
+                        </div>
+                        <p className="text-[12px] text-white/40 mt-0.5">Comma-separated list</p>
+                      </div>
+                    </div>
+                    <div className="w-[280px]">
+                      <Input
+                        value={(settings.targetIndustries || []).join(', ')}
+                        onChange={(v) => setSettings({
+                          ...settings,
+                          targetIndustries: v.split(',').map(s => s.trim()).filter(Boolean)
+                        })}
+                        placeholder="SaaS, FinTech, Healthcare"
+                        width="w-full"
+                      />
                     </div>
                   </div>
                 </div>

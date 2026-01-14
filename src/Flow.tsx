@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -17,7 +17,7 @@ import { supabase } from './lib/supabase';
 // New architecture
 import { validateDataset, normalizeDataset, NormalizedRecord, Schema } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
-import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult } from './enrichment';
+import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult, Signals } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
 // AI Config type + Antifragile intro generation
@@ -357,6 +357,8 @@ interface Settings {
   // CANONICAL: Per-side presignal (applies to ALL contacts on that side)
   presignalDemand?: string;   // Text for ALL demand contacts
   presignalSupply?: string;   // Text for ALL supply contacts
+  // Signals toggle — fetch company signals for B2B Contacts (default false)
+  fetchSignals?: boolean;
 }
 
 // =============================================================================
@@ -392,6 +394,9 @@ export default function Flow() {
   const [editingPresignalSide, setEditingPresignalSide] = useState<'demand' | 'supply' | null>(null);
   const [presignalText, setPresignalText] = useState('');
   const [savingPresignal, setSavingPresignal] = useState(false);
+
+  // Signals drawer — read-only overlay, no logic impact
+  const [showSignalsDrawer, setShowSignalsDrawer] = useState(false);
 
   // Supply Annotations — Operator judgment (render-only, no matching impact)
   const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
@@ -496,6 +501,7 @@ export default function Flow() {
             aiConfig,
             presignalDemand: normalizeToString(data?.presignal_demand),
             presignalSupply: normalizeToString(data?.presignal_supply),
+            fetchSignals: data?.fetch_signals === true, // default false
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
@@ -545,6 +551,7 @@ export default function Flow() {
           aiConfig,
           presignalDemand: normalizeToString(s.presignalDemand),
           presignalSupply: normalizeToString(s.presignalSupply),
+          fetchSignals: s.fetchSignals === true, // default false
         });
 
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
@@ -1030,6 +1037,7 @@ export default function Flow() {
       apolloApiKey: settings?.apolloApiKey,
       anymailApiKey: settings?.anymailApiKey,
       connectorAgentApiKey: settings?.connectorAgentApiKey,
+      fetchSignals: settings?.fetchSignals === true, // default false
     };
 
     // Run ID for this batch
@@ -1039,6 +1047,7 @@ export default function Flow() {
       hasApollo: !!config.apolloApiKey,
       hasAnymail: !!config.anymailApiKey,
       hasConnectorAgent: !!config.connectorAgentApiKey,
+      fetchSignals: config.fetchSignals,
       runId,
       concurrency: 5,
     });
@@ -1967,6 +1976,251 @@ export default function Flow() {
                       <span className="text-[48px] font-light text-white/90 tracking-tight">{totalReady}</span>
                       <p className="text-[13px] text-white/40 mt-1">Ready to Route</p>
                     </motion.div>
+
+                    {/* Dataset Health — Aggregate signals as confidence indicator */}
+                    {/* DOCTRINE: Signals are for awareness only. Never affect copy. */}
+                    {(() => {
+                      // Compute aggregate signal stats (pure read, no effects)
+                      const signalStats = {
+                        total: 0,
+                        funded: 0,       // Has funding_total > 0
+                        recentActivity: 0, // Last round within 12 months
+                        growing: 0,      // 50+ employees
+                      };
+
+                      const contactsWithSignals: Array<{ domain: string; name: string; signals: Signals }> = [];
+                      const now = new Date();
+                      const twelveMonthsAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+
+                      for (const [domain, enriched] of state.enrichedDemand.entries()) {
+                        if (enriched.signals) {
+                          signalStats.total++;
+                          const s = enriched.signals;
+                          if (s.funding_total && s.funding_total > 0) signalStats.funded++;
+                          if (s.latest_funding_round_date) {
+                            const roundDate = new Date(s.latest_funding_round_date);
+                            if (roundDate > twelveMonthsAgo) signalStats.recentActivity++;
+                          }
+                          if (s.estimated_num_employees && s.estimated_num_employees >= 50) signalStats.growing++;
+
+                          const match = demandMatches.find(m => m.demand.domain === domain);
+                          contactsWithSignals.push({
+                            domain,
+                            name: match?.demand.companyName || domain,
+                            signals: s,
+                          });
+                        }
+                      }
+
+                      for (const [domain, enriched] of state.enrichedSupply.entries()) {
+                        if (enriched.signals) {
+                          signalStats.total++;
+                          const s = enriched.signals;
+                          if (s.funding_total && s.funding_total > 0) signalStats.funded++;
+                          if (s.latest_funding_round_date) {
+                            const roundDate = new Date(s.latest_funding_round_date);
+                            if (roundDate > twelveMonthsAgo) signalStats.recentActivity++;
+                          }
+                          if (s.estimated_num_employees && s.estimated_num_employees >= 50) signalStats.growing++;
+
+                          const agg = supplyAggregates.find(a => a.supply.domain === domain);
+                          contactsWithSignals.push({
+                            domain,
+                            name: agg?.supply.companyName || domain,
+                            signals: s,
+                          });
+                        }
+                      }
+
+                      if (signalStats.total === 0) return null;
+
+                      // Compute health score (simple heuristic)
+                      const coverage = signalStats.total / Math.max(totalReady, 1);
+                      const healthLabel = coverage >= 0.5 ? 'Strong' : coverage >= 0.25 ? 'Good' : 'Fair';
+
+                      // Format date helper
+                      const formatDate = (iso: string | null) => {
+                        if (!iso) return null;
+                        const d = new Date(iso);
+                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return `${months[d.getMonth()]} ${d.getFullYear()}`;
+                      };
+
+                      return (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.35, duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
+                          className="mb-8 max-w-[280px] mx-auto"
+                        >
+                          {/* Dataset Health Card — Linear-style */}
+                          <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.01]">
+                            {/* Subtle glow */}
+                            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/[0.03] to-transparent pointer-events-none" />
+
+                            <div className="relative p-5">
+                              {/* Header */}
+                              <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" />
+                                  <span className="text-[11px] text-white/40 font-medium tracking-wide">Dataset Health</span>
+                                </div>
+                                <motion.span
+                                  initial={{ opacity: 0, scale: 0.9 }}
+                                  animate={{ opacity: 1, scale: 1 }}
+                                  transition={{ delay: 0.5 }}
+                                  className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400/90 border border-emerald-500/20"
+                                >
+                                  {healthLabel}
+                                </motion.span>
+                              </div>
+
+                              {/* Stats */}
+                              <div className="space-y-2.5">
+                                <motion.div
+                                  initial={{ opacity: 0, x: -8 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  transition={{ delay: 0.45 }}
+                                  className="flex justify-between items-center"
+                                >
+                                  <span className="text-[12px] text-white/50">Companies enriched</span>
+                                  <span className="text-[13px] text-white/80 font-medium tabular-nums">{signalStats.total}</span>
+                                </motion.div>
+                                {signalStats.funded > 0 && (
+                                  <motion.div
+                                    initial={{ opacity: 0, x: -8 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.5 }}
+                                    className="flex justify-between items-center"
+                                  >
+                                    <span className="text-[12px] text-white/50">Well-funded</span>
+                                    <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.funded}</span>
+                                  </motion.div>
+                                )}
+                                {signalStats.recentActivity > 0 && (
+                                  <motion.div
+                                    initial={{ opacity: 0, x: -8 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.55 }}
+                                    className="flex justify-between items-center"
+                                  >
+                                    <span className="text-[12px] text-white/50">Active in last 12mo</span>
+                                    <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.recentActivity}</span>
+                                  </motion.div>
+                                )}
+                                {signalStats.growing > 0 && (
+                                  <motion.div
+                                    initial={{ opacity: 0, x: -8 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.6 }}
+                                    className="flex justify-between items-center"
+                                  >
+                                    <span className="text-[12px] text-white/50">Growing teams</span>
+                                    <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.growing}</span>
+                                  </motion.div>
+                                )}
+                              </div>
+
+                              {/* Divider + Doctrine */}
+                              <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: 0.65 }}
+                                className="mt-4 pt-4 border-t border-white/[0.06]"
+                              >
+                                <p className="text-[10px] text-white/25 leading-relaxed">
+                                  Signals are for awareness only. Intros stay neutral.
+                                </p>
+                              </motion.div>
+
+                              {/* View breakdown toggle */}
+                              <motion.button
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: 0.7 }}
+                                onClick={() => setShowSignalsDrawer(!showSignalsDrawer)}
+                                className="mt-3 flex items-center gap-1.5 text-[10px] text-white/30 hover:text-white/50 transition-colors duration-200 group"
+                              >
+                                <motion.div
+                                  animate={{ rotate: showSignalsDrawer ? 90 : 0 }}
+                                  transition={{ duration: 0.2 }}
+                                >
+                                  <ChevronRight size={10} strokeWidth={2} />
+                                </motion.div>
+                                <span>{showSignalsDrawer ? 'Hide breakdown' : 'View breakdown'}</span>
+                              </motion.button>
+                            </div>
+                          </div>
+
+                          {/* Per-company breakdown — Ultra-minimal table */}
+                          <AnimatePresence>
+                            {showSignalsDrawer && (
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+                                className="overflow-hidden"
+                              >
+                                <div className="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] overflow-hidden">
+                                  {/* Header */}
+                                  <div className="px-4 py-2 border-b border-white/[0.04] grid grid-cols-[1fr_60px_72px] gap-2">
+                                    <span className="text-[9px] text-white/25 uppercase tracking-wider">Company</span>
+                                    <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Size</span>
+                                    <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Round</span>
+                                  </div>
+                                  {/* Rows — Only show companies with funding in last 12 months */}
+                                  <div
+                                    className="max-h-[180px] overflow-y-auto"
+                                    style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
+                                  >
+                                    {contactsWithSignals
+                                      .filter((c) => {
+                                        if (!c.signals.latest_funding_round_date) return false;
+                                        const roundDate = new Date(c.signals.latest_funding_round_date);
+                                        const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+                                        return monthsAgo <= 12; // Only last 12 months
+                                      })
+                                      .slice(0, 20)
+                                      .map((c, idx) => {
+                                      // Size (employee count)
+                                      const size = c.signals.estimated_num_employees
+                                        ? String(c.signals.estimated_num_employees)
+                                        : '—';
+
+                                      // Round timing
+                                      const roundDate = new Date(c.signals.latest_funding_round_date!);
+                                      const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+                                      const round = monthsAgo <= 0 ? 'This month' : `${monthsAgo}mo ago`;
+
+                                      return (
+                                        <motion.div
+                                          key={c.domain}
+                                          initial={{ opacity: 0 }}
+                                          animate={{ opacity: 1 }}
+                                          transition={{ delay: idx * 0.02, duration: 0.15 }}
+                                          className="px-4 py-2 grid grid-cols-[1fr_60px_72px] gap-2 hover:bg-white/[0.02] transition-colors"
+                                        >
+                                          <span className="text-[11px] text-white/60 truncate">{c.name}</span>
+                                          <span className="text-[11px] text-white/40 tabular-nums text-right">{size}</span>
+                                          <span className="text-[11px] text-white/40 text-right">{round}</span>
+                                        </motion.div>
+                                      );
+                                    })}
+                                  </div>
+                                  {/* Footer */}
+                                  {contactsWithSignals.length > 20 && (
+                                    <div className="px-4 py-2 border-t border-white/[0.04]">
+                                      <span className="text-[10px] text-white/20">+{contactsWithSignals.length - 20} more</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </motion.div>
+                      );
+                    })()}
 
                     {/* Error surface */}
                     {state.error && (
