@@ -20,14 +20,16 @@ import { matchRecords, MatchingResult, filterByScore } from './matching';
 import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult, Signals } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
-// AI Config type + Antifragile intro generation
-import { AIConfig, generateIntro } from './services/AIService';
+// AI Config type
+import { AIConfig } from './services/AIService';
 
-// Intro Generator — Rich context for DEMAND only (supply uses antifragile path)
+// INTRO RELIABILITY CONTRACT — Stripe-level infrastructure
+// Layer 0: Deterministic base (always runs first, always succeeds)
+// Layer 1: AI enhancement (best effort, non-blocking)
 import {
-  generateDemandIntro as generateDemandIntroRich,
-  buildDemandContext,
-} from './services/IntroGenerator';
+  generateIntroWithAI,
+  IntroRequest,
+} from './services/IntroReliability';
 
 // Sender Adapter (Instantly, Plusvibe, etc.)
 import { resolveSender, buildSenderConfig, SenderAdapter, SenderConfig } from './services/senders';
@@ -538,13 +540,6 @@ interface FlowState {
   // Audit (observability)
   auditData: RunAuditData | null;
   copyValidationFailures: CopyValidationResult[];
-
-  // Intro Source Stats — Phase 1 (transparent fallback)
-  introSourceStats: {
-    aiCount: number;
-    fallbackCount: number;
-    fallbackReasons: Record<string, number>;
-  };
 }
 
 // Pre-signal context entry (operator-written)
@@ -605,7 +600,6 @@ export default function Flow() {
     flowBlock: null,
     auditData: null,
     copyValidationFailures: [],
-    introSourceStats: { aiCount: 0, fallbackCount: 0, fallbackReasons: {} },
   });
 
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -1370,9 +1364,6 @@ export default function Flow() {
     let progress = 0;
     const total = demandWithEmail.length + supplyWithEmail.length;
 
-    // Intro source stats — Phase 1 (transparent fallback)
-    const introStats = { aiCount: 0, fallbackCount: 0, fallbackReasons: {} as Record<string, number> };
-
     // ==========================================================================
     // Calculate role counts per company (for richer signals)
     // "Stripe is hiring" → "Stripe is scaling engineering with 8+ roles"
@@ -1402,52 +1393,33 @@ export default function Flow() {
       // Get role count for this company (for specific signals)
       const roleCount = roleCountByDomain.get(match.demand.domain) || 1;
 
-      try {
-        // CANONICAL: Use per-side presignal (applies to ALL demand contacts)
-        const demandPreSignalContext = settings?.presignalDemand;
+      // ========================================================================
+      // INTRO RELIABILITY CONTRACT — Layer 0 first, Layer 1 best-effort
+      // ========================================================================
+      const demandPreSignalContext = settings?.presignalDemand;
 
-        // Build rich context from ALL available data
-        // Pass: firstName, enriched title (e.g., "VP Engineering"), role count
-        // COS: Pass connector overlap statement for relational copy
-        const ctx = buildDemandContext(
-          match.demand,
+      // Build IntroRequest for reliability contract
+      const introRequest: IntroRequest = {
+        side: 'demand',
+        mode: state.connectorMode || 'b2b_general',
+        ctx: {
           firstName,
-          enriched.title || undefined,  // Enriched title from Apollo
-          roleCount,
-          demandPreSignalContext,  // CANONICAL: Same presignal for ALL demand
-          state.connectorMode || undefined,  // CANONICAL: Mode for language routing (biotech vs recruiting)
-          undefined,  // hasWellfoundData
-          match.narrative?.overlap,  // COS: Connector Overlap Statement
-          match.narrative?.supplyRole  // COS: Supply role for CTA
-        );
-        console.log(`[Flow] Generating demand intro for ${firstName} at ${match.demand.company}...`);
-        console.log(`[Flow] Using per-side presignalDemand:`, demandPreSignalContext || '(none)');
-        console.log(`[Flow] Context:`, {
-          signal: ctx.signal,
-          contactTitle: ctx.contactTitle,
-          roleCount: ctx.roleCount,
-          hasDescription: !!ctx.companyDescription,
-          hasFunding: !!ctx.companyFunding,
-          industry: ctx.industry,
-          preSignalContext: ctx.preSignalContext || '(none)',
-          connectorMode: ctx.connectorMode || '(not set)',
-        });
+          company: match.demand.company,
+          industry: match.demand.industry,
+          contactTitle: enriched.title || undefined,
+          preSignalContext: demandPreSignalContext,
+          connectorOverlap: match.narrative?.overlap,
+          supplyRole: match.narrative?.supplyRole,
+        },
+      };
 
-        // Generate with validation (retries up to 3x if validation fails)
-        const result = await generateDemandIntroRich(aiConfig, ctx);
-        demandIntros.set(match.demand.domain, result.intro);
-        console.log(`[Flow] Demand intro (validated=${result.validated}, attempts=${result.attempts}): "${result.intro}"`);
+      console.log(`[Flow] Generating demand intro for ${firstName} at ${match.demand.company}...`);
+      console.log(`[Flow] Using per-side presignalDemand:`, demandPreSignalContext || '(none)');
 
-      } catch (err) {
-        console.error('[Flow] Demand intro failed:', match.demand.domain, err);
-        // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
-        demandIntros.set(match.demand.domain, generateDemandIntro({
-          ...match.demand,
-          firstName,
-          connectorMode: state.connectorMode || undefined,
-          preSignalContext: settings?.presignalDemand,
-        }));
-      }
+      // RELIABILITY CONTRACT: Layer 0 runs FIRST, AI enhancement best-effort
+      const result = await generateIntroWithAI(introRequest, aiConfig, user?.id || 'guest');
+      demandIntros.set(match.demand.domain, result.intro);
+      console.log(`[Flow] Demand intro generated: "${result.intro}"`);
 
       progress++;
       setState(prev => ({
@@ -1461,8 +1433,7 @@ export default function Flow() {
     }
 
     // ==========================================================================
-    // GENERATE SUPPLY INTROS — Antifragile path (AIService.generateIntro)
-    // Signal-only, no enrichment, deterministic fallback
+    // GENERATE SUPPLY INTROS — Reliability Contract (Layer 0 + Layer 1)
     // ==========================================================================
     for (const agg of matching.supplyAggregates) {
       if (abortRef.current) break;
@@ -1478,65 +1449,38 @@ export default function Flow() {
       }
 
       const exampleCompany = agg.bestMatch.demand.company;  // ONE example only
-      const allSignals = agg.matches.map(m => m.demand.signal || '');
-      // MODE-AWARE: Pass connector mode for appropriate language
-      const commonSignal = detectCommonSignal(allSignals, state.connectorMode);
 
-      // SIGNAL CONTRACT: Sanitize before intro generation
-      const sanitizedSignal = sanitizeSignal(commonSignal);
-
-      // Get decision maker name (not title - antifragile uses name only)
+      // Get decision maker name
       const demandEnriched = enrichedDemand.get(agg.bestMatch.demand.domain);
       const contactName = demandEnriched?.firstName || agg.bestMatch.demand.firstName || null;
 
       // CANONICAL: Use per-side presignal (applies to ALL supply contacts)
       const supplyPreSignalContext = settings?.presignalSupply;
 
-      console.log(`[Flow] Generating supply intro for ${firstName} via antifragile path...`);
-      console.log(`[Flow] Signal: "${commonSignal}" → sanitized: "${sanitizedSignal}"`);
+      console.log(`[Flow] Generating supply intro for ${firstName}...`);
       console.log(`[Flow] Using per-side presignalSupply:`, supplyPreSignalContext || '(none)');
 
-      // ANTIFRAGILE PATH: AIService.generateIntro (signal-only, no enrichment)
-      // FIX 1 + FIX 3: Pass connector mode and job signal for mode-appropriate language
-      // PHASE-1 FIX: Pass match narrative "why" for neutral relevance explanation
-      // COS: Pass connector overlap statement for relational copy
-      const introResult = await generateIntro(
-        {
-          type: 'supply',
-          signalDetail: sanitizedSignal,
-          context: {
-            firstName,
-            company: exampleCompany,
-            contactName: contactName || undefined,
-            // Operator-written pre-signal context (normalized lookup)
-            preSignalContext: supplyPreSignalContext,
-            // PHASE-1 FIX: Neutral "why this match" reason
-            matchReason: agg.bestMatch.narrative?.why,
-            // COS (Connector Overlap Statement) — relational copy
-            connectorOverlap: agg.bestMatch.narrative?.overlap,
-            supplyRole: agg.bestMatch.narrative?.supplyRole,
-          },
-          // FIX 1: Pass connector mode
-          connectorMode: state.connectorMode,
-          // FIX 3: Supply side doesn't use job signals (we're offering leads, not hiring)
-          jobSignal: undefined,
+      // ========================================================================
+      // INTRO RELIABILITY CONTRACT — Layer 0 first, Layer 1 best-effort
+      // ========================================================================
+      const introRequest: IntroRequest = {
+        side: 'supply',
+        mode: state.connectorMode || 'b2b_general',
+        ctx: {
+          firstName,
+          company: exampleCompany,
+          contactName: contactName || undefined,
+          preSignalContext: supplyPreSignalContext,
+          matchReason: agg.bestMatch.narrative?.why,
+          connectorOverlap: agg.bestMatch.narrative?.overlap,
+          supplyRole: agg.bestMatch.narrative?.supplyRole,
         },
-        aiConfig
-      );
+      };
 
-      supplyIntros.set(agg.supply.domain, introResult.intro);
-      console.log(`[Flow] Supply intro (${introResult.source}${introResult.fallbackReason ? ':' + introResult.fallbackReason : ''}): "${introResult.intro}"`);
-
-      // Track intro source stats — Phase 1 (transparent fallback)
-      if (introResult.source === 'ai') {
-        introStats.aiCount++;
-      } else {
-        introStats.fallbackCount++;
-        if (introResult.fallbackReason) {
-          introStats.fallbackReasons[introResult.fallbackReason] =
-            (introStats.fallbackReasons[introResult.fallbackReason] || 0) + 1;
-        }
-      }
+      // RELIABILITY CONTRACT: Layer 0 runs FIRST, AI enhancement best-effort
+      const result = await generateIntroWithAI(introRequest, aiConfig, user?.id || 'guest');
+      supplyIntros.set(agg.supply.domain, result.intro);
+      console.log(`[Flow] Supply intro generated: "${result.intro}"`);
 
       progress++;
       setState(prev => ({
@@ -1553,14 +1497,12 @@ export default function Flow() {
     console.log(`[Flow] Intro generation complete:`);
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
-    console.log(`  - Intro sources: ai=${introStats.aiCount}, fallback=${introStats.fallbackCount}`, introStats.fallbackReasons);
 
     // Save intros to state (step transition handled by caller)
     setState(prev => ({
       ...prev,
       demandIntros,
       supplyIntros,
-      introSourceStats: introStats,
     }));
   };
 
@@ -1570,6 +1512,10 @@ export default function Flow() {
 
   const openExportReceipt = useCallback(() => {
     if (!state.matchingResult) return;
+
+    // Reset modal state first to ensure clean re-open
+    setShowExportReceipt(false);
+    setExportReceiptData(null);
 
     // Build demand receipt
     const demandInput: DemandExportInput = {
@@ -1592,8 +1538,11 @@ export default function Flow() {
       supply: { matched: supplyReceipt.totalMatched, exported: supplyReceipt.totalExported },
     });
 
-    setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
-    setShowExportReceipt(true);
+    // Use setTimeout to ensure state reset is processed before re-opening
+    setTimeout(() => {
+      setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
+      setShowExportReceipt(true);
+    }, 0);
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
@@ -1637,30 +1586,45 @@ export default function Flow() {
       supplyIntros: state.supplyIntros,
     };
 
-    // Build demand CSV
-    const demandHeaders = [
-      'send_type', 'email', 'first_name', 'last_name', 'company_name',
-      'website', 'personalization', 'matched_supply_company', 'match_score', 'match_reasons'
+    // UNIFIED CSV (Option A) — Single file with side column
+    // Headers: side, email, first_name, last_name, company_name, website, personalization,
+    //          matched_supply_company, match_score, match_reasons (demand-specific),
+    //          matched_demand_count, avg_match_score (supply-specific)
+    const headers = [
+      'side', 'email', 'first_name', 'last_name', 'company_name',
+      'website', 'personalization',
+      'matched_supply_company', 'match_score', 'match_reasons',
+      'matched_demand_count', 'avg_match_score'
     ];
-    const demandRows = buildDemandExportRows(data);
-    if (demandRows.length > 0) {
-      const demandCSV = buildCSV(demandHeaders, demandRows);
-      downloadCSV(`demand_export_${Date.now()}.csv`, demandCSV);
-    }
 
-    // Build supply CSV
-    const supplyHeaders = [
-      'send_type', 'email', 'first_name', 'last_name', 'company_name',
-      'website', 'personalization', 'matched_demand_count', 'avg_match_score'
-    ];
-    const supplyRows = buildSupplyExportRows(data);
-    if (supplyRows.length > 0) {
-      const supplyCSV = buildCSV(supplyHeaders, supplyRows);
-      downloadCSV(`supply_export_${Date.now()}.csv`, supplyCSV);
+    // Build demand rows with lowercase side, add empty supply-specific columns
+    const rawDemandRows = buildDemandExportRows(data);
+    const demandRows = rawDemandRows.map(row => [
+      'demand',           // side (lowercase per spec)
+      row[1], row[2], row[3], row[4], row[5], row[6],  // email through personalization
+      row[7], row[8], row[9],  // matched_supply_company, match_score, match_reasons
+      '', ''  // matched_demand_count, avg_match_score (empty for demand)
+    ]);
+
+    // Build supply rows with lowercase side, add empty demand-specific columns
+    const rawSupplyRows = buildSupplyExportRows(data);
+    const supplyRows = rawSupplyRows.map(row => [
+      'supply',           // side (lowercase per spec)
+      row[1], row[2], row[3], row[4], row[5], row[6],  // email through personalization
+      '', '', '',  // matched_supply_company, match_score, match_reasons (empty for supply)
+      row[7], row[8]  // matched_demand_count, avg_match_score
+    ]);
+
+    // Combine all rows into single CSV
+    const allRows = [...demandRows, ...supplyRows];
+
+    if (allRows.length > 0) {
+      const csv = buildCSV(headers, allRows);
+      downloadCSV(`export_${Date.now()}.csv`, csv);
     }
 
     // Log export count
-    console.log(`[CSV Export] Demand: ${demandRows.length} rows, Supply: ${supplyRows.length} rows`);
+    console.log(`[CSV Export] Demand: ${demandRows.length}, Supply: ${supplyRows.length}, Total: ${allRows.length}`);
 
     // Close receipt modal after download
     setShowExportReceipt(false);
@@ -1904,7 +1868,6 @@ export default function Flow() {
       flowBlock: null,
       auditData: null,
       copyValidationFailures: [],
-      introSourceStats: { aiCount: 0, fallbackCount: 0, fallbackReasons: {} },
     });
   };
 
@@ -2222,6 +2185,309 @@ export default function Flow() {
                   ? 'Routing contacts to Flow...'
                   : 'signals loaded, matching...'}
               </p>
+
+              {/* Company Signals — Moved from READY step to MATCHING step */}
+              {/* DOCTRINE: Signals are for awareness only. Never affect copy. */}
+              {(() => {
+                // Derive signal status (disabled | unavailable | available)
+                const { status: signalStatus, coverage } = deriveSignalStatus(
+                  settings?.fetchSignals || false,
+                  state.enrichedDemand,
+                  state.enrichedSupply
+                );
+
+                // Log once per status derivation (not per-domain)
+                if (signalStatus !== 'disabled' && coverage.total > 0) {
+                  console.log(`[Signals] status=${signalStatus} coverage=${coverage.available}/${coverage.total}`);
+                }
+
+                // STATE 1: Signals disabled — show explanation + CTA
+                if (signalStatus === 'disabled') {
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.35, duration: 0.4 }}
+                      className="mt-8 max-w-[280px] mx-auto"
+                    >
+                      <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                        <div className="relative p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                            <span className="text-[11px] text-white/30 font-medium tracking-wide">Company Signals</span>
+                          </div>
+                          <p className="text-[13px] text-white/50 leading-relaxed mb-1">
+                            Signals are turned off
+                          </p>
+                          <p className="text-[11px] text-white/30 leading-relaxed mb-4">
+                            Enable "Fetch company signals" in Settings to pull funding & size data from Apollo.
+                          </p>
+                          <p className="text-[10px] text-white/20 italic mb-4">
+                            Optional · uses Apollo credits · does not affect intros
+                          </p>
+                          <button
+                            onClick={() => navigate('/settings')}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-medium text-white/70 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200"
+                          >
+                            Enable signals
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                }
+
+                // STATE 2: Signals enabled but unavailable — show explicit empty state
+                if (signalStatus === 'unavailable') {
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.35, duration: 0.4 }}
+                      className="mt-8 max-w-[280px] mx-auto"
+                    >
+                      <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                        <div className="relative p-5">
+                          <div className="flex items-center gap-2 mb-3">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-400/40" />
+                            <span className="text-[11px] text-white/30 font-medium tracking-wide">Company Signals</span>
+                          </div>
+                          <p className="text-[13px] text-white/50 leading-relaxed mb-1">
+                            No company signals available
+                          </p>
+                          <p className="text-[11px] text-white/30 leading-relaxed">
+                            Apollo didn't return funding or employee data for these companies.
+                            This is common for early-stage or non-indexed businesses.
+                          </p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                }
+
+                // STATE 3: Signals available — show full card with breakdown
+                // Compute aggregate stats for display
+                const demandMatches = state.matchingResult?.demandMatches || [];
+                const supplyAggregates = state.matchingResult?.supplyAggregates || [];
+                const totalReady = demandMatches.length + supplyAggregates.length;
+
+                const signalStats = {
+                  total: 0,
+                  funded: 0,
+                  recentActivity: 0,
+                  growing: 0,
+                };
+
+                const contactsWithSignals: Array<{ domain: string; name: string; signals: Signals }> = [];
+                const now = new Date();
+                const twelveMonthsAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+
+                for (const [domain, enriched] of state.enrichedDemand.entries()) {
+                  if (enriched.signals) {
+                    signalStats.total++;
+                    const s = enriched.signals;
+                    if (s.funding_total && s.funding_total > 0) signalStats.funded++;
+                    if (s.latest_funding_round_date) {
+                      const roundDate = new Date(s.latest_funding_round_date);
+                      if (roundDate > twelveMonthsAgo) signalStats.recentActivity++;
+                    }
+                    if (s.estimated_num_employees && s.estimated_num_employees >= 50) signalStats.growing++;
+
+                    const match = demandMatches.find(m => m.demand.domain === domain);
+                    contactsWithSignals.push({
+                      domain,
+                      name: match?.demand.companyName || domain,
+                      signals: s,
+                    });
+                  }
+                }
+
+                for (const [domain, enriched] of state.enrichedSupply.entries()) {
+                  if (enriched.signals) {
+                    signalStats.total++;
+                    const s = enriched.signals;
+                    if (s.funding_total && s.funding_total > 0) signalStats.funded++;
+                    if (s.latest_funding_round_date) {
+                      const roundDate = new Date(s.latest_funding_round_date);
+                      if (roundDate > twelveMonthsAgo) signalStats.recentActivity++;
+                    }
+                    if (s.estimated_num_employees && s.estimated_num_employees >= 50) signalStats.growing++;
+
+                    const agg = supplyAggregates.find(a => a.supply.domain === domain);
+                    contactsWithSignals.push({
+                      domain,
+                      name: agg?.supply.companyName || domain,
+                      signals: s,
+                    });
+                  }
+                }
+
+                const coverageRatio = signalStats.total / Math.max(totalReady, 1);
+                const healthLabel = coverageRatio >= 0.5 ? 'Strong' : coverageRatio >= 0.25 ? 'Good' : 'Fair';
+
+                return (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.35, duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    className="mt-8 max-w-[280px] mx-auto"
+                  >
+                    {/* Dataset Health Card — Linear-style */}
+                    <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.01]">
+                      <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/[0.03] to-transparent pointer-events-none" />
+
+                      <div className="relative p-5">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" />
+                            <span className="text-[11px] text-white/40 font-medium tracking-wide">Dataset Health</span>
+                          </div>
+                          <motion.span
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: 0.5 }}
+                            className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400/90 border border-emerald-500/20"
+                          >
+                            {healthLabel}
+                          </motion.span>
+                        </div>
+
+                        <div className="space-y-2.5">
+                          <motion.div
+                            initial={{ opacity: 0, x: -8 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.45 }}
+                            className="flex justify-between items-center"
+                          >
+                            <span className="text-[12px] text-white/50">Companies enriched</span>
+                            <span className="text-[13px] text-white/80 font-medium tabular-nums">{signalStats.total}</span>
+                          </motion.div>
+                          {signalStats.funded > 0 && (
+                            <motion.div
+                              initial={{ opacity: 0, x: -8 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 0.5 }}
+                              className="flex justify-between items-center"
+                            >
+                              <span className="text-[12px] text-white/50">Well-funded</span>
+                              <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.funded}</span>
+                            </motion.div>
+                          )}
+                          {signalStats.recentActivity > 0 && (
+                            <motion.div
+                              initial={{ opacity: 0, x: -8 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 0.55 }}
+                              className="flex justify-between items-center"
+                            >
+                              <span className="text-[12px] text-white/50">Active in last 12mo</span>
+                              <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.recentActivity}</span>
+                            </motion.div>
+                          )}
+                          {signalStats.growing > 0 && (
+                            <motion.div
+                              initial={{ opacity: 0, x: -8 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: 0.6 }}
+                              className="flex justify-between items-center"
+                            >
+                              <span className="text-[12px] text-white/50">Growing teams</span>
+                              <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.growing}</span>
+                            </motion.div>
+                          )}
+                        </div>
+
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.65 }}
+                          className="mt-4 pt-4 border-t border-white/[0.06]"
+                        >
+                          <p className="text-[10px] text-white/25 leading-relaxed">
+                            Signals are for awareness only. Intros stay neutral.
+                          </p>
+                        </motion.div>
+
+                        <motion.button
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.7 }}
+                          onClick={() => setShowSignalsDrawer(!showSignalsDrawer)}
+                          className="mt-3 flex items-center gap-1.5 text-[10px] text-white/30 hover:text-white/50 transition-colors duration-200 group"
+                        >
+                          <motion.div
+                            animate={{ rotate: showSignalsDrawer ? 90 : 0 }}
+                            transition={{ duration: 0.2 }}
+                          >
+                            <ChevronRight size={10} strokeWidth={2} />
+                          </motion.div>
+                          <span>{showSignalsDrawer ? 'Hide breakdown' : 'View breakdown'}</span>
+                        </motion.button>
+                      </div>
+                    </div>
+
+                    <AnimatePresence>
+                      {showSignalsDrawer && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] overflow-hidden">
+                            <div className="px-4 py-2 border-b border-white/[0.04] grid grid-cols-[1fr_60px_72px] gap-2">
+                              <span className="text-[9px] text-white/25 uppercase tracking-wider">Company</span>
+                              <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Size</span>
+                              <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Round</span>
+                            </div>
+                            <div
+                              className="max-h-[180px] overflow-y-auto"
+                              style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
+                            >
+                              {contactsWithSignals
+                                .filter((c) => {
+                                  if (!c.signals.latest_funding_round_date) return false;
+                                  const roundDate = new Date(c.signals.latest_funding_round_date);
+                                  const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+                                  return monthsAgo <= 12;
+                                })
+                                .slice(0, 20)
+                                .map((c, idx) => {
+                                  const size = c.signals.estimated_num_employees
+                                    ? String(c.signals.estimated_num_employees)
+                                    : '—';
+                                  const roundDate = new Date(c.signals.latest_funding_round_date!);
+                                  const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+                                  const round = monthsAgo <= 0 ? 'This month' : `${monthsAgo}mo ago`;
+
+                                  return (
+                                    <motion.div
+                                      key={c.domain}
+                                      initial={{ opacity: 0 }}
+                                      animate={{ opacity: 1 }}
+                                      transition={{ delay: idx * 0.02, duration: 0.15 }}
+                                      className="px-4 py-2 grid grid-cols-[1fr_60px_72px] gap-2 hover:bg-white/[0.02] transition-colors"
+                                    >
+                                      <span className="text-[11px] text-white/60 truncate">{c.name}</span>
+                                      <span className="text-[11px] text-white/40 tabular-nums text-right">{size}</span>
+                                      <span className="text-[11px] text-white/40 text-right">{round}</span>
+                                    </motion.div>
+                                  );
+                                })}
+                            </div>
+                            {contactsWithSignals.length > 20 && (
+                              <div className="px-4 py-2 border-t border-white/[0.04]">
+                                <span className="text-[10px] text-white/20">+{contactsWithSignals.length - 20} more</span>
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                );
+              })()}
             </motion.div>
           )}
 
@@ -2478,305 +2744,6 @@ export default function Flow() {
                       <p className="text-[13px] text-white/40 mt-1">Ready to Route</p>
                     </motion.div>
 
-                    {/* Dataset Health — Explicit 3-state signals UX */}
-                    {/* DOCTRINE: Signals are for awareness only. Never affect copy. */}
-                    {(() => {
-                      // Derive signal status (disabled | unavailable | available)
-                      const { status: signalStatus, coverage } = deriveSignalStatus(
-                        settings?.fetchSignals || false,
-                        state.enrichedDemand,
-                        state.enrichedSupply
-                      );
-
-                      // Log once per status derivation (not per-domain)
-                      if (signalStatus !== 'disabled' && coverage.total > 0) {
-                        console.log(`[Signals] status=${signalStatus} coverage=${coverage.available}/${coverage.total}`);
-                      }
-
-                      // STATE 1: Signals disabled — show explanation + CTA
-                      if (signalStatus === 'disabled') {
-                        return (
-                          <motion.div
-                            initial={{ opacity: 0, y: 8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.35, duration: 0.4 }}
-                            className="mb-8 max-w-[280px] mx-auto"
-                          >
-                            <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-                              <div className="relative p-5">
-                                <div className="flex items-center gap-2 mb-3">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
-                                  <span className="text-[11px] text-white/30 font-medium tracking-wide">Company Signals</span>
-                                </div>
-                                <p className="text-[13px] text-white/50 leading-relaxed mb-1">
-                                  Signals are turned off
-                                </p>
-                                <p className="text-[11px] text-white/30 leading-relaxed mb-4">
-                                  Enable "Fetch company signals" in Settings to pull funding & size data from Apollo.
-                                </p>
-                                <p className="text-[10px] text-white/20 italic mb-4">
-                                  Optional · uses Apollo credits · does not affect intros
-                                </p>
-                                <button
-                                  onClick={() => navigate('/settings')}
-                                  className="px-3 py-1.5 rounded-lg text-[11px] font-medium text-white/70 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200"
-                                >
-                                  Enable signals
-                                </button>
-                              </div>
-                            </div>
-                          </motion.div>
-                        );
-                      }
-
-                      // STATE 2: Signals enabled but unavailable — show explicit empty state
-                      if (signalStatus === 'unavailable') {
-                        return (
-                          <motion.div
-                            initial={{ opacity: 0, y: 8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.35, duration: 0.4 }}
-                            className="mb-8 max-w-[280px] mx-auto"
-                          >
-                            <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
-                              <div className="relative p-5">
-                                <div className="flex items-center gap-2 mb-3">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400/40" />
-                                  <span className="text-[11px] text-white/30 font-medium tracking-wide">Company Signals</span>
-                                </div>
-                                <p className="text-[13px] text-white/50 leading-relaxed mb-1">
-                                  No company signals available
-                                </p>
-                                <p className="text-[11px] text-white/30 leading-relaxed">
-                                  Apollo didn't return funding or employee data for these companies.
-                                  This is common for early-stage or non-indexed businesses.
-                                </p>
-                              </div>
-                            </div>
-                          </motion.div>
-                        );
-                      }
-
-                      // STATE 3: Signals available — show full card with breakdown
-                      // Compute aggregate stats for display
-                      const signalStats = {
-                        total: 0,
-                        funded: 0,
-                        recentActivity: 0,
-                        growing: 0,
-                      };
-
-                      const contactsWithSignals: Array<{ domain: string; name: string; signals: Signals }> = [];
-                      const now = new Date();
-                      const twelveMonthsAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-
-                      for (const [domain, enriched] of state.enrichedDemand.entries()) {
-                        if (enriched.signals) {
-                          signalStats.total++;
-                          const s = enriched.signals;
-                          if (s.funding_total && s.funding_total > 0) signalStats.funded++;
-                          if (s.latest_funding_round_date) {
-                            const roundDate = new Date(s.latest_funding_round_date);
-                            if (roundDate > twelveMonthsAgo) signalStats.recentActivity++;
-                          }
-                          if (s.estimated_num_employees && s.estimated_num_employees >= 50) signalStats.growing++;
-
-                          const match = demandMatches.find(m => m.demand.domain === domain);
-                          contactsWithSignals.push({
-                            domain,
-                            name: match?.demand.companyName || domain,
-                            signals: s,
-                          });
-                        }
-                      }
-
-                      for (const [domain, enriched] of state.enrichedSupply.entries()) {
-                        if (enriched.signals) {
-                          signalStats.total++;
-                          const s = enriched.signals;
-                          if (s.funding_total && s.funding_total > 0) signalStats.funded++;
-                          if (s.latest_funding_round_date) {
-                            const roundDate = new Date(s.latest_funding_round_date);
-                            if (roundDate > twelveMonthsAgo) signalStats.recentActivity++;
-                          }
-                          if (s.estimated_num_employees && s.estimated_num_employees >= 50) signalStats.growing++;
-
-                          const agg = supplyAggregates.find(a => a.supply.domain === domain);
-                          contactsWithSignals.push({
-                            domain,
-                            name: agg?.supply.companyName || domain,
-                            signals: s,
-                          });
-                        }
-                      }
-
-                      const coverageRatio = signalStats.total / Math.max(totalReady, 1);
-                      const healthLabel = coverageRatio >= 0.5 ? 'Strong' : coverageRatio >= 0.25 ? 'Good' : 'Fair';
-
-                      return (
-                        <motion.div
-                          initial={{ opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.35, duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
-                          className="mb-8 max-w-[280px] mx-auto"
-                        >
-                          {/* Dataset Health Card — Linear-style */}
-                          <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.01]">
-                            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/[0.03] to-transparent pointer-events-none" />
-
-                            <div className="relative p-5">
-                              <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" />
-                                  <span className="text-[11px] text-white/40 font-medium tracking-wide">Dataset Health</span>
-                                </div>
-                                <motion.span
-                                  initial={{ opacity: 0, scale: 0.9 }}
-                                  animate={{ opacity: 1, scale: 1 }}
-                                  transition={{ delay: 0.5 }}
-                                  className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400/90 border border-emerald-500/20"
-                                >
-                                  {healthLabel}
-                                </motion.span>
-                              </div>
-
-                              <div className="space-y-2.5">
-                                <motion.div
-                                  initial={{ opacity: 0, x: -8 }}
-                                  animate={{ opacity: 1, x: 0 }}
-                                  transition={{ delay: 0.45 }}
-                                  className="flex justify-between items-center"
-                                >
-                                  <span className="text-[12px] text-white/50">Companies enriched</span>
-                                  <span className="text-[13px] text-white/80 font-medium tabular-nums">{signalStats.total}</span>
-                                </motion.div>
-                                {signalStats.funded > 0 && (
-                                  <motion.div
-                                    initial={{ opacity: 0, x: -8 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: 0.5 }}
-                                    className="flex justify-between items-center"
-                                  >
-                                    <span className="text-[12px] text-white/50">Well-funded</span>
-                                    <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.funded}</span>
-                                  </motion.div>
-                                )}
-                                {signalStats.recentActivity > 0 && (
-                                  <motion.div
-                                    initial={{ opacity: 0, x: -8 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: 0.55 }}
-                                    className="flex justify-between items-center"
-                                  >
-                                    <span className="text-[12px] text-white/50">Active in last 12mo</span>
-                                    <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.recentActivity}</span>
-                                  </motion.div>
-                                )}
-                                {signalStats.growing > 0 && (
-                                  <motion.div
-                                    initial={{ opacity: 0, x: -8 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: 0.6 }}
-                                    className="flex justify-between items-center"
-                                  >
-                                    <span className="text-[12px] text-white/50">Growing teams</span>
-                                    <span className="text-[13px] text-emerald-400/70 font-medium tabular-nums">{signalStats.growing}</span>
-                                  </motion.div>
-                                )}
-                              </div>
-
-                              <motion.div
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{ delay: 0.65 }}
-                                className="mt-4 pt-4 border-t border-white/[0.06]"
-                              >
-                                <p className="text-[10px] text-white/25 leading-relaxed">
-                                  Signals are for awareness only. Intros stay neutral.
-                                </p>
-                              </motion.div>
-
-                              <motion.button
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{ delay: 0.7 }}
-                                onClick={() => setShowSignalsDrawer(!showSignalsDrawer)}
-                                className="mt-3 flex items-center gap-1.5 text-[10px] text-white/30 hover:text-white/50 transition-colors duration-200 group"
-                              >
-                                <motion.div
-                                  animate={{ rotate: showSignalsDrawer ? 90 : 0 }}
-                                  transition={{ duration: 0.2 }}
-                                >
-                                  <ChevronRight size={10} strokeWidth={2} />
-                                </motion.div>
-                                <span>{showSignalsDrawer ? 'Hide breakdown' : 'View breakdown'}</span>
-                              </motion.button>
-                            </div>
-                          </div>
-
-                          <AnimatePresence>
-                            {showSignalsDrawer && (
-                              <motion.div
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
-                                className="overflow-hidden"
-                              >
-                                <div className="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] overflow-hidden">
-                                  <div className="px-4 py-2 border-b border-white/[0.04] grid grid-cols-[1fr_60px_72px] gap-2">
-                                    <span className="text-[9px] text-white/25 uppercase tracking-wider">Company</span>
-                                    <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Size</span>
-                                    <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Round</span>
-                                  </div>
-                                  <div
-                                    className="max-h-[180px] overflow-y-auto"
-                                    style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
-                                  >
-                                    {contactsWithSignals
-                                      .filter((c) => {
-                                        if (!c.signals.latest_funding_round_date) return false;
-                                        const roundDate = new Date(c.signals.latest_funding_round_date);
-                                        const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
-                                        return monthsAgo <= 12;
-                                      })
-                                      .slice(0, 20)
-                                      .map((c, idx) => {
-                                        const size = c.signals.estimated_num_employees
-                                          ? String(c.signals.estimated_num_employees)
-                                          : '—';
-                                        const roundDate = new Date(c.signals.latest_funding_round_date!);
-                                        const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
-                                        const round = monthsAgo <= 0 ? 'This month' : `${monthsAgo}mo ago`;
-
-                                        return (
-                                          <motion.div
-                                            key={c.domain}
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            transition={{ delay: idx * 0.02, duration: 0.15 }}
-                                            className="px-4 py-2 grid grid-cols-[1fr_60px_72px] gap-2 hover:bg-white/[0.02] transition-colors"
-                                          >
-                                            <span className="text-[11px] text-white/60 truncate">{c.name}</span>
-                                            <span className="text-[11px] text-white/40 tabular-nums text-right">{size}</span>
-                                            <span className="text-[11px] text-white/40 text-right">{round}</span>
-                                          </motion.div>
-                                        );
-                                      })}
-                                  </div>
-                                  {contactsWithSignals.length > 20 && (
-                                    <div className="px-4 py-2 border-t border-white/[0.04]">
-                                      <span className="text-[10px] text-white/20">+{contactsWithSignals.length - 20} more</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </motion.div>
-                      );
-                    })()}
-
                     {/* Error surface */}
                     {state.error && (
                       <motion.p
@@ -2787,124 +2754,6 @@ export default function Flow() {
                         {safeRender(state.error)}
                       </motion.p>
                     )}
-
-                    {/* Route Context — Single card, route-level */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.4 }}
-                      className="w-full max-w-sm mb-10"
-                    >
-                      {(() => {
-                        const currentContext = settings?.presignalDemand || settings?.presignalSupply || '';
-
-                        // Not editing, no context
-                        if (!isEditingContext && !currentContext) {
-                          return (
-                            <button
-                              onClick={() => startEditPresignal('demand')}
-                              className="w-full group"
-                            >
-                              <div className="p-4 rounded-xl border border-dashed border-white/[0.08] hover:border-white/[0.15] transition-all duration-300">
-                                <p className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors text-center">
-                                  Route Context <span className="text-white/20">(Optional)</span>
-                                </p>
-                                <p className="text-[10px] text-white/20 mt-1 text-center">
-                                  Prior conversations or observations
-                                </p>
-                              </div>
-                            </button>
-                          );
-                        }
-
-                        // Editing — In READY step, save triggers regeneration
-                        if (isEditingContext) {
-                          return (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.98 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08]"
-                            >
-                              <p className="text-[11px] text-white/40 mb-3 text-center">Route Context</p>
-                              <textarea
-                                value={presignalText}
-                                onChange={(e) => setPresignalText(e.target.value)}
-                                placeholder="e.g., I've been speaking with a few founders who recently raised..."
-                                className="w-full h-20 bg-transparent text-[13px] text-white/70 resize-none outline-none placeholder:text-white/20 leading-relaxed"
-                                autoFocus
-                              />
-                              <div className="flex justify-end gap-2 mt-3">
-                                <button
-                                  onClick={cancelEditPresignal}
-                                  className="px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  onClick={async () => {
-                                    // Save to both sides (route-level context)
-                                    await savePresignal('demand');
-                                    if (presignalText.trim()) {
-                                      setSettings(prev => prev ? { ...prev, presignalSupply: presignalText.trim() } : prev);
-                                      if (user?.id) {
-                                        await supabase.from('operator_settings').update({ presignal_supply: presignalText.trim() }).eq('user_id', user.id);
-                                      }
-                                    }
-                                    // FIX: Regenerate intros with new context
-                                    await generateIntrosWithPresignal();
-                                  }}
-                                  disabled={savingPresignal}
-                                  className="px-4 py-1.5 text-[11px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-all disabled:opacity-50"
-                                >
-                                  {savingPresignal ? 'Saving...' : 'Save & Regenerate'}
-                                </button>
-                              </div>
-                            </motion.div>
-                          );
-                        }
-
-                        // Has context, show it
-                        return (
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-                            <div className="flex items-center justify-between mb-3">
-                              <span className="text-[10px] text-white/30 uppercase tracking-wider">Route Context</span>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => startEditPresignal('demand')}
-                                  className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
-                                >
-                                  Edit
-                                </button>
-                                <span className="text-white/10">·</span>
-                                <button
-                                  onClick={async () => {
-                                    // Clear both sides
-                                    setSettings(prev => prev ? { ...prev, presignalDemand: '', presignalSupply: '' } : prev);
-                                    if (user?.id) {
-                                      await supabase.from('operator_settings').update({ presignal_demand: '', presignal_supply: '' }).eq('user_id', user.id);
-                                    } else {
-                                      const stored = localStorage.getItem('guest_settings');
-                                      if (stored) {
-                                        const parsed = JSON.parse(stored);
-                                        parsed.presignalDemand = '';
-                                        parsed.presignalSupply = '';
-                                        localStorage.setItem('guest_settings', JSON.stringify(parsed));
-                                      }
-                                    }
-                                    // FIX: Regenerate intros without context
-                                    await generateIntrosWithPresignal();
-                                  }}
-                                  className="text-[10px] text-white/30 hover:text-red-400/70 transition-colors"
-                                >
-                                  Clear & Regenerate
-                                </button>
-                              </div>
-                            </div>
-                            <p className="text-[13px] text-white/60 leading-relaxed text-center">{safeRender(currentContext)}</p>
-                          </div>
-                        );
-                      })()}
-                    </motion.div>
                   </div>
                 );
               })()}
@@ -2927,8 +2776,6 @@ export default function Flow() {
                       sentCount: state.sentDemand + state.sentSupply,
                       skippedReasons: [],
                       runStartedAt: new Date(),
-                      // Intro Sources — Phase 1 (transparent fallback)
-                      introSources: state.introSourceStats,
                     }}
                   />
                 </div>
