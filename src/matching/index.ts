@@ -284,9 +284,54 @@ function buildNarrative(
   };
 }
 
+// =============================================================================
+// COS: MODE-AWARE KEYWORD PACKS (per user.txt directive)
+// Each mode has its own small, hand-curated keyword pack (non-AI)
+// Never reuse wealth keywords for other modes
+// =============================================================================
+
+const MODE_KEYWORD_PACKS: Record<string, { keywords: string[]; default: string }> = {
+  wealth_management: {
+    keywords: ['wealth', 'financial planning', 'advisory', 'cfp', 'fiduciary', 'ria', 'private client', 'family office', 'estate', 'trust'],
+    default: 'financial / wealth advisory firms',
+  },
+  biotech_licensing: {
+    keywords: ['biotech', 'pharma', 'clinical', 'therapeutic', 'life science', 'drug', 'pipeline', 'fda', 'trial', 'molecule'],
+    default: 'biotech or pharma teams',
+  },
+  recruiting: {
+    keywords: ['hiring', 'talent', 'recruit', 'staffing', 'headcount', 'team growth', 'open roles', 'job', 'candidate'],
+    default: 'hiring teams',
+  },
+  real_estate_capital: {
+    keywords: ['real estate', 'property', 'cre', 'commercial', 'multifamily', 'development', 'asset', 'reit', 'landlord'],
+    default: 'property firms',
+  },
+  logistics: {
+    keywords: ['logistics', 'supply chain', 'freight', 'shipping', 'warehouse', '3pl', 'fulfillment', 'distribution'],
+    default: 'logistics operators',
+  },
+  crypto: {
+    keywords: ['crypto', 'blockchain', 'web3', 'defi', 'token', 'nft', 'dao', 'smart contract', 'decentralized'],
+    default: 'web3 teams',
+  },
+  enterprise_partnerships: {
+    keywords: ['enterprise', 'b2b', 'saas', 'platform', 'integration', 'partnership', 'vendor', 'solution'],
+    default: 'b2b companies',
+  },
+  custom: {
+    keywords: [],
+    default: 'companies',
+  },
+};
+
 /**
  * COS: Extract demand value from description (deterministic, non-AI)
- * Looks for keywords that indicate company philosophy/focus.
+ * MODE-AWARE + CONFIDENCE-GATED per user.txt directive:
+ * 1. Determine mode first (from description/industry patterns)
+ * 2. Count keyword hits in company_description
+ * 3. If hits >= 2 → emit specific demandValue
+ * 4. If hits < 2 or description missing → fall back to mode-default phrase
  */
 function extractDemandValue(demand: NormalizedRecord): string {
   const desc = toStringSafe(demand.companyDescription).toLowerCase();
@@ -294,57 +339,73 @@ function extractDemandValue(demand: NormalizedRecord): string {
     Array.isArray(demand.industry) ? demand.industry[0] : demand.industry
   ).toLowerCase();
 
-  // Financial services / wealth management
-  if (/wealth|financial planning|advisory|cfp|fiduciary/.test(desc) || /wealth|financial/.test(industry)) {
-    if (/personalized|client.first|client experience|boutique/.test(desc)) {
-      return 'advisory firms focused on long-term, personalized planning';
+  // Combined text for mode detection
+  const combinedText = `${desc} ${industry}`;
+
+  // Step 1: Determine mode from data (mode-first resolution)
+  let detectedMode = 'custom';
+  let maxHits = 0;
+
+  for (const [mode, pack] of Object.entries(MODE_KEYWORD_PACKS)) {
+    if (mode === 'custom') continue; // Skip custom, it's the fallback
+
+    const hits = pack.keywords.filter(kw => combinedText.includes(kw)).length;
+    if (hits > maxHits) {
+      maxHits = hits;
+      detectedMode = mode;
     }
-    if (/trust|estate|insurance/.test(desc)) {
-      return 'advisory firms offering comprehensive planning and trust services';
+  }
+
+  const pack = MODE_KEYWORD_PACKS[detectedMode] || MODE_KEYWORD_PACKS.custom;
+
+  // Step 2: Confidence gate - count hits in description only (not industry)
+  // Per directive: "Count keyword hits in company_description"
+  const descHits = pack.keywords.filter(kw => desc.includes(kw)).length;
+
+  // Step 3: If hits >= 2 → emit specific demandValue
+  if (descHits >= 2) {
+    // Build specific phrase based on detected keywords
+    const matchedKeywords = pack.keywords.filter(kw => desc.includes(kw)).slice(0, 2);
+
+    // Mode-specific specific phrases
+    if (detectedMode === 'wealth_management') {
+      if (desc.includes('personalized') || desc.includes('client-first') || desc.includes('boutique')) {
+        return 'advisory firms focused on long-term, personalized planning';
+      }
+      if (desc.includes('trust') || desc.includes('estate')) {
+        return 'advisory firms offering comprehensive planning and trust services';
+      }
+      return 'wealth advisory firms';
     }
-    return 'financial advisory firms';
-  }
 
-  // Tech / SaaS
-  if (/saas|software|platform|tech|startup/.test(desc) || /software|technology/.test(industry)) {
-    if (/enterprise|b2b/.test(desc)) {
-      return 'enterprise software companies';
+    if (detectedMode === 'biotech_licensing') {
+      if (desc.includes('clinical') || desc.includes('pipeline')) {
+        return 'clinical-stage biotech companies';
+      }
+      return 'biotech and life sciences companies';
     }
-    if (/scale|growth|series/.test(desc)) {
-      return 'growth-stage tech companies';
+
+    if (detectedMode === 'real_estate_capital') {
+      if (desc.includes('commercial') || desc.includes('cre')) {
+        return 'commercial real estate firms';
+      }
+      return 'real estate investment firms';
     }
-    return 'technology companies';
-  }
 
-  // Healthcare / Biotech
-  if (/biotech|pharma|clinical|therapeutic|life science/.test(desc) || /biotech|pharma|healthcare/.test(industry)) {
-    if (/clinical.stage|pipeline/.test(desc)) {
-      return 'clinical-stage biotech companies';
+    if (detectedMode === 'enterprise_partnerships') {
+      if (desc.includes('enterprise')) {
+        return 'enterprise software companies';
+      }
+      return 'b2b technology companies';
     }
-    return 'healthcare and life sciences companies';
+
+    // Generic specific for other modes
+    return pack.default;
   }
 
-  // Payments / Fintech
-  if (/payment|fintech|merchant|acquiring|processing/.test(desc) || /fintech|payments/.test(industry)) {
-    return 'payments and financial infrastructure companies';
-  }
-
-  // Real estate
-  if (/real estate|property|cre|commercial/.test(desc) || /real estate/.test(industry)) {
-    return 'real estate and property companies';
-  }
-
-  // Manufacturing / Industrial
-  if (/manufacturing|industrial|supply chain|logistics/.test(desc) || /manufacturing/.test(industry)) {
-    return 'manufacturing and industrial companies';
-  }
-
-  // Generic fallback using industry
-  if (industry && industry.length > 2) {
-    return `${industry} companies`;
-  }
-
-  return 'companies in this space';
+  // Step 4: If hits < 2 or description missing → fall back to mode-default
+  // Per directive: "If confidence is low, be boring and correct"
+  return pack.default;
 }
 
 /**
