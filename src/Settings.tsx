@@ -11,7 +11,7 @@ import Dock from './Dock';
 import { DatasetHealthCard } from './components/DatasetHealthCard';
 import { InfoTip } from './components/InfoTip';
 import { LearnMore, LearnMoreCard, LearnMoreList } from './components/LearnMore';
-import { analyzeDatasetHealth, generateCounterpartyFilters, type DatasetHealth, type CounterpartyFilters } from './services/DatasetIntelligence';
+import { analyzeDatasetHealth, generateCounterpartyFilters, type DatasetHealth, type CounterpartyFilters, INTENT_HUMAN_LABELS } from './services/DatasetIntelligence';
 import type { AIConfig } from './services/AIService';
 
 // =============================================================================
@@ -839,6 +839,51 @@ export default function Settings() {
                       isLoading={analyzingDemand}
                       counterpartyFilters={counterpartyFilters}
                     />
+
+                    {/* Revenue Recommendation Card */}
+                    {demandHealth?.revenueRecommendation && (
+                      <div className="mt-4 p-4 rounded-xl bg-gradient-to-b from-emerald-500/[0.04] to-emerald-500/[0.01] border border-emerald-500/[0.12]" style={{ animation: 'settings-fade-in 400ms ease-out' }}>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[11px] font-medium text-emerald-400/90 uppercase tracking-wider">Recommended Counterpart</span>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full ${
+                            demandHealth.revenueRecommendation.confidence === 'high' ? 'bg-emerald-500/20 text-emerald-400' :
+                            demandHealth.revenueRecommendation.confidence === 'medium' ? 'bg-amber-500/20 text-amber-400' :
+                            'bg-white/10 text-white/50'
+                          }`}>
+                            {demandHealth.revenueRecommendation.confidence} confidence
+                          </span>
+                        </div>
+                        <p className="text-[14px] text-white/90 font-medium">
+                          {INTENT_HUMAN_LABELS[demandHealth.revenueRecommendation.recommendedIntent as keyof typeof INTENT_HUMAN_LABELS] || demandHealth.revenueRecommendation.recommendedIntent}
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {demandHealth.revenueRecommendation.why.map((bullet, i) => (
+                            <li key={i} className="flex items-start gap-2 text-[11px] text-white/50">
+                              <span className="text-emerald-400/60 mt-0.5">→</span>
+                              <span>{bullet}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {demandHealth.revenueRecommendation.alternates.length > 0 && (
+                          <details className="mt-3">
+                            <summary className="text-[10px] text-white/40 cursor-pointer hover:text-white/60 transition-colors">
+                              View alternates
+                            </summary>
+                            <div className="mt-2 space-y-2 pl-2 border-l border-white/[0.06]">
+                              {demandHealth.revenueRecommendation.alternates.map((alt, i) => (
+                                <div key={i}>
+                                  <p className="text-[11px] text-white/60">
+                                    <span className="text-white/30 mr-1">Tier {alt.tier}:</span>
+                                    {INTENT_HUMAN_LABELS[alt.intent as keyof typeof INTENT_HUMAN_LABELS] || alt.intent}
+                                  </p>
+                                  <p className="text-[10px] text-white/30 mt-0.5">{alt.why.join(' · ')}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    )}
 
                     {demandHealth && (
                       <LearnMore title="What does this mean?">

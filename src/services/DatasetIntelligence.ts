@@ -9,6 +9,13 @@
  */
 
 import { callAI, type AIConfig } from './AIService';
+import {
+  recommendCounterpartyForRevenue,
+  deriveRoleCluster as deriveRoleClusterRevenue,
+  type RevenueRecommendation,
+  type DemandDatasetSignals,
+  type CounterpartyIntent as RevenueIntent,
+} from '../intelligence/revenueBias';
 
 // =============================================================================
 // TYPES
@@ -35,7 +42,13 @@ export interface DatasetHealth {
   // Role cluster detection (money-first fallback)
   roleCluster?: RoleCluster;
   roleClusterConfidence?: number;
+  // Revenue recommendation (fastest to revenue)
+  revenueRecommendation?: RevenueRecommendation;
 }
+
+// Re-export for consumers
+export type { RevenueRecommendation } from '../intelligence/revenueBias';
+export { INTENT_HUMAN_LABELS } from '../intelligence/revenueBias';
 
 export interface CounterpartyFilters {
   description: string;
@@ -515,11 +528,28 @@ export async function analyzeDatasetHealth(
   const COST_PER_CREDIT = 0.024;
   const recordsNeedingEnrichment = items.length - withEmail;
 
+  // REVENUE BIAS: Compute fastest-to-revenue recommendation
+  const demandSignals: DemandDatasetSignals = {
+    roleTitleSamples: roles.slice(0, 50),
+    companyIndustrySamples: industries,
+    companyKeywordSamples: [], // Could extract from descriptions if needed
+  };
+
+  // Map our internal roleCluster to revenueBias RoleCluster type
+  const revenueRoleCluster = deriveRoleClusterRevenue(roles.slice(0, 50));
+  const revenueRecommendation = recommendCounterpartyForRevenue(
+    revenueRoleCluster.cluster as any,
+    demandSignals,
+    niche,
+    defaultIntent as any
+  );
+
   console.log('[DatasetIntelligence] Analysis complete:', {
     niche,
     roleCluster,
     roleClusterConfidence: roleClusterConfidence.toFixed(2),
     defaultIntent,
+    revenueRecommendation: revenueRecommendation.recommendedIntent,
     totalContacts: items.length,
   });
 
@@ -542,6 +572,7 @@ export async function analyzeDatasetHealth(
     defaultIntent,
     roleCluster,
     roleClusterConfidence,
+    revenueRecommendation,
   };
 }
 
