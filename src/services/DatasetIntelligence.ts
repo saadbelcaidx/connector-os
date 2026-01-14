@@ -1,40 +1,50 @@
 /**
  * Dataset Intelligence Service
  *
- * Analyzes datasets and generates counterparty scraper filters.
- * This is the "Claude brain" for matching - it does automatically what
- * Claude did manually when analyzing the pharma/recruiter datasets.
+ * CANONICAL ANALYZER BEHAVIOR:
+ * 1. Detect primary niche (broad only): biotech, wealth, real estate, recruiting, crypto, B2B
+ * 2. Apply SAFE DEFAULT counterparty mapping (recruiters NEVER default unless niche=recruiting)
+ * 3. Generate filters from default intent
+ * 4. Surface intent selector for override
  */
 
 import { callAI, type AIConfig } from './AIService';
 
+// =============================================================================
+// TYPES
+// =============================================================================
+
 export interface DatasetHealth {
   totalContacts: number;
   withEmail: number;
-  emailCoverage: number;  // 0-100
+  emailCoverage: number;
   industries: string[];
   topIndustry: string;
   roles: string[];
-  decisionMakerPercent: number;  // 0-100
+  decisionMakerPercent: number;
   datasetType: 'demand' | 'supply' | 'unknown';
-  niche: string;
+  niche: DetectedNiche;
   sampleCompanies: { name: string; industry: string }[];
-  // Enrichment cost estimate
   enrichmentEstimate: {
     recordsNeedingEnrichment: number;
     creditsRequired: number;
-    estimatedCost: number;  // USD based on $0.024/credit (Apollo $59/2500)
+    estimatedCost: number;
   };
+  // Counterparty intent (first-class)
+  defaultIntent: CounterpartyIntent;
+  // Role cluster detection (money-first fallback)
+  roleCluster?: RoleCluster;
+  roleClusterConfidence?: number;
 }
 
 export interface CounterpartyFilters {
-  description: string;  // "Pharma/Biotech Recruiters"
+  description: string;
   jobTitlesInclude: string[];
   jobTitlesExclude: string[];
   industriesInclude: string[];
   keywordsInclude: string[];
   keywordsExclude: string[];
-  linkedInSearchUrl?: string;  // Pre-built search URL
+  linkedInSearchUrl?: string;
 }
 
 export interface MatchPrediction {
@@ -42,15 +52,349 @@ export interface MatchPrediction {
   demandWithEmail: number;
   supplyContacts: number;
   supplyWithEmail: number;
-  matchRate: number;  // 0-100
+  matchRate: number;
   matchQuality: 'excellent' | 'good' | 'partial' | 'poor';
   introsPossible: number;
   enrichmentNeeded: number;
-  estimatedCost: number;  // USD
+  estimatedCost: number;
   reasoning: string;
 }
 
-// Decision maker title patterns
+// =============================================================================
+// CANONICAL TYPES (NON-NEGOTIABLE)
+// =============================================================================
+
+/**
+ * Detected niche - BROAD ONLY, no sub-niches
+ */
+export type DetectedNiche =
+  | 'biotech'
+  | 'wealth'
+  | 'real_estate'
+  | 'recruiting'
+  | 'crypto'
+  | 'b2b';
+
+/**
+ * Counterparty intent - FIRST-CLASS, must be stored/displayed/editable/logged
+ */
+export type CounterpartyIntent =
+  | 'partners'      // BD / Licensing / Corp Dev
+  | 'recruiters'    // Staffing / Exec Search
+  | 'investors'     // VC / PE / Family Office
+  | 'advisory'      // Wealth / Advisory Firms
+  | 'capital'       // Real Estate Capital / Operators
+  | 'funds'         // Crypto Funds / Infra / Market Makers
+  | 'custom';
+
+/**
+ * SAFE DEFAULT MAPPING (THIS TABLE IS LAW)
+ * Recruiters are NEVER the default unless niche is explicitly recruiting.
+ */
+export const NICHE_TO_DEFAULT_INTENT: Record<DetectedNiche, CounterpartyIntent> = {
+  biotech: 'partners',      // Pharma BD / Corp Dev
+  wealth: 'advisory',       // Advisory / Wealth Firms
+  real_estate: 'capital',   // Capital / Operators
+  recruiting: 'recruiters', // ONLY case where recruiters are default
+  crypto: 'funds',          // Funds / Infra / Market Makers
+  b2b: 'partners',          // BD / Corp Dev
+};
+
+/**
+ * User-facing labels for intents
+ */
+export const INTENT_LABELS: Record<CounterpartyIntent, string> = {
+  partners: 'Partners (BD / Licensing)',
+  recruiters: 'Recruiters (Staffing / Search)',
+  investors: 'Investors (VC / PE)',
+  advisory: 'Advisory / Wealth Firms',
+  capital: 'Capital / Operators',
+  funds: 'Funds / Infra / Market Makers',
+  custom: 'Custom',
+};
+
+/**
+ * User-facing labels for niches
+ */
+export const NICHE_LABELS: Record<DetectedNiche, string> = {
+  biotech: 'Biotech',
+  wealth: 'Wealth Management',
+  real_estate: 'Real Estate',
+  recruiting: 'IT Recruiting',
+  crypto: 'Crypto',
+  b2b: 'B2B (Broad)',
+};
+
+// =============================================================================
+// ROLE CLUSTER DETECTION (MONEY-FIRST FALLBACK)
+// =============================================================================
+
+/**
+ * Role cluster — what type of people are in this dataset?
+ * Used as fallback when niche detection is weak.
+ */
+export type RoleCluster =
+  | 'builders'   // engineers, devs, cto
+  | 'hiring'     // hr, recruiters, talent
+  | 'growth'     // marketing, growth, demand gen
+  | 'money'      // finance, cfo, accounting
+  | 'ops'        // operations, logistics, supply chain
+  | 'partners'   // bd, partnerships, licensing
+  | 'exec';      // founders, ceos, general execs
+
+const ROLE_CLUSTER_PATTERNS: Record<RoleCluster, string[]> = {
+  builders: ['engineer', 'developer', 'dev', 'cto', 'architect', 'software', 'infrastructure', 'devops', 'sre', 'backend', 'frontend', 'fullstack', 'data engineer', 'ml engineer', 'ai engineer'],
+  hiring: ['hr', 'recruiter', 'talent', 'people ops', 'human resources', 'talent acquisition', 'recruiting'],
+  growth: ['marketing', 'growth', 'demand gen', 'cmo', 'content', 'brand', 'digital marketing', 'seo', 'paid media', 'performance'],
+  money: ['finance', 'cfo', 'accounting', 'controller', 'fp&a', 'treasury', 'tax', 'bookkeeping'],
+  ops: ['operations', 'coo', 'logistics', 'supply chain', 'procurement', 'warehouse', '3pl', 'fulfillment'],
+  partners: ['business development', 'bd', 'partnerships', 'licensing', 'alliances', 'corp dev', 'corporate development', 'm&a'],
+  exec: ['founder', 'ceo', 'president', 'owner', 'managing director', 'principal', 'partner', 'chief executive'],
+};
+
+/**
+ * Map role cluster → counterparty intent (money-first)
+ * These are high-demand seller categories that always have buyers.
+ */
+const CLUSTER_TO_INTENT: Record<RoleCluster, CounterpartyIntent> = {
+  builders: 'partners',     // dev agencies, devtools, cloud, security
+  hiring: 'recruiters',     // staffing, exec search
+  growth: 'partners',       // paid media, seo, outbound, crm
+  money: 'advisory',        // fractional cfo, bookkeeping, tax
+  ops: 'partners',          // 3pl, freight, erp implementers
+  partners: 'partners',     // bd advisors, licensing brokers
+  exec: 'investors',        // strategic advisory, fundraising, m&a
+};
+
+function detectRoleCluster(items: any[]): { cluster: RoleCluster; confidence: number } {
+  const titles = items.slice(0, 50).map(item =>
+    (item.job_title || item.title || item.position || '').toLowerCase()
+  ).filter(Boolean);
+
+  if (titles.length === 0) {
+    return { cluster: 'exec', confidence: 0 };
+  }
+
+  const scores: Record<RoleCluster, number> = {
+    builders: 0,
+    hiring: 0,
+    growth: 0,
+    money: 0,
+    ops: 0,
+    partners: 0,
+    exec: 0,
+  };
+
+  for (const title of titles) {
+    for (const [cluster, keywords] of Object.entries(ROLE_CLUSTER_PATTERNS)) {
+      for (const kw of keywords) {
+        if (title.includes(kw)) {
+          scores[cluster as RoleCluster]++;
+          break; // Only count once per title per cluster
+        }
+      }
+    }
+  }
+
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const topScore = sorted[0]?.[1] || 0;
+  const confidence = titles.length > 0 ? topScore / titles.length : 0;
+
+  return {
+    cluster: (sorted[0]?.[0] as RoleCluster) || 'exec',
+    confidence: Math.min(1, confidence),
+  };
+}
+
+// =============================================================================
+// RUNTIME GUARDS (DEATH-LEVEL SAFETY)
+// =============================================================================
+
+/**
+ * Normalize intent — ensures we never use a non-string or invalid intent.
+ * Protects against JS passing wrong types through TS boundaries.
+ */
+function normalizeIntent(x: unknown): CounterpartyIntent | undefined {
+  if (typeof x !== 'string') return undefined;
+  if (x in INTENT_FILTERS) return x as CounterpartyIntent;
+  return undefined;
+}
+
+// =============================================================================
+// NICHE DETECTION (BROAD ONLY)
+// =============================================================================
+
+const NICHE_PATTERNS: Record<DetectedNiche, string[]> = {
+  biotech: ['pharma', 'biotech', 'biotechnology', 'clinical', 'therapeutics', 'drug', 'fda', 'life science', 'medical device', 'pharmaceutical'],
+  wealth: ['wealth', 'hnw', 'high net worth', 'family office', 'private banking', 'asset management', 'financial planning'],
+  real_estate: ['real estate', 'property', 'cre', 'commercial real estate', 'reit', 'development', 'construction'],
+  recruiting: ['recruiting', 'staffing', 'talent acquisition', 'headhunter', 'executive search', 'placement'],
+  crypto: ['crypto', 'blockchain', 'web3', 'defi', 'token', 'nft', 'protocol', 'dao'],
+  b2b: ['saas', 'software', 'enterprise', 'b2b', 'platform', 'tech', 'startup'],
+};
+
+function detectNiche(items: any[]): DetectedNiche {
+  const textBlob = items.slice(0, 30).map(item => {
+    return [
+      item.job_title || item.title || item.position || '',
+      item.company_name || item.companyName || item.company || '',
+      item.description || item.job_description || item.company_description || '',
+      item.industry || item.company_industry || '',
+      item.keywords || '',
+    ].join(' ');
+  }).join(' ').toLowerCase();
+
+  const scores: Record<DetectedNiche, number> = {
+    biotech: 0,
+    wealth: 0,
+    real_estate: 0,
+    recruiting: 0,
+    crypto: 0,
+    b2b: 0,
+  };
+
+  for (const [niche, keywords] of Object.entries(NICHE_PATTERNS)) {
+    scores[niche as DetectedNiche] = keywords.reduce((score, kw) => {
+      const matches = (textBlob.match(new RegExp(kw, 'gi')) || []).length;
+      return score + matches;
+    }, 0);
+  }
+
+  // Find highest scoring niche
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+
+  // Require minimum score of 3 to detect, otherwise default to b2b
+  if (sorted[0] && sorted[0][1] >= 3) {
+    return sorted[0][0] as DetectedNiche;
+  }
+
+  return 'b2b';
+}
+
+// =============================================================================
+// CANONICAL COUNTERPARTY FILTERS (BY INTENT, NOT BY NICHE)
+// =============================================================================
+
+const INTENT_FILTERS: Record<CounterpartyIntent, CounterpartyFilters> = {
+  partners: {
+    description: 'Pharma BD & Licensing Partners',
+    jobTitlesInclude: [
+      'chief business officer',
+      'vp business development',
+      'svp business development',
+      'head of business development',
+      'director business development',
+      'vp corporate development',
+      'head of licensing',
+      'vp licensing',
+      'director licensing',
+      'vp strategic partnerships',
+      'head of partnerships',
+      'vp alliances',
+    ],
+    jobTitlesExclude: ['intern', 'coordinator', 'assistant', 'junior', 'associate', 'recruiter', 'talent', 'hr'],
+    industriesInclude: ['pharmaceuticals', 'biotechnology', 'life sciences'],
+    keywordsInclude: [
+      'licensing', 'in-licensing', 'out-licensing', 'business development',
+      'corporate development', 'strategic partnerships', 'alliances',
+      'co-development', 'portfolio strategy', 'pipeline', 'M&A',
+    ],
+    keywordsExclude: [
+      'staffing', 'recruiting', 'talent acquisition', 'executive search',
+      'cro', 'cdmo', 'cmo', 'consulting', 'outsourcing', 'marketing agency',
+      'software', 'saas',
+    ],
+  },
+
+  recruiters: {
+    description: 'Recruitment Agencies',
+    jobTitlesInclude: [
+      'partner', 'managing director', 'director', 'founder', 'ceo',
+      'president', 'principal', 'vp recruiting', 'head of talent',
+    ],
+    jobTitlesExclude: ['intern', 'coordinator', 'assistant', 'junior', 'associate'],
+    industriesInclude: ['staffing & recruiting', 'human resources', 'executive search'],
+    keywordsInclude: [
+      'recruiting', 'staffing', 'talent', 'executive search', 'placement',
+      'headhunter', 'recruitment', 'hiring',
+    ],
+    keywordsExclude: ['internal', 'in-house', 'corporate hr'],
+  },
+
+  investors: {
+    description: 'Investors (VC / PE)',
+    jobTitlesInclude: [
+      'partner', 'managing director', 'principal', 'director',
+      'vp investments', 'investment director', 'general partner',
+    ],
+    jobTitlesExclude: ['intern', 'analyst', 'associate', 'assistant'],
+    industriesInclude: ['venture capital & private equity', 'investment management', 'financial services'],
+    keywordsInclude: [
+      'venture capital', 'private equity', 'investment', 'portfolio',
+      'fund', 'capital', 'growth equity', 'seed', 'series',
+    ],
+    keywordsExclude: ['recruiting', 'staffing', 'consulting'],
+  },
+
+  advisory: {
+    description: 'Advisory / Wealth Firms',
+    jobTitlesInclude: [
+      'managing director', 'partner', 'wealth advisor', 'private banker',
+      'relationship manager', 'family office', 'chief investment officer',
+    ],
+    jobTitlesExclude: ['intern', 'assistant', 'junior', 'trainee'],
+    industriesInclude: ['financial services', 'investment management', 'banking'],
+    keywordsInclude: [
+      'wealth management', 'private banking', 'family office', 'hnw',
+      'uhnw', 'asset management', 'financial planning',
+    ],
+    keywordsExclude: ['recruiting', 'staffing', 'retail banking'],
+  },
+
+  capital: {
+    description: 'Real Estate Capital / Operators',
+    jobTitlesInclude: [
+      'managing director', 'partner', 'principal', 'director',
+      'vp acquisitions', 'head of investments', 'cio',
+    ],
+    jobTitlesExclude: ['intern', 'assistant', 'junior', 'agent'],
+    industriesInclude: ['real estate', 'commercial real estate', 'investment management'],
+    keywordsInclude: [
+      'real estate', 'cre', 'acquisitions', 'development', 'capital',
+      'investments', 'property', 'reit', 'fund',
+    ],
+    keywordsExclude: ['recruiting', 'staffing', 'residential agent', 'rental'],
+  },
+
+  funds: {
+    description: 'Crypto Funds / Infra / Market Makers',
+    jobTitlesInclude: [
+      'partner', 'managing director', 'founder', 'ceo', 'cio',
+      'head of trading', 'portfolio manager', 'general partner',
+    ],
+    jobTitlesExclude: ['intern', 'assistant', 'junior', 'analyst'],
+    industriesInclude: ['financial services', 'investment management', 'information technology & services'],
+    keywordsInclude: [
+      'crypto', 'blockchain', 'web3', 'defi', 'token', 'protocol',
+      'trading', 'market maker', 'liquidity', 'fund',
+    ],
+    keywordsExclude: ['recruiting', 'staffing', 'consulting'],
+  },
+
+  custom: {
+    description: 'Custom (User Defined)',
+    jobTitlesInclude: ['partner', 'director', 'founder', 'ceo', 'vp', 'head of'],
+    jobTitlesExclude: ['intern', 'assistant', 'junior'],
+    industriesInclude: [],
+    keywordsInclude: [],
+    keywordsExclude: ['internal', 'in-house'],
+  },
+};
+
+// =============================================================================
+// DECISION MAKER PATTERNS
+// =============================================================================
+
 const DECISION_MAKER_PATTERNS = [
   /\b(ceo|cto|cfo|coo|cmo|cpo|cro)\b/i,
   /\b(founder|co-founder|cofounder)\b/i,
@@ -62,122 +406,21 @@ const DECISION_MAKER_PATTERNS = [
   /\b(principal)\b/i,
 ];
 
-// Supply-side indicators (recruiters, agencies, consultants)
 const SUPPLY_INDICATORS = [
   'recruiting', 'staffing', 'talent', 'headhunter', 'search firm',
   'placement', 'consulting', 'agency', 'services', 'solutions',
-  'outsourcing', 'contractor', 'freelance', 'fractional'
 ];
 
-// Niche detection patterns (when industry field is missing)
-const NICHE_PATTERNS: Record<string, string[]> = {
-  'Pharma/Biotech': ['pharma', 'biotech', 'clinical', 'medical device', 'life science', 'healthcare', 'therapeutics', 'drug', 'fda', 'regulatory'],
-  'SaaS/Tech': ['saas', 'software', 'tech', 'cloud', 'platform', 'api', 'developer', 'engineering', 'startup', 'ai', 'machine learning', 'data'],
-  'FinTech': ['fintech', 'payments', 'banking', 'financial', 'crypto', 'blockchain', 'trading', 'investment', 'wealth'],
-  'Finance': ['finance', 'accounting', 'cfo', 'controller', 'fp&a', 'audit', 'tax'],
-  'Real Estate': ['real estate', 'property', 'commercial real estate', 'cre', 'construction', 'development', 'reit'],
-  'Healthcare': ['healthcare', 'hospital', 'clinic', 'patient', 'medical', 'health system', 'nursing'],
-  'Legal': ['legal', 'law firm', 'attorney', 'lawyer', 'litigation', 'compliance', 'counsel'],
-  'Marketing': ['marketing', 'growth', 'brand', 'digital marketing', 'seo', 'content', 'advertising', 'creative'],
-  'Sales': ['sales', 'revenue', 'account executive', 'business development', 'partnerships', 'enterprise'],
-  'HR/People': ['hr', 'human resources', 'people ops', 'talent acquisition', 'recruiting', 'culture'],
-  'Manufacturing': ['manufacturing', 'production', 'supply chain', 'logistics', 'operations', 'factory', 'industrial'],
-  'E-commerce': ['ecommerce', 'e-commerce', 'retail', 'dtc', 'shopify', 'amazon', 'marketplace'],
-  'Cybersecurity': ['security', 'cybersecurity', 'infosec', 'compliance', 'soc', 'penetration', 'vulnerability'],
-};
-
-// Job role → supply niche mapping (for JOBS datasets)
-const JOB_ROLE_TO_NICHE: Record<string, string[]> = {
-  'sales': ['account executive', 'ae', 'sdr', 'bdr', 'sales', 'partnerships', 'business development', 'revenue', 'account manager'],
-  'tech': ['engineer', 'developer', 'swe', 'software', 'frontend', 'backend', 'fullstack', 'devops', 'sre', 'data scientist', 'ml engineer'],
-  'finance': ['cfo', 'finance', 'controller', 'accountant', 'fp&a', 'financial analyst', 'treasurer'],
-  'hr': ['recruiter', 'talent', 'hr', 'human resources', 'people ops', 'people operations'],
-  'marketing': ['marketing', 'cmo', 'growth', 'content', 'brand', 'demand gen'],
-  'product': ['product manager', 'product owner', 'pm', 'product lead'],
-};
-
-/**
- * Detect niche from job roles (for JOBS datasets only)
- * Returns niche string if jobs dataset with clear role, null otherwise
- */
-function detectJobsDatasetNiche(items: any[]): string | null {
-  // Check if this looks like a jobs dataset
-  const hasJobFields = items.slice(0, 10).some(item =>
-    item.job_title || item.job_name || item.job_id || item.job_listing_posted || item.job_url
-  );
-
-  if (!hasJobFields) {
-    return null; // Not a jobs dataset, use existing logic
-  }
-
-  console.log('[DatasetIntelligence] Detected JOBS dataset, using role-based niche detection');
-
-  // Extract job titles
-  const jobTitles = items.slice(0, 30).map(item =>
-    (item.job_title || item.job_name || item.title || item.position || '').toLowerCase()
-  ).filter(Boolean);
-
-  if (jobTitles.length === 0) {
-    return null;
-  }
-
-  // Score each niche by job role matches
-  const scores: Record<string, number> = {};
-  for (const [niche, keywords] of Object.entries(JOB_ROLE_TO_NICHE)) {
-    scores[niche] = jobTitles.reduce((score, title) => {
-      const matches = keywords.filter(kw => title.includes(kw)).length;
-      return score + matches;
-    }, 0);
-  }
-
-  // Find dominant role
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  if (sorted[0] && sorted[0][1] >= 2) {
-    console.log('[DatasetIntelligence] Job role niche:', sorted[0][0], 'score:', sorted[0][1]);
-    return sorted[0][0];
-  }
-
-  return null; // No clear role match, fall back to existing logic
-}
-
-/**
- * Detect niche from text content (job titles, descriptions, company names)
- */
-function detectNicheFromText(items: any[]): string {
-  // Build a text blob from first 20 items
-  const textBlob = items.slice(0, 20).map(item => {
-    return [
-      item.job_title || item.title || item.position || '',
-      item.company_name || item.companyName || item.company || '',
-      item.description || item.job_description || '',
-      item.industry || item.company_industry || '',
-    ].join(' ');
-  }).join(' ').toLowerCase();
-
-  // Score each niche
-  const scores: Record<string, number> = {};
-  for (const [niche, keywords] of Object.entries(NICHE_PATTERNS)) {
-    scores[niche] = keywords.reduce((score, kw) => {
-      const matches = (textBlob.match(new RegExp(kw, 'gi')) || []).length;
-      return score + matches;
-    }, 0);
-  }
-
-  // Find top scoring niche
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
-  if (sorted[0] && sorted[0][1] >= 3) {
-    return sorted[0][0];
-  }
-
-  return 'General';
-}
+// =============================================================================
+// MAIN FUNCTIONS
+// =============================================================================
 
 /**
  * Analyze a dataset and return health metrics
  */
 export async function analyzeDatasetHealth(
   items: any[],
-  aiConfig?: AIConfig | null
+  _aiConfig?: AIConfig | null
 ): Promise<DatasetHealth> {
   if (!items || items.length === 0) {
     return {
@@ -189,13 +432,14 @@ export async function analyzeDatasetHealth(
       roles: [],
       decisionMakerPercent: 0,
       datasetType: 'unknown',
-      niche: 'Unknown',
+      niche: 'b2b',
       sampleCompanies: [],
       enrichmentEstimate: {
         recordsNeedingEnrichment: 0,
         creditsRequired: 0,
         estimatedCost: 0,
       },
+      defaultIntent: 'partners',
     };
   }
 
@@ -238,7 +482,6 @@ export async function analyzeDatasetHealth(
     SUPPLY_INDICATORS.forEach(indicator => {
       if (text.includes(indicator)) supplyScore++;
     });
-    // Demand indicators: product companies, not service providers
     if (text.includes('product') || text.includes('platform') || text.includes('software')) {
       demandScore++;
     }
@@ -251,55 +494,34 @@ export async function analyzeDatasetHealth(
     industry: item.industry || item.company_industry || 'Unknown',
   }));
 
-  // Detect niche - multiple fallback layers
-  // Layer 0: For JOBS datasets, job role determines niche (not company industry)
-  const jobsNiche = detectJobsDatasetNiche(items);
-  let niche = jobsNiche || topIndustry;
+  // CANONICAL: Detect niche (broad only)
+  const niche = detectNiche(items);
 
-  // Layer 1: If still unknown/empty, try text-based detection
-  if (!niche || niche === 'Unknown' || niche.toLowerCase() === 'unknown') {
-    niche = detectNicheFromText(items);
-    console.log('[DatasetIntelligence] Text-based niche detection:', niche);
+  // MONEY-FIRST: Detect role cluster (fallback when niche is weak)
+  const { cluster: roleCluster, confidence: roleClusterConfidence } = detectRoleCluster(items);
+
+  // CANONICAL: Apply safe default mapping
+  // If niche detection is weak (b2b fallback) but roleCluster is confident, use cluster mapping
+  let defaultIntent: CounterpartyIntent;
+  if (niche === 'b2b' && roleClusterConfidence >= 0.3) {
+    // Niche detection failed, use role cluster as fallback
+    defaultIntent = CLUSTER_TO_INTENT[roleCluster];
+    console.log('[DatasetIntelligence] Using roleCluster fallback:', { roleCluster, confidence: roleClusterConfidence, intent: defaultIntent });
+  } else {
+    defaultIntent = NICHE_TO_DEFAULT_INTENT[niche];
   }
 
-  // Layer 2: Try AI if available and still no good niche
-  if (aiConfig && (!niche || niche === 'General' || niche === 'Unknown')) {
-    try {
-      const sampleData = items.slice(0, 5).map(item => ({
-        company: item.company_name || item.companyName,
-        industry: item.industry,
-        title: item.job_title || item.title,
-        description: (item.description || item.job_description || '').slice(0, 200),
-      }));
-
-      const prompt = `Analyze this dataset sample and identify the business niche in 2-3 words.
-
-${JSON.stringify(sampleData, null, 2)}
-
-Respond with ONLY the niche name. Examples: "Pharma/Biotech", "SaaS/Tech", "Real Estate", "FinTech", "Healthcare", "Legal", "E-commerce".
-Do NOT respond with "Unknown" or "General" - always identify the most likely niche.`;
-
-      const result = await callAI(aiConfig, prompt);
-      if (result && result.length < 30 && !result.toLowerCase().includes('unknown')) {
-        niche = result.trim().replace(/['"]/g, '');
-        console.log('[DatasetIntelligence] AI niche detection:', niche);
-      }
-    } catch (e) {
-      console.warn('[DatasetIntelligence] AI niche detection failed:', e);
-    }
-  }
-
-  // Layer 3: Final fallback
-  if (!niche || niche === 'Unknown') {
-    niche = 'General';
-  }
-
-  // Calculate enrichment cost estimate
-  // Apollo: $59/mo = 2,500 credits, 1 credit = 1 verified email
-  const COST_PER_CREDIT = 0.024; // $59 / 2500
+  // Calculate enrichment cost
+  const COST_PER_CREDIT = 0.024;
   const recordsNeedingEnrichment = items.length - withEmail;
-  const creditsRequired = recordsNeedingEnrichment;
-  const estimatedCost = Math.round(creditsRequired * COST_PER_CREDIT * 100) / 100;
+
+  console.log('[DatasetIntelligence] Analysis complete:', {
+    niche,
+    roleCluster,
+    roleClusterConfidence: roleClusterConfidence.toFixed(2),
+    defaultIntent,
+    totalContacts: items.length,
+  });
 
   return {
     totalContacts: items.length,
@@ -314,237 +536,84 @@ Do NOT respond with "Unknown" or "General" - always identify the most likely nic
     sampleCompanies,
     enrichmentEstimate: {
       recordsNeedingEnrichment,
-      creditsRequired,
-      estimatedCost,
+      creditsRequired: recordsNeedingEnrichment,
+      estimatedCost: Math.round(recordsNeedingEnrichment * COST_PER_CREDIT * 100) / 100,
     },
+    defaultIntent,
+    roleCluster,
+    roleClusterConfidence,
   };
 }
 
 /**
- * Generate counterparty scraper filters based on demand dataset
+ * Generate counterparty filters based on intent (NOT niche guessing)
+ *
+ * RULE: Analyzer cannot output recruiter filters unless:
+ *   detectedNiche === 'recruiting' || counterpartyIntent === 'recruiters'
  */
 export async function generateCounterpartyFilters(
   demandHealth: DatasetHealth,
-  aiConfig?: AIConfig | null
+  intent?: CounterpartyIntent,
+  _aiConfig?: AIConfig | null
 ): Promise<CounterpartyFilters> {
-  // Default filters based on niche heuristics
-  const nicheFilters: Record<string, CounterpartyFilters> = {
-    'pharma': {
-      description: 'Life Sciences Recruiters',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'President', 'Principal', 'VP Recruiting', 'Head of Talent'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate', 'Analyst', 'Specialist'],
-      industriesInclude: ['Staffing and Recruiting', 'Human Resources', 'Executive Search'],
-      keywordsInclude: ['pharma', 'biotech', 'life sciences', 'pharmaceutical', 'medical device', 'clinical', 'healthcare recruiting'],
-      keywordsExclude: ['internal', 'in-house', 'corporate HR', 'freelance platform'],
-    },
-    'biotech': {
-      description: 'Life Sciences Recruiters',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'President', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Staffing and Recruiting', 'Biotechnology', 'Executive Search'],
-      keywordsInclude: ['biotech', 'life sciences', 'pharma', 'clinical', 'R&D', 'scientific recruiting'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'saas': {
-      description: 'Tech Recruiters & Fractional Executives',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Fractional CTO', 'Fractional VP'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Staffing and Recruiting', 'Information Technology', 'Executive Search'],
-      keywordsInclude: ['tech recruiting', 'software', 'engineering', 'SaaS', 'startup', 'venture'],
-      keywordsExclude: ['internal', 'in-house', 'freelance platform'],
-    },
-    'tech': {
-      description: 'Tech Recruiters & Talent Partners',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Head of Talent'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Staffing and Recruiting', 'Information Technology', 'Software Development'],
-      keywordsInclude: ['tech recruiting', 'software engineers', 'developers', 'engineering talent', 'startup hiring'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'fintech': {
-      description: 'FinTech Recruiters & Advisors',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Staffing and Recruiting', 'Financial Services', 'Information Technology'],
-      keywordsInclude: ['fintech recruiting', 'payments', 'banking tech', 'crypto', 'blockchain talent'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'finance': {
-      description: 'Finance Recruiters & Fractional CFOs',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Fractional CFO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Analyst'],
-      industriesInclude: ['Staffing and Recruiting', 'Financial Services', 'Executive Search'],
-      keywordsInclude: ['finance recruiting', 'CFO', 'accounting', 'FP&A', 'controller'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'real estate': {
-      description: 'Real Estate Recruiters & Brokers',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Broker', 'Founder', 'CEO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Agent trainee'],
-      industriesInclude: ['Staffing and Recruiting', 'Real Estate', 'Commercial Real Estate'],
-      keywordsInclude: ['real estate recruiting', 'CRE', 'commercial', 'property', 'construction'],
-      keywordsExclude: ['residential agent', 'rental'],
-    },
-    'healthcare': {
-      description: 'Healthcare Recruiters & Staffing',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'President'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Staffing and Recruiting', 'Healthcare', 'Hospital & Health Care'],
-      keywordsInclude: ['healthcare recruiting', 'medical staffing', 'nursing', 'clinical', 'hospital'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'legal': {
-      description: 'Legal Recruiters & Consultants',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Paralegal', 'Associate'],
-      industriesInclude: ['Staffing and Recruiting', 'Legal Services', 'Law Practice'],
-      keywordsInclude: ['legal recruiting', 'law firm', 'attorney', 'lawyer placement', 'legal staffing'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'marketing': {
-      description: 'Marketing Agencies & Fractional CMOs',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Fractional CMO'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Marketing and Advertising', 'Marketing Services', 'Digital Marketing'],
-      keywordsInclude: ['marketing agency', 'growth agency', 'brand consulting', 'digital marketing', 'CMO services'],
-      keywordsExclude: ['internal', 'in-house', 'freelance platform'],
-    },
-    'sales': {
-      description: 'Sales Recruiters & Fractional CROs',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Fractional CRO'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate', 'SDR', 'BDR'],
-      industriesInclude: ['Staffing and Recruiting', 'Sales', 'Business Development'],
-      keywordsInclude: ['sales recruiting', 'revenue leaders', 'VP Sales', 'CRO', 'sales talent'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'hr': {
-      description: 'HR Consultants & Fractional CHROs',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Fractional CHRO'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Human Resources', 'HR Consulting', 'Management Consulting'],
-      keywordsInclude: ['HR consulting', 'people ops', 'talent strategy', 'CHRO services', 'culture consulting'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'manufacturing': {
-      description: 'Manufacturing Recruiters & Consultants',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Operator'],
-      industriesInclude: ['Staffing and Recruiting', 'Manufacturing', 'Industrial'],
-      keywordsInclude: ['manufacturing recruiting', 'operations', 'supply chain', 'industrial', 'plant manager'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'ecommerce': {
-      description: 'E-commerce Agencies & Consultants',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate'],
-      industriesInclude: ['Marketing and Advertising', 'E-commerce', 'Retail'],
-      keywordsInclude: ['ecommerce agency', 'shopify', 'amazon', 'DTC', 'marketplace', 'retail consulting'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'cybersecurity': {
-      description: 'Security Recruiters & Consultants',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'CISO', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Analyst'],
-      industriesInclude: ['Staffing and Recruiting', 'Computer & Network Security', 'Information Technology'],
-      keywordsInclude: ['security recruiting', 'cybersecurity', 'CISO', 'infosec', 'security consulting'],
-      keywordsExclude: ['internal', 'in-house'],
-    },
-    'general': {
-      description: 'Executive Recruiters & Consultants',
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'President', 'Principal'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate', 'Analyst'],
-      industriesInclude: ['Staffing and Recruiting', 'Management Consulting', 'Executive Search'],
-      keywordsInclude: ['executive search', 'recruiting', 'talent', 'consulting', 'staffing'],
-      keywordsExclude: ['internal', 'in-house', 'corporate HR'],
-    },
-  };
+  // RUNTIME GUARD: Normalize intent to prevent wrong-type bugs
+  const normalizedIntent = normalizeIntent(intent);
 
-  // Try to match niche
-  const nicheLower = demandHealth.niche.toLowerCase();
-  let filters: CounterpartyFilters | null = null;
+  // Use normalized intent → default from niche → partners (last resort)
+  const effectiveIntent = normalizedIntent ?? demandHealth.defaultIntent ?? 'partners';
 
-  for (const [key, value] of Object.entries(nicheFilters)) {
-    if (nicheLower.includes(key)) {
-      filters = value;
-      break;
-    }
+  // CANONICAL RULE: Never output recruiter filters unless explicitly recruiting
+  if (effectiveIntent === 'recruiters' && demandHealth.niche !== 'recruiting') {
+    console.log('[DatasetIntelligence] User explicitly selected recruiters for', demandHealth.niche);
   }
 
-  // If no match and AI available, generate custom filters for ANY niche
-  if (!filters && aiConfig) {
-    try {
-      const prompt = `You are a connector matching expert. Given a DEMAND dataset, generate scraper filters to find the SUPPLY (service providers who monetize this need).
+  // Get filters for intent
+  const filters = INTENT_FILTERS[effectiveIntent];
 
-DEMAND PROFILE:
-- Detected Niche: ${demandHealth.niche}
-- Top Industry: ${demandHealth.topIndustry}
-- Sample Companies: ${demandHealth.sampleCompanies.slice(0, 5).map(c => `${c.name} (${c.industry})`).join(', ')}
-- Decision Maker Roles: ${demandHealth.roles.slice(0, 8).join(', ')}
-
-THE CONNECTOR MODEL:
-- Demand = companies/people with a NEED (hiring, scaling, buying, seeking)
-- Supply = service providers who FULFILL that need (agencies, consultants, recruiters, advisors)
-- The connector routes signals between them
-
-EXAMPLES OF DEMAND → SUPPLY MAPPING:
-- Pharma companies hiring → Life Sciences Recruiters
-- Startups scaling → Tech Recruiters, Fractional CTOs
-- HNW individuals → Wealth Managers, Family Offices
-- E-commerce brands → Shopify Agencies, Growth Consultants
-- Companies with security needs → CISO Consultants, Security Firms
-- Real estate investors → CRE Brokers, Property Managers
-
-YOUR TASK:
-For the demand profile above, identify WHO MONETIZES this need. Generate LinkedIn scraper filters.
-
-Respond with JSON only (no markdown):
-{
-  "description": "<2-4 word label for the supply type, e.g. 'Wealth Management Advisors'>",
-  "jobTitlesInclude": ["Partner", "Managing Director", "Director", "Founder", "CEO", "President", "Principal", "<add 8-10 more senior titles specific to this niche>"],
-  "jobTitlesExclude": ["Intern", "Coordinator", "Assistant", "Junior", "Associate", "Analyst", "Trainee", "Entry"],
-  "industriesInclude": ["<3-5 LinkedIn industries where these providers work>"],
-  "keywordsInclude": ["<12-15 keywords that identify providers in this space - be specific to the niche>"],
-  "keywordsExclude": ["internal", "in-house", "corporate", "<add 3-5 more exclusions>"]
-}
-
-IMPORTANT:
-- Be SPECIFIC to the niche, not generic
-- jobTitlesInclude should have 12-15 titles
-- keywordsInclude should have 12-15 niche-specific terms
-- Think: "Who gets PAID when this demand is fulfilled?"`;
-
-      const result = await callAI(aiConfig, prompt);
-      if (result) {
-        const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-        const parsed = JSON.parse(cleaned);
-        // Validate the response has required fields
-        if (parsed.description && parsed.jobTitlesInclude && parsed.keywordsInclude) {
-          filters = parsed;
-          console.log('[DatasetIntelligence] AI generated custom filters for:', demandHealth.niche);
-        }
-      }
-    } catch (e) {
-      console.warn('[DatasetIntelligence] AI filter generation failed:', e);
-    }
-  }
-
-  // Fallback to generic filters
   if (!filters) {
-    filters = {
-      description: `${demandHealth.niche} Service Providers`,
-      jobTitlesInclude: ['Partner', 'Managing Director', 'Director', 'Founder', 'CEO', 'President', 'Principal', 'VP', 'Head of'],
-      jobTitlesExclude: ['Intern', 'Coordinator', 'Assistant', 'Junior', 'Associate', 'Analyst'],
-      industriesInclude: ['Staffing and Recruiting', 'Management Consulting', 'Professional Services'],
-      keywordsInclude: [demandHealth.niche.toLowerCase(), 'consulting', 'services', 'recruiting', 'staffing'],
-      keywordsExclude: ['internal', 'in-house', 'corporate'],
-    };
+    // This should never happen with normalizeIntent, but log if it does
+    console.warn('[DatasetIntelligence] Unknown intent after normalization:', {
+      originalIntent: intent,
+      normalizedIntent,
+      effectiveIntent,
+      niche: demandHealth.niche,
+    });
+    return INTENT_FILTERS[demandHealth.defaultIntent ?? 'partners'];
   }
+
+  console.log('[DatasetIntelligence] Generated filters:', {
+    niche: demandHealth.niche,
+    intent: effectiveIntent,
+    description: filters.description,
+  });
 
   return filters;
 }
 
 /**
- * Predict match quality and intro count
+ * Get available intents for a detected niche
+ * Returns all intents with the default pre-selected
+ */
+export function getAvailableIntents(niche: DetectedNiche): {
+  intent: CounterpartyIntent;
+  label: string;
+  isDefault: boolean;
+}[] {
+  const defaultIntent = NICHE_TO_DEFAULT_INTENT[niche];
+
+  return [
+    { intent: 'partners', label: INTENT_LABELS.partners, isDefault: defaultIntent === 'partners' },
+    { intent: 'recruiters', label: INTENT_LABELS.recruiters, isDefault: defaultIntent === 'recruiters' },
+    { intent: 'investors', label: INTENT_LABELS.investors, isDefault: defaultIntent === 'investors' },
+    { intent: 'advisory', label: INTENT_LABELS.advisory, isDefault: defaultIntent === 'advisory' },
+    { intent: 'capital', label: INTENT_LABELS.capital, isDefault: defaultIntent === 'capital' },
+    { intent: 'funds', label: INTENT_LABELS.funds, isDefault: defaultIntent === 'funds' },
+    { intent: 'custom', label: INTENT_LABELS.custom, isDefault: false },
+  ];
+}
+
+/**
+ * Predict match quality
  */
 export function predictMatch(
   demandHealth: DatasetHealth,
@@ -553,55 +622,24 @@ export function predictMatch(
   const demandWithEmail = demandHealth.withEmail;
   const supplyWithEmail = supplyHealth.withEmail;
 
-  // Calculate match rate based on industry overlap
-  const demandIndustries = new Set(demandHealth.industries.map(i => i.toLowerCase()));
-  const supplyKeywords = supplyHealth.industries.map(i => i.toLowerCase()).join(' ');
+  let matchRate = 50;
 
-  let matchRate = 50; // Base rate for curated lists
-
-  // Boost if supply looks like recruiters/agencies
   if (supplyHealth.datasetType === 'supply') {
     matchRate += 30;
   }
 
-  // Boost if industries align
-  if (demandIndustries.size > 0) {
-    const industryMatch = Array.from(demandIndustries).some(ind =>
-      supplyKeywords.includes(ind) || supplyKeywords.includes('recruit') || supplyKeywords.includes('staff')
-    );
-    if (industryMatch) matchRate += 20;
-  }
-
   matchRate = Math.min(100, matchRate);
 
-  // Determine match quality
   let matchQuality: 'excellent' | 'good' | 'partial' | 'poor';
   if (matchRate >= 80) matchQuality = 'excellent';
   else if (matchRate >= 60) matchQuality = 'good';
   else if (matchRate >= 40) matchQuality = 'partial';
   else matchQuality = 'poor';
 
-  // Calculate intros possible (min of emails on each side)
-  const introsPossible = Math.min(demandWithEmail, supplyWithEmail * 5); // Each supply can handle multiple demands
-
-  // Enrichment needed (contacts without emails)
+  const introsPossible = Math.min(demandWithEmail, supplyWithEmail * 5);
   const enrichmentNeeded = (demandHealth.totalContacts - demandWithEmail) +
                           (supplyHealth.totalContacts - supplyWithEmail);
-
-  // Cost estimate: $0.015 per intro (AI) + $0.05 per enrichment
   const estimatedCost = (introsPossible * 0.015) + (enrichmentNeeded * 0.05);
-
-  // Generate reasoning
-  let reasoning = '';
-  if (matchRate >= 80) {
-    reasoning = `Excellent match: ${demandHealth.niche} companies paired with ${supplyHealth.niche || 'service providers'}. `;
-  } else if (matchRate >= 60) {
-    reasoning = `Good match potential. `;
-  } else {
-    reasoning = `Partial match - consider refining supply dataset. `;
-  }
-
-  reasoning += `${demandWithEmail} demand contacts and ${supplyWithEmail} supply contacts have emails.`;
 
   return {
     demandContacts: demandHealth.totalContacts,
@@ -613,12 +651,12 @@ export function predictMatch(
     introsPossible,
     enrichmentNeeded,
     estimatedCost: Math.round(estimatedCost * 100) / 100,
-    reasoning,
+    reasoning: `${NICHE_LABELS[demandHealth.niche]} → ${INTENT_LABELS[demandHealth.defaultIntent]}`,
   };
 }
 
 /**
- * Format filters for clipboard (copy-paste to scraper)
+ * Format filters for clipboard
  */
 export function formatFiltersForScraper(filters: CounterpartyFilters): string {
   return `=== ${filters.description} ===
@@ -644,118 +682,47 @@ ${filters.keywordsExclude.join(', ')}
 // LEADS FINDER JSON FORMATTER
 // =============================================================================
 
-/**
- * Exact allowed industry values for Leads Finder scraper
- * Must match exactly (lowercase with &)
- */
 const LEADS_FINDER_INDUSTRIES: string[] = [
-  "information technology & services", "construction", "marketing & advertising",
-  "real estate", "health, wellness & fitness", "management consulting",
-  "computer software", "internet", "retail", "financial services",
-  "consumer services", "hospital & health care", "automotive", "restaurants",
-  "education management", "food & beverages", "design", "hospitality",
-  "accounting", "events services", "nonprofit organization management",
-  "entertainment", "electrical/electronic manufacturing", "leisure, travel & tourism",
-  "professional training & coaching", "transportation/trucking/railroad",
-  "law practice", "apparel & fashion", "architecture & planning",
-  "mechanical or industrial engineering", "insurance", "telecommunications",
-  "human resources", "staffing & recruiting", "sports", "legal services",
-  "oil & energy", "media production", "machinery", "wholesale", "consumer goods",
-  "music", "photography", "medical practice", "cosmetics", "environmental services",
-  "graphic design", "business supplies & equipment", "renewables & environment",
-  "facilities services", "publishing", "food production", "arts & crafts",
-  "building materials", "civil engineering", "religious institutions",
-  "public relations & communications", "higher education", "printing",
-  "furniture", "mining & metals", "logistics & supply chain", "research",
-  "pharmaceuticals", "individual & family services", "medical devices",
-  "civic & social organization", "e-learning", "security & investigations",
-  "chemicals", "government administration", "online media", "investment management",
-  "farming", "writing & editing", "textiles", "mental health care",
-  "primary/secondary education", "broadcast media", "biotechnology",
-  "information services", "international trade & development",
-  "motion pictures & film", "consumer electronics", "banking", "import & export",
-  "industrial automation", "recreational facilities & services", "performing arts",
-  "utilities", "sporting goods", "fine art", "airlines/aviation",
-  "computer & network security", "maritime", "luxury goods & jewelry",
-  "veterinary", "venture capital & private equity", "wine & spirits", "plastics",
-  "aviation & aerospace", "commercial real estate", "computer games",
-  "packaging & containers", "executive office", "computer hardware",
-  "computer networking", "market research", "outsourcing/offshoring",
-  "program development", "translation & localization", "philanthropy",
-  "public safety", "alternative medicine", "museums & institutions",
-  "warehousing", "defense & space", "newspapers", "paper & forest products",
-  "law enforcement", "investment banking", "government relations", "fund-raising",
-  "think tanks", "glass, ceramics & concrete", "capital markets", "semiconductors",
-  "animation", "political organization", "package/freight delivery", "wireless",
-  "international affairs", "public policy", "libraries", "gambling & casinos",
-  "railroad manufacture", "ranching", "military", "fishery", "supermarkets",
-  "dairy", "tobacco", "shipbuilding", "judiciary", "alternative dispute resolution",
-  "nanotechnology", "agriculture", "legislative office"
+  "information technology & services", "staffing & recruiting", "pharmaceuticals",
+  "biotechnology", "financial services", "real estate", "commercial real estate",
+  "venture capital & private equity", "investment management", "banking",
+  "management consulting", "marketing & advertising", "computer software",
 ];
 
-/**
- * Map analyzer industry to Leads Finder exact enum value
- */
 function mapToLeadsFinderIndustry(industry: string): string | null {
   const normalized = industry.toLowerCase().replace(/ and /g, ' & ');
-
-  // Direct match
   if (LEADS_FINDER_INDUSTRIES.includes(normalized)) {
     return normalized;
   }
 
-  // Fuzzy match - find closest
-  for (const lfIndustry of LEADS_FINDER_INDUSTRIES) {
-    if (lfIndustry.includes(normalized) || normalized.includes(lfIndustry)) {
-      return lfIndustry;
-    }
-  }
-
-  // Common mappings
   const mappings: Record<string, string> = {
     'staffing and recruiting': 'staffing & recruiting',
-    'human resources': 'human resources',
+    'human resources': 'staffing & recruiting',
     'executive search': 'staffing & recruiting',
-    'it services': 'information technology & services',
-    'software': 'computer software',
-    'saas': 'computer software',
-    'tech': 'information technology & services',
-    'healthcare': 'hospital & health care',
     'biotech': 'biotechnology',
     'pharma': 'pharmaceuticals',
-    'legal': 'legal services',
-    'finance': 'financial services',
-    'marketing': 'marketing & advertising',
-    'advertising': 'marketing & advertising',
-    'consulting': 'management consulting',
+    'life sciences': 'biotechnology',
   };
 
-  const lowerIndustry = industry.toLowerCase();
   for (const [key, value] of Object.entries(mappings)) {
-    if (lowerIndustry.includes(key)) {
+    if (industry.toLowerCase().includes(key)) {
       return value;
     }
   }
 
-  return null; // Can't map - omit
+  return null;
 }
 
 /**
- * Format filters as Leads Finder JSON (copy-paste ready)
+ * Format filters as Leads Finder JSON
  */
 export function formatFiltersForLeadsFinder(filters: CounterpartyFilters): string {
-  // Map industries to exact Leads Finder values
   const mappedIndustries = filters.industriesInclude
     .map(mapToLeadsFinderIndustry)
     .filter((i): i is string => i !== null);
 
-  // Lowercase job titles
-  const jobTitles = filters.jobTitlesInclude.map(t => t.toLowerCase());
-
-  // Build Leads Finder config object
   const config: Record<string, any> = {};
 
-  // Only include fields with values
   if (mappedIndustries.length > 0) {
     config.company_industry = mappedIndustries;
   }
@@ -768,16 +735,12 @@ export function formatFiltersForLeadsFinder(filters: CounterpartyFilters): strin
     config.company_not_keywords = filters.keywordsExclude.map(k => k.toLowerCase());
   }
 
-  if (jobTitles.length > 0) {
-    config.contact_job_title = jobTitles;
+  if (filters.jobTitlesInclude.length > 0) {
+    config.contact_job_title = filters.jobTitlesInclude.map(t => t.toLowerCase());
   }
 
-  // Sane defaults
   config.email_status = ["validated"];
-  config.fetch_count = 100;
-
-  // contact_location: intentionally omitted - user adds manually
-  // funding, size, revenue: omitted - can't confidently infer
+  // NOTE: fetch_count intentionally left unset — user controls via Settings
 
   return JSON.stringify(config, null, 2);
 }

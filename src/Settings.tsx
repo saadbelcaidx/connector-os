@@ -298,8 +298,8 @@ export default function Settings() {
       const health = await analyzeDatasetHealth(items, aiConfig);
       setDemandHealth(health);
 
-      // Generate counterparty filters
-      const filters = await generateCounterpartyFilters(health, aiConfig);
+      // Generate counterparty filters (use defaultIntent from health, pass aiConfig separately)
+      const filters = await generateCounterpartyFilters(health, undefined, aiConfig);
       setCounterpartyFilters(filters);
 
     } catch (e: any) {
