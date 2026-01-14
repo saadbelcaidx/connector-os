@@ -311,8 +311,8 @@ function buildNarrative(
     why,
     neutral: true,
     demandValue,
-    supplyRole: supplyRole || 'teams in this space', // Fallback for display only
-    overlap: overlap || '', // Empty string if null (intro gen will handle)
+    supplyRole: supplyRole || '', // Empty if no valid match (intro gen will skip COS)
+    overlap: overlap || '', // Empty if no valid COS
   };
 }
 

@@ -168,6 +168,18 @@ export async function generateDemandIntro(
     };
   }
 
+  // Gate 2: No valid COS — skip AI, use deterministic fallback
+  // AI without COS produces garbage like "teams in this space working closely with companies"
+  if (!ctx.connectorOverlap) {
+    console.log('[IntroGenerator] No valid COS, using deterministic fallback');
+    return {
+      intro: canonicalFallback('demand', ctx),
+      validated: true,
+      regenerated: false,
+      attempts: 1,
+    };
+  }
+
   // Build canonical context for prompt
   const introCtx: IntroContext = {
     firstName: ctx.firstName || 'there',
@@ -235,6 +247,17 @@ export async function generateSupplyIntro(
 ): Promise<IntroResult> {
   // Gate 1: AI not configured — use canonical fallback
   if (!config?.enabled || !config.apiKey) {
+    return {
+      intro: canonicalFallback('supply', ctx),
+      validated: true,
+      regenerated: false,
+      attempts: 1,
+    };
+  }
+
+  // Gate 2: No valid COS — skip AI, use deterministic fallback
+  if (!ctx.connectorOverlap) {
+    console.log('[IntroGenerator] No valid COS for supply, using deterministic fallback');
     return {
       intro: canonicalFallback('supply', ctx),
       validated: true,
