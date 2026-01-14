@@ -53,6 +53,9 @@ export interface IntroArgs {
     contactTitle?: string;
     preSignalContext?: string;
     matchReason?: string;  // PHASE-1 FIX: Neutral "why this match" (e.g., "Industry match")
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap?: string;  // e.g., "I connect payments teams working closely with advisory firms..."
+    supplyRole?: string;        // e.g., "payments product teams"
   };
   connectorMode?: ConnectorMode | null;
   jobSignal?: {
@@ -93,6 +96,9 @@ function canonicalFallback(args: IntroArgs): string {
     contactTitle: args.context.contactTitle,
     preSignalContext: args.context.preSignalContext,
     hasWellfoundData: hasJobEvidence(args.jobSignal),
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap: args.context.connectorOverlap,
+    supplyRole: args.context.supplyRole,
   };
 
   return composeIntro({
@@ -141,6 +147,9 @@ export async function generateIntro(
       contactTitle: args.context.contactTitle,
       preSignalContext: args.context.preSignalContext,
       hasWellfoundData: hasJobEvidence(args.jobSignal),
+      // COS (Connector Overlap Statement) — relational copy
+      connectorOverlap: args.context.connectorOverlap,
+      supplyRole: args.context.supplyRole,
     };
 
     const validation = validateIntro(result, ctx);
@@ -179,6 +188,9 @@ async function callAIProvider(cfg: AIConfig, args: IntroArgs): Promise<string> {
     contactTitle: args.context.contactTitle,
     preSignalContext: args.context.preSignalContext,
     hasWellfoundData: hasJobEvidence(args.jobSignal),
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap: args.context.connectorOverlap,
+    supplyRole: args.context.supplyRole,
   };
 
   const prompt = buildCanonicalPrompt({

@@ -47,6 +47,9 @@ interface DemandContext {
   connectorMode?: string;
   // Wellfound data presence flag
   hasWellfoundData?: boolean;
+  // COS (Connector Overlap Statement) — relational copy from matching
+  connectorOverlap?: string;
+  supplyRole?: string;
 }
 
 interface SupplyContext {
@@ -71,6 +74,9 @@ interface SupplyContext {
   connectorMode?: string;
   // Wellfound data presence flag
   hasWellfoundData?: boolean;
+  // COS (Connector Overlap Statement) — relational copy from matching
+  connectorOverlap?: string;
+  supplyRole?: string;
 }
 
 interface IntroResult {
@@ -132,6 +138,9 @@ function canonicalFallback(side: IntroSide, ctx: DemandContext | SupplyContext):
     contactTitle: side === 'demand' ? (ctx as DemandContext).contactTitle || undefined : undefined,
     preSignalContext: ctx.preSignalContext,
     hasWellfoundData: ctx.hasWellfoundData,
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap: ctx.connectorOverlap,
+    supplyRole: ctx.supplyRole,
   };
 
   return composeIntro({
@@ -166,6 +175,9 @@ export async function generateDemandIntro(
     contactTitle: ctx.contactTitle || undefined,
     preSignalContext: ctx.preSignalContext,
     hasWellfoundData: ctx.hasWellfoundData,
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap: ctx.connectorOverlap,
+    supplyRole: ctx.supplyRole,
   };
 
   // PHASE 4: Use canonical prompt from introDoctrine
@@ -237,6 +249,9 @@ export async function generateSupplyIntro(
     company: ctx.exampleCompany || 'a company',
     preSignalContext: ctx.preSignalContext,
     hasWellfoundData: ctx.hasWellfoundData,
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap: ctx.connectorOverlap,
+    supplyRole: ctx.supplyRole,
   };
 
   // PHASE 4: Use canonical prompt from introDoctrine
@@ -299,7 +314,9 @@ export function buildDemandContext(
   roleCount: number = 1,
   preSignalContext?: string,
   connectorMode?: string,
-  hasWellfoundData?: boolean
+  hasWellfoundData?: boolean,
+  connectorOverlap?: string,
+  supplyRole?: string
 ): DemandContext {
   return {
     firstName: enrichedFirstName || record.firstName,
@@ -320,6 +337,9 @@ export function buildDemandContext(
     preSignalContext,
     connectorMode,
     hasWellfoundData,
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap,
+    supplyRole,
   };
 }
 
@@ -334,7 +354,9 @@ export function buildSupplyContext(
   demandRoleCount?: number,
   preSignalContext?: string,
   connectorMode?: string,
-  hasWellfoundData?: boolean
+  hasWellfoundData?: boolean,
+  connectorOverlap?: string,
+  supplyRole?: string
 ): SupplyContext {
   return {
     firstName: enrichedFirstName || supplyRecord.firstName,
@@ -356,6 +378,9 @@ export function buildSupplyContext(
     preSignalContext,
     connectorMode,
     hasWellfoundData,
+    // COS (Connector Overlap Statement) — relational copy
+    connectorOverlap,
+    supplyRole,
   };
 }
 

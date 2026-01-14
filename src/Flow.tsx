@@ -429,12 +429,12 @@ function safeRender(value: unknown): string {
 
 /**
  * Normalize presignal/context values to string at state boundaries.
- * JSONB columns default to {} which is truthy — this catches that.
+ * After migration to TEXT columns: handles null/undefined, legacy JSONB {}, and strings.
  */
 function normalizeToString(value: unknown): string {
   if (value == null) return '';
   if (typeof value === 'string') return value;
-  if (typeof value === 'object') return ''; // {} from JSONB default
+  if (typeof value === 'object') return ''; // Legacy JSONB default {} → empty
   return String(value);
 }
 
@@ -475,7 +475,7 @@ function toUserError(code: ErrorCode, detail?: string): string {
 // =============================================================================
 
 interface FlowState {
-  step: 'upload' | 'validating' | 'matching' | 'enriching' | 'generating' | 'ready' | 'sending' | 'complete';
+  step: 'upload' | 'validating' | 'matching' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
 
   // Source tracking (for UI labels)
   isHubFlow: boolean;
@@ -720,6 +720,11 @@ export default function Flow() {
             fetchSignals: data?.fetch_signals === true, // default false
           });
 
+          // VERIFICATION LOG: Presignal loaded from DB
+          const loadedDemand = normalizeToString(data?.presignal_demand);
+          const loadedSupply = normalizeToString(data?.presignal_supply);
+          console.log(`[Settings] presignalDemand loaded type=${typeof data?.presignal_demand} valueLen=${loadedDemand.length}`);
+          console.log(`[Settings] presignalSupply loaded type=${typeof data?.presignal_supply} valueLen=${loadedSupply.length}`);
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
           return;
         }
@@ -770,6 +775,11 @@ export default function Flow() {
           fetchSignals: s.fetchSignals === true, // default false
         });
 
+        // VERIFICATION LOG: Presignal loaded from localStorage
+        const loadedDemand = normalizeToString(s.presignalDemand);
+        const loadedSupply = normalizeToString(s.presignalSupply);
+        console.log(`[Settings] presignalDemand loaded type=${typeof s.presignalDemand} valueLen=${loadedDemand.length}`);
+        console.log(`[Settings] presignalSupply loaded type=${typeof s.presignalSupply} valueLen=${loadedSupply.length}`);
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
       } catch (e) {
         console.error('[Flow] Settings load error:', e);
@@ -1290,15 +1300,10 @@ export default function Flow() {
       enrichedSupply,
     }));
 
-    // Generate intros immediately after enrichment (READY = fully materialized)
-    setState(prev => ({ ...prev, step: 'generating' }));
-    await runIntroGeneration(matching, enrichedDemand, enrichedSupply);
-
-    // Now move to ready — intros exist, state is exportable and sendable
-    setState(prev => ({
-      ...prev,
-      step: 'ready',
-    }));
+    // FIX: Go to route_context step BEFORE intro generation
+    // User can now enter presignal before intros are generated
+    setState(prev => ({ ...prev, step: 'route_context' }));
+    console.log('[Flow] Enrichment complete — waiting for route context before generating intros');
   };
 
   // =============================================================================
@@ -1382,13 +1387,17 @@ export default function Flow() {
 
         // Build rich context from ALL available data
         // Pass: firstName, enriched title (e.g., "VP Engineering"), role count
+        // COS: Pass connector overlap statement for relational copy
         const ctx = buildDemandContext(
           match.demand,
           firstName,
           enriched.title || undefined,  // Enriched title from Apollo
           roleCount,
           demandPreSignalContext,  // CANONICAL: Same presignal for ALL demand
-          state.connectorMode || undefined  // CANONICAL: Mode for language routing (biotech vs recruiting)
+          state.connectorMode || undefined,  // CANONICAL: Mode for language routing (biotech vs recruiting)
+          undefined,  // hasWellfoundData
+          match.narrative?.overlap,  // COS: Connector Overlap Statement
+          match.narrative?.supplyRole  // COS: Supply role for CTA
         );
         console.log(`[Flow] Generating demand intro for ${firstName} at ${match.demand.company}...`);
         console.log(`[Flow] Using per-side presignalDemand:`, demandPreSignalContext || '(none)');
@@ -1468,6 +1477,7 @@ export default function Flow() {
       // ANTIFRAGILE PATH: AIService.generateIntro (signal-only, no enrichment)
       // FIX 1 + FIX 3: Pass connector mode and job signal for mode-appropriate language
       // PHASE-1 FIX: Pass match narrative "why" for neutral relevance explanation
+      // COS: Pass connector overlap statement for relational copy
       const introResult = await generateIntro(
         {
           type: 'supply',
@@ -1480,6 +1490,9 @@ export default function Flow() {
             preSignalContext: supplyPreSignalContext,
             // PHASE-1 FIX: Neutral "why this match" reason
             matchReason: agg.bestMatch.narrative?.why,
+            // COS (Connector Overlap Statement) — relational copy
+            connectorOverlap: agg.bestMatch.narrative?.overlap,
+            supplyRole: agg.bestMatch.narrative?.supplyRole,
           },
           // FIX 1: Pass connector mode
           connectorMode: state.connectorMode,
@@ -1562,49 +1575,32 @@ export default function Flow() {
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
-  // PRESIGNAL CHANGE DETECTION — Invalidate and regenerate intros if context changes
   // =============================================================================
+  // PRESIGNAL → INTRO GENERATION HANDLER (replaces dual useEffect)
+  // =============================================================================
+  // FIX: Single handler for generating intros after presignal is set
+  // Called from route_context step OR when regenerating in ready step
 
-  useEffect(() => {
-    // Only trigger when in READY state (intros already exist)
-    if (state.step !== 'ready') return;
-    if (!state.matchingResult) return;
-
-    const currentDemand = settings?.presignalDemand || '';
-    const currentSupply = settings?.presignalSupply || '';
-    const prevDemand = presignalRef.current.demand;
-    const prevSupply = presignalRef.current.supply;
-
-    // Check if presignal changed
-    const demandChanged = currentDemand !== prevDemand;
-    const supplyChanged = currentSupply !== prevSupply;
-
-    if (demandChanged || supplyChanged) {
-      console.log('[Flow] Presignal context changed, regenerating intros...');
-      console.log(`  - Demand: "${prevDemand}" → "${currentDemand}"`);
-      console.log(`  - Supply: "${prevSupply}" → "${currentSupply}"`);
-
-      // Update ref
-      presignalRef.current = { demand: currentDemand, supply: currentSupply };
-
-      // Regenerate intros with new context
-      (async () => {
-        setState(prev => ({ ...prev, step: 'generating' }));
-        await runIntroGeneration(state.matchingResult!, state.enrichedDemand, state.enrichedSupply);
-        setState(prev => ({ ...prev, step: 'ready' }));
-      })();
+  const generateIntrosWithPresignal = useCallback(async () => {
+    if (!state.matchingResult) {
+      console.error('[Flow] Cannot generate intros: no matching result');
+      return;
     }
-  }, [settings?.presignalDemand, settings?.presignalSupply, state.step, state.matchingResult, state.enrichedDemand, state.enrichedSupply]);
 
-  // Track initial presignal values when entering READY state
-  useEffect(() => {
-    if (state.step === 'ready') {
-      presignalRef.current = {
-        demand: settings?.presignalDemand || '',
-        supply: settings?.presignalSupply || '',
-      };
-    }
-  }, [state.step, settings?.presignalDemand, settings?.presignalSupply]);
+    // VERIFICATION LOG: Log presignal values before intro generation
+    const demandPresignal = settings?.presignalDemand || '';
+    const supplyPresignal = settings?.presignalSupply || '';
+    console.log(`[Flow] presignalDemand source=ui valueLen=${demandPresignal.length}`);
+    console.log(`[Flow] presignalSupply source=ui valueLen=${supplyPresignal.length}`);
+
+    // Update ref to current values (single update point, no race condition)
+    presignalRef.current = { demand: demandPresignal, supply: supplyPresignal };
+
+    // Generate intros
+    setState(prev => ({ ...prev, step: 'generating' }));
+    await runIntroGeneration(state.matchingResult, state.enrichedDemand, state.enrichedSupply);
+    setState(prev => ({ ...prev, step: 'ready' }));
+  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, settings?.presignalDemand, settings?.presignalSupply]);
 
   // =============================================================================
   // CSV EXPORT HANDLER — Pure extraction from in-memory state
@@ -2232,6 +2228,135 @@ export default function Flow() {
             </motion.div>
           )}
 
+          {/* ROUTE CONTEXT — FIX: Shows BEFORE intro generation */}
+          {state.step === 'route_context' && (
+            <motion.div
+              key="route_context"
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-center"
+            >
+              {(() => {
+                // Calculate enriched counts
+                const demandMatches = state.matchingResult?.demandMatches || [];
+                const supplyAggregates = state.matchingResult?.supplyAggregates || [];
+                const demandEnriched = demandMatches.filter(m => {
+                  const e = state.enrichedDemand.get(m.demand.domain);
+                  return e?.success && e?.email;
+                }).length;
+                const supplyEnriched = supplyAggregates.filter(a => {
+                  const e = state.enrichedSupply.get(a.supply.domain);
+                  return e?.success && e?.email;
+                }).length;
+                const totalEnriched = demandEnriched + supplyEnriched;
+                const isEditingContext = editingPresignalSide !== null;
+                const currentContext = settings?.presignalDemand || settings?.presignalSupply || '';
+
+                return (
+                  <div className="flex flex-col items-center">
+                    {/* Count */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-center mb-8"
+                    >
+                      <span className="text-[48px] font-light text-white/90 tracking-tight">{totalEnriched}</span>
+                      <p className="text-[13px] text-white/40 mt-1">Contacts Enriched</p>
+                    </motion.div>
+
+                    {/* Route Context Input */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.2 }}
+                      className="w-full max-w-sm mb-8"
+                    >
+                      {isEditingContext ? (
+                        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08]">
+                          <p className="text-[11px] text-white/40 mb-3 text-center">Route Context</p>
+                          <textarea
+                            value={presignalText}
+                            onChange={(e) => setPresignalText(e.target.value)}
+                            placeholder="e.g., I've been speaking with a few founders who recently raised..."
+                            className="w-full h-20 bg-transparent text-[13px] text-white/70 resize-none outline-none placeholder:text-white/20 leading-relaxed"
+                            autoFocus
+                          />
+                          <div className="flex justify-end gap-2 mt-3">
+                            <button
+                              onClick={cancelEditPresignal}
+                              className="px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={async () => {
+                                await savePresignal('demand');
+                                if (presignalText.trim()) {
+                                  setSettings(prev => prev ? { ...prev, presignalSupply: presignalText.trim() } : prev);
+                                  if (user?.id) {
+                                    await supabase.from('operator_settings').update({ presignal_supply: presignalText.trim() }).eq('user_id', user.id);
+                                  }
+                                }
+                              }}
+                              disabled={savingPresignal}
+                              className="px-4 py-1.5 text-[11px] bg-white/10 hover:bg-white/15 text-white/80 rounded-lg transition-all disabled:opacity-50"
+                            >
+                              {savingPresignal ? 'Saving...' : 'Save'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : currentContext ? (
+                        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-[10px] text-white/30 uppercase tracking-wider">Route Context</span>
+                            <button
+                              onClick={() => startEditPresignal('demand')}
+                              className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                          <p className="text-[13px] text-white/60 leading-relaxed text-center">{safeRender(currentContext)}</p>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => startEditPresignal('demand')}
+                          className="w-full group"
+                        >
+                          <div className="p-4 rounded-xl border border-dashed border-white/[0.08] hover:border-white/[0.15] transition-all duration-300">
+                            <p className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors text-center">
+                              Route Context <span className="text-white/20">(Optional)</span>
+                            </p>
+                            <p className="text-[10px] text-white/20 mt-1 text-center">
+                              Prior conversations or observations
+                            </p>
+                          </div>
+                        </button>
+                      )}
+                    </motion.div>
+
+                    {/* Generate Intros Button */}
+                    <motion.button
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                      onClick={generateIntrosWithPresignal}
+                      disabled={isEditingContext || savingPresignal}
+                      className="px-8 py-3 rounded-xl bg-gradient-to-b from-emerald-500/20 to-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[13px] font-medium hover:from-emerald-500/30 hover:to-emerald-500/15 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Generate Intros
+                    </motion.button>
+
+                    <p className="mt-4 text-[10px] text-white/25">
+                      {currentContext ? 'Context will be used in all intros' : 'Skip context to use neutral intros'}
+                    </p>
+                  </div>
+                );
+              })()}
+            </motion.div>
+          )}
+
           {/* GENERATING */}
           {state.step === 'generating' && (
             <motion.div
@@ -2670,7 +2795,7 @@ export default function Flow() {
                           );
                         }
 
-                        // Editing
+                        // Editing — In READY step, save triggers regeneration
                         if (isEditingContext) {
                           return (
                             <motion.div
@@ -2698,17 +2823,18 @@ export default function Flow() {
                                     // Save to both sides (route-level context)
                                     await savePresignal('demand');
                                     if (presignalText.trim()) {
-                                      // Also sync to supply side
                                       setSettings(prev => prev ? { ...prev, presignalSupply: presignalText.trim() } : prev);
                                       if (user?.id) {
                                         await supabase.from('operator_settings').update({ presignal_supply: presignalText.trim() }).eq('user_id', user.id);
                                       }
                                     }
+                                    // FIX: Regenerate intros with new context
+                                    await generateIntrosWithPresignal();
                                   }}
                                   disabled={savingPresignal}
-                                  className="px-4 py-1.5 text-[11px] bg-white/10 hover:bg-white/15 text-white/80 rounded-lg transition-all disabled:opacity-50"
+                                  className="px-4 py-1.5 text-[11px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-all disabled:opacity-50"
                                 >
-                                  {savingPresignal ? 'Saving...' : 'Save'}
+                                  {savingPresignal ? 'Saving...' : 'Save & Regenerate'}
                                 </button>
                               </div>
                             </motion.div>
@@ -2743,10 +2869,12 @@ export default function Flow() {
                                         localStorage.setItem('guest_settings', JSON.stringify(parsed));
                                       }
                                     }
+                                    // FIX: Regenerate intros without context
+                                    await generateIntrosWithPresignal();
                                   }}
                                   className="text-[10px] text-white/30 hover:text-red-400/70 transition-colors"
                                 >
-                                  Clear
+                                  Clear & Regenerate
                                 </button>
                               </div>
                             </div>

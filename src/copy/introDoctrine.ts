@@ -47,6 +47,9 @@ export interface IntroContext {
   wellfoundJobCount?: number;
   // PHASE-1 FIX: Neutral "why this match" reason (e.g., "Industry match", "Signal alignment")
   matchReason?: string;
+  // COS (Connector Overlap Statement) — relational copy
+  connectorOverlap?: string;  // e.g., "I connect payments teams working closely with advisory firms..."
+  supplyRole?: string;        // e.g., "payments product teams" (for CTA: "connect you with the {supplyRole}")
 }
 
 export interface ComposeIntroArgs {
@@ -295,9 +298,27 @@ export function isWellfoundAllowed(text: string, hasWellfoundData: boolean): boo
 
 export const CANONICAL_FALLBACKS = {
   demand: (ctx: IntroContext, mode: ConnectorMode = 'b2b_general'): string => {
-    // PHASE-1 FIX: Always use mode-specific language, never generic "companies"
-    const industryPhrase = MODE_INDUSTRY_PHRASES[mode].demand;
     const opening = CANONICAL_OPENINGS.demand;
+
+    // ==========================================================================
+    // COS PATH: If connectorOverlap exists, use relational copy structure
+    // This is the BEST intro — explains why without timing claims
+    // ==========================================================================
+    if (ctx.connectorOverlap) {
+      const supplyRoleCTA = ctx.supplyRole || 'the team on that side';
+      // If presignal also exists, weave it in
+      if (hasValidPresignal(ctx.preSignalContext)) {
+        const bridge = transformPresignalToBridge(ctx.preSignalContext!);
+        return `Hey ${ctx.firstName} — ${opening}.\n\n${ctx.connectorOverlap}\n\n${ctx.company} stood out. ${bridge}.\n\nIf it's useful, I can connect you with ${supplyRoleCTA} — and if not, no worries at all.`;
+      }
+      // COS without presignal — still great
+      return `Hey ${ctx.firstName} — ${opening}.\n\n${ctx.connectorOverlap}\n\n${ctx.company} stood out as a clean fit.\n\nIf it's useful, I can connect you with ${supplyRoleCTA} — and if not, no worries at all.`;
+    }
+
+    // ==========================================================================
+    // LEGACY PATH: No COS, use industry phrase fallback
+    // ==========================================================================
+    const industryPhrase = MODE_INDUSTRY_PHRASES[mode].demand;
 
     // If presignal exists, use presignal-aware structure
     if (hasValidPresignal(ctx.preSignalContext)) {
@@ -312,6 +333,22 @@ export const CANONICAL_FALLBACKS = {
   supply: (ctx: IntroContext, mode: ConnectorMode = 'b2b_general'): string => {
     const opening = CANONICAL_OPENINGS.supply;
 
+    // ==========================================================================
+    // COS PATH: If connectorOverlap exists, use relational copy structure
+    // ==========================================================================
+    if (ctx.connectorOverlap) {
+      // If presignal also exists, weave it in
+      if (hasValidPresignal(ctx.preSignalContext)) {
+        const bridge = transformPresignalToBridge(ctx.preSignalContext!);
+        return `Hey ${ctx.firstName} — ${opening}.\n\n${ctx.connectorOverlap}\n\n${bridge}. Your work came up as a fit.\n\nHappy to connect you if you're interested.`;
+      }
+      // COS without presignal
+      return `Hey ${ctx.firstName} — ${opening}.\n\n${ctx.connectorOverlap}\n\nYour work stood out.\n\nHappy to connect you if you're interested.`;
+    }
+
+    // ==========================================================================
+    // LEGACY PATH: No COS, use generic fallback
+    // ==========================================================================
     // If presignal exists, use presignal-aware structure
     if (hasValidPresignal(ctx.preSignalContext)) {
       const bridge = transformPresignalToBridge(ctx.preSignalContext!);

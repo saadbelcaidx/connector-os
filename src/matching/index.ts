@@ -58,6 +58,10 @@ export interface MatchNarrative {
   supplyType: string;      // e.g., "engineering recruiter", "pharma BD"
   why: string;             // First matching reason
   neutral: true;           // Enforces no timing claims
+  // COS (Connector Overlap Statement) — relational copy
+  demandValue: string;     // e.g., "advisory firms focused on long-term, personalized planning"
+  supplyRole: string;      // e.g., "payments teams"
+  overlap: string;         // e.g., "I connect payments teams working closely with advisory firms..."
 }
 
 export interface Match {
@@ -256,12 +260,164 @@ function buildNarrative(
   // First reason as "why" (fallback: generic)
   const why = reasons[0] || 'Overlap detected';
 
+  // ==========================================================================
+  // COS (Connector Overlap Statement) — Deterministic relational copy
+  // ==========================================================================
+
+  // Extract demandValue from description (deterministic, non-AI)
+  const demandValue = extractDemandValue(demand);
+
+  // Extract supplyRole from title (deterministic, non-AI)
+  const supplyRole = extractSupplyRole(supply);
+
+  // Construct overlap sentence
+  const overlap = `I connect ${supplyRole} working closely with ${demandValue}.`;
+
   return {
     demandType,
     supplyType,
     why,
     neutral: true,
+    demandValue,
+    supplyRole,
+    overlap,
   };
+}
+
+/**
+ * COS: Extract demand value from description (deterministic, non-AI)
+ * Looks for keywords that indicate company philosophy/focus.
+ */
+function extractDemandValue(demand: NormalizedRecord): string {
+  const desc = toStringSafe(demand.companyDescription).toLowerCase();
+  const industry = toStringSafe(
+    Array.isArray(demand.industry) ? demand.industry[0] : demand.industry
+  ).toLowerCase();
+
+  // Financial services / wealth management
+  if (/wealth|financial planning|advisory|cfp|fiduciary/.test(desc) || /wealth|financial/.test(industry)) {
+    if (/personalized|client.first|client experience|boutique/.test(desc)) {
+      return 'advisory firms focused on long-term, personalized planning';
+    }
+    if (/trust|estate|insurance/.test(desc)) {
+      return 'advisory firms offering comprehensive planning and trust services';
+    }
+    return 'financial advisory firms';
+  }
+
+  // Tech / SaaS
+  if (/saas|software|platform|tech|startup/.test(desc) || /software|technology/.test(industry)) {
+    if (/enterprise|b2b/.test(desc)) {
+      return 'enterprise software companies';
+    }
+    if (/scale|growth|series/.test(desc)) {
+      return 'growth-stage tech companies';
+    }
+    return 'technology companies';
+  }
+
+  // Healthcare / Biotech
+  if (/biotech|pharma|clinical|therapeutic|life science/.test(desc) || /biotech|pharma|healthcare/.test(industry)) {
+    if (/clinical.stage|pipeline/.test(desc)) {
+      return 'clinical-stage biotech companies';
+    }
+    return 'healthcare and life sciences companies';
+  }
+
+  // Payments / Fintech
+  if (/payment|fintech|merchant|acquiring|processing/.test(desc) || /fintech|payments/.test(industry)) {
+    return 'payments and financial infrastructure companies';
+  }
+
+  // Real estate
+  if (/real estate|property|cre|commercial/.test(desc) || /real estate/.test(industry)) {
+    return 'real estate and property companies';
+  }
+
+  // Manufacturing / Industrial
+  if (/manufacturing|industrial|supply chain|logistics/.test(desc) || /manufacturing/.test(industry)) {
+    return 'manufacturing and industrial companies';
+  }
+
+  // Generic fallback using industry
+  if (industry && industry.length > 2) {
+    return `${industry} companies`;
+  }
+
+  return 'companies in this space';
+}
+
+/**
+ * COS: Extract supply role from title (deterministic, non-AI)
+ * Maps title keywords to connector-friendly role categories.
+ */
+function extractSupplyRole(supply: NormalizedRecord): string {
+  const title = toStringSafe(supply.title).toLowerCase();
+  const industry = toStringSafe(
+    Array.isArray(supply.industry) ? supply.industry[0] : supply.industry
+  ).toLowerCase();
+
+  // Product / Payments teams
+  if (/product owner|product manager|product lead/.test(title)) {
+    if (/payment|merchant|acquiring/.test(title) || /payment|fintech/.test(industry)) {
+      return 'payments product teams';
+    }
+    return 'product teams';
+  }
+
+  // Partnership / BD teams
+  if (/partner|bd|business development|alliance/.test(title)) {
+    if (/payment|merchant|fintech/.test(industry)) {
+      return 'payments partnership teams';
+    }
+    return 'partnership teams';
+  }
+
+  // Recruiting / Talent
+  if (/recruit|staffing|talent|headhunt/.test(title)) {
+    if (/tech|engineer|software/.test(title) || /technology/.test(industry)) {
+      return 'technical recruiting teams';
+    }
+    if (/finance|accounting/.test(title)) {
+      return 'finance recruiting specialists';
+    }
+    if (/executive|c.suite|leadership/.test(title)) {
+      return 'executive search teams';
+    }
+    return 'recruiting teams';
+  }
+
+  // Consulting / Advisory
+  if (/consultant|advisor|advisory/.test(title)) {
+    return 'consulting teams';
+  }
+
+  // Agency
+  if (/agency|creative|marketing/.test(title)) {
+    return 'agency teams';
+  }
+
+  // Sales / Revenue
+  if (/sales|account executive|revenue/.test(title)) {
+    return 'sales teams';
+  }
+
+  // Engineering / Technical
+  if (/engineer|developer|architect/.test(title)) {
+    return 'engineering teams';
+  }
+
+  // Finance / Operations
+  if (/finance|cfo|controller|fp&a/.test(title)) {
+    return 'finance teams';
+  }
+
+  // Generic fallback using industry
+  if (industry && industry.length > 2) {
+    return `${industry} teams`;
+  }
+
+  return 'teams in this space';
 }
 
 /**
