@@ -363,43 +363,64 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
 
 /**
  * Detect common signal category across multiple matches.
- * Used for aggregated supply intros: "5 companies hiring engineers"
+ * MODE-AWARE: Uses appropriate language per connector mode.
+ * - recruiting: "hiring engineers", "scaling sales"
+ * - biotech: "licensing opportunities", "partnership activity"
+ * - other: "activity", "momentum"
  */
-function detectCommonSignal(signals: string[]): string {
-  if (signals.length === 0) return 'hiring';
+function detectCommonSignal(signals: string[], mode?: ConnectorMode | null): string {
+  // Mode-specific defaults (avoid "hiring" for non-recruiting modes)
+  const MODE_DEFAULTS: Record<string, string> = {
+    recruiting: 'hiring',
+    biotech_licensing: 'licensing activity',
+    wealth_management: 'growth activity',
+    real_estate_capital: 'deal activity',
+    enterprise_partnerships: 'partnership activity',
+    logistics: 'operational activity',
+    crypto: 'protocol activity',
+    custom: 'activity',
+  };
 
-  // Count occurrences of each category
-  const categories: Record<string, number> = {};
+  const defaultSignal = MODE_DEFAULTS[mode || ''] || 'activity';
 
-  for (const signal of signals) {
-    const lower = (signal || '').toLowerCase();
+  if (signals.length === 0) return defaultSignal;
 
-    if (lower.includes('engineer') || lower.includes('developer') || lower.includes('software')) {
-      categories['hiring engineers'] = (categories['hiring engineers'] || 0) + 1;
-    } else if (lower.includes('sales') || lower.includes('account executive')) {
-      categories['scaling sales'] = (categories['scaling sales'] || 0) + 1;
-    } else if (lower.includes('marketing') || lower.includes('growth')) {
-      categories['growing marketing'] = (categories['growing marketing'] || 0) + 1;
-    } else if (lower.includes('product') || lower.includes('design')) {
-      categories['building product'] = (categories['building product'] || 0) + 1;
-    } else if (lower.includes('data') || lower.includes('analyst')) {
-      categories['hiring data teams'] = (categories['hiring data teams'] || 0) + 1;
-    } else {
-      categories['hiring'] = (categories['hiring'] || 0) + 1;
+  // For recruiting mode, use detailed hiring categories
+  if (mode === 'recruiting') {
+    const categories: Record<string, number> = {};
+
+    for (const signal of signals) {
+      const lower = (signal || '').toLowerCase();
+
+      if (lower.includes('engineer') || lower.includes('developer') || lower.includes('software')) {
+        categories['hiring engineers'] = (categories['hiring engineers'] || 0) + 1;
+      } else if (lower.includes('sales') || lower.includes('account executive')) {
+        categories['scaling sales'] = (categories['scaling sales'] || 0) + 1;
+      } else if (lower.includes('marketing') || lower.includes('growth')) {
+        categories['growing marketing'] = (categories['growing marketing'] || 0) + 1;
+      } else if (lower.includes('product') || lower.includes('design')) {
+        categories['building product'] = (categories['building product'] || 0) + 1;
+      } else if (lower.includes('data') || lower.includes('analyst')) {
+        categories['hiring data teams'] = (categories['hiring data teams'] || 0) + 1;
+      } else {
+        categories['hiring'] = (categories['hiring'] || 0) + 1;
+      }
     }
+
+    let maxCategory = 'hiring';
+    let maxCount = 0;
+    for (const [cat, count] of Object.entries(categories)) {
+      if (count > maxCount) {
+        maxCount = count;
+        maxCategory = cat;
+      }
+    }
+    return maxCategory;
   }
 
-  // Return most common category
-  let maxCategory = 'hiring';
-  let maxCount = 0;
-  for (const [cat, count] of Object.entries(categories)) {
-    if (count > maxCount) {
-      maxCount = count;
-      maxCategory = cat;
-    }
-  }
-
-  return maxCategory;
+  // For non-recruiting modes, use generic activity language
+  // Don't use "hiring" - it's mode-specific to recruiting
+  return defaultSignal;
 }
 
 // =============================================================================
@@ -1458,7 +1479,8 @@ export default function Flow() {
 
       const exampleCompany = agg.bestMatch.demand.company;  // ONE example only
       const allSignals = agg.matches.map(m => m.demand.signal || '');
-      const commonSignal = detectCommonSignal(allSignals);
+      // MODE-AWARE: Pass connector mode for appropriate language
+      const commonSignal = detectCommonSignal(allSignals, state.connectorMode);
 
       // SIGNAL CONTRACT: Sanitize before intro generation
       const sanitizedSignal = sanitizeSignal(commonSignal);
