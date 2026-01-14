@@ -476,6 +476,14 @@ export function buildCanonicalPrompt(args: {
   // PHASE-1 FIX: Include mode-specific industry phrase so AI knows the niche
   const modeIndustryPhrase = MODE_INDUSTRY_PHRASES[mode][side];
 
+  // ==========================================================================
+  // COS PATH: If connectorOverlap exists, AI MUST use it verbatim
+  // This ensures mode-specific vocabulary (from buyerSellerTypes.ts) is used
+  // ==========================================================================
+  const cosLine = ctx.connectorOverlap
+    ? `\n=== CONNECTOR OVERLAP STATEMENT (USE THIS VERBATIM) ===\n${ctx.connectorOverlap}\nYOU MUST use this exact phrasing for the "[X] with [Y]" part of the intro. Do NOT make up your own.\n`
+    : '';
+
   return `Write a 2-sentence intro email for a connector reaching out (${side.toUpperCase()} side).
 
 === CONTEXT ===
@@ -483,7 +491,7 @@ CONTACT: ${ctx.firstName}${ctx.contactTitle ? `, ${ctx.contactTitle}` : ''} at $
 ${ctx.industry ? `INDUSTRY: ${ctx.industry}` : ''}
 MODE: ${mode} (use "${modeIndustryPhrase}" when referencing the type of ${side === 'demand' ? 'companies' : 'providers'})
 ${ctx.matchReason ? `WHY MATCHED: ${ctx.matchReason} (weave this into "clear overlap" or "clean fit" phrasing)` : ''}
-${presignalContextLine}
+${cosLine}${presignalContextLine}
 === CONNECTOR DOCTRINE ===
 You are a connector curating introductions.
 - NEVER use timing claims (scaling, growing, expanding, hiring, building out, ramping) unless operator context explicitly provides them
