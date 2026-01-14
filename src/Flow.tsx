@@ -1589,10 +1589,17 @@ export default function Flow() {
     const totalExported = demandReceipt.totalExported + supplyReceipt.totalExported;
     console.log('[Export] Opening modal:', { totalExported });
 
-    // FIX: Always increment key and set fresh data
-    setExportModalKey(prev => prev + 1);
-    setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
-    setShowExportReceipt(true);
+    // FIX: Fully reset modal state BEFORE reopening (Stripe/Vercel-grade)
+    // This prevents the race condition where stale handlers intercept clicks
+    setShowExportReceipt(false);
+    setExportReceiptData(null);
+
+    // requestAnimationFrame is more reliable than setTimeout(0) for UI re-mounts
+    requestAnimationFrame(() => {
+      setExportModalKey(prev => prev + 1);
+      setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
+      setShowExportReceipt(true);
+    });
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
