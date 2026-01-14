@@ -865,18 +865,19 @@ export default function Settings() {
                           ))}
                         </ul>
                         {demandHealth.revenueRecommendation.alternates.length > 0 && (
-                          <details className="mt-3">
-                            <summary className="text-[10px] text-white/40 cursor-pointer hover:text-white/60 transition-colors">
-                              View alternates
+                          <details className="mt-4 pt-3 border-t border-white/[0.04]">
+                            <summary className="text-[10px] text-white/30 cursor-pointer hover:text-white/40 transition-colors">
+                              Alternate monetization paths (fallback)
                             </summary>
-                            <div className="mt-2 space-y-2 pl-2 border-l border-white/[0.06]">
+                            <p className="mt-1.5 text-[9px] text-white/20 italic">
+                              Only if you already have supply access here or cannot pursue the primary path.
+                            </p>
+                            <div className="mt-2 space-y-1.5 pl-2 border-l border-white/[0.04]">
                               {demandHealth.revenueRecommendation.alternates.map((alt, i) => (
-                                <div key={i}>
-                                  <p className="text-[11px] text-white/60">
-                                    <span className="text-white/30 mr-1">Tier {alt.tier}:</span>
+                                <div key={i} className="opacity-60">
+                                  <p className="text-[10px] text-white/40">
                                     {INTENT_HUMAN_LABELS[alt.intent as keyof typeof INTENT_HUMAN_LABELS] || alt.intent}
                                   </p>
-                                  <p className="text-[10px] text-white/30 mt-0.5">{alt.why.join(' · ')}</p>
                                 </div>
                               ))}
                             </div>
