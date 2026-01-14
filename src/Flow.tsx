@@ -672,6 +672,21 @@ export default function Flow() {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
 
+  // Navigation guard — warn user before leaving during active flow
+  const hasActiveFlow = state.step !== 'upload' && state.step !== 'complete';
+  useEffect(() => {
+    if (!hasActiveFlow) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = ''; // Required for Chrome
+      return ''; // Required for some browsers
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasActiveFlow]);
+
   // Scroll to error when it appears
   useEffect(() => {
     if (state.error && errorRef.current) {
@@ -1549,7 +1564,10 @@ export default function Flow() {
   // =============================================================================
 
   const openExportReceipt = useCallback(() => {
-    if (!state.matchingResult) return;
+    if (!state.matchingResult) {
+      console.log('[Export] No matching result, cannot open export');
+      return;
+    }
 
     // Build demand receipt
     const demandInput: DemandExportInput = {
@@ -1567,15 +1585,18 @@ export default function Flow() {
     };
     const supplyReceipt = buildSupplyReceipt(supplyInput);
 
-    console.log('[Export] Receipt computed:', {
+    console.log('[Export] Opening modal:', {
       demand: { matched: demandReceipt.totalMatched, exported: demandReceipt.totalExported },
       supply: { matched: supplyReceipt.totalMatched, exported: supplyReceipt.totalExported },
     });
 
-    // FIX: Increment key to force modal remount, set data and show in one tick
-    setExportModalKey(k => k + 1);
-    setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
-    setShowExportReceipt(true);
+    // FIX: Close first, then reopen after brief delay to ensure proper remount
+    setShowExportReceipt(false);
+    setTimeout(() => {
+      setExportModalKey(k => k + 1);
+      setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
+      setShowExportReceipt(true);
+    }, 50);
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
@@ -2473,7 +2494,7 @@ export default function Flow() {
                       className="text-center mb-8"
                     >
                       <span className="text-[56px] font-light text-white tracking-tight">{totalReady}</span>
-                      <p className="text-[15px] text-white/50 mt-1 font-medium">emails ready</p>
+                      <p className="text-[15px] text-white/50 mt-1 font-medium">Intros ready</p>
                       <p className="text-[12px] text-white/25 mt-2">
                         {demandEnriched} demand · {supplyEnriched} supply
                       </p>
@@ -2646,7 +2667,7 @@ export default function Flow() {
                 className="mb-8"
               >
                 <span className="text-[56px] font-light text-white tracking-tight">{state.sentDemand + state.sentSupply}</span>
-                <p className="text-[15px] text-white/50 mt-1 font-medium">emails sent</p>
+                <p className="text-[15px] text-white/50 mt-1 font-medium">Intros sent</p>
                 <p className="text-[12px] text-white/25 mt-2">
                   {state.sentDemand} demand · {state.sentSupply} supply
                 </p>
@@ -2685,74 +2706,24 @@ export default function Flow() {
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               transition={{ duration: 0.2 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md mx-4 p-5 rounded-2xl bg-[#0A0A0A] border border-white/[0.08] shadow-2xl"
+              className="w-full max-w-xs mx-4 p-6 rounded-2xl bg-[#0A0A0A] border border-white/[0.08] shadow-2xl text-center"
             >
-              {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[15px] font-medium text-white/90">Export Preview</h3>
-                <button
-                  onClick={() => setShowExportReceipt(false)}
-                  className="p-1.5 rounded-lg hover:bg-white/[0.06] text-white/40 hover:text-white/60"
-                >
-                  <X size={16} />
-                </button>
-              </div>
+              {/* Stripe-style: just show what they're getting */}
+              <p className="text-[13px] text-white/40 mb-2">Export</p>
+              <p className="text-[42px] font-light text-white tracking-tight mb-1">
+                {exportReceiptData.demand.totalExported + exportReceiptData.supply.totalExported}
+              </p>
+              <p className="text-[14px] text-white/50 font-medium mb-1">intros</p>
+              <p className="text-[12px] text-white/25 mb-6">
+                {exportReceiptData.demand.totalExported} demand · {exportReceiptData.supply.totalExported} supply
+              </p>
 
-              {/* Demand Receipt */}
-              <div className="mb-4 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] text-white/50">Demand</span>
-                  <span className="text-[13px] font-medium text-white/90">
-                    {exportReceiptData.demand.totalExported} of {exportReceiptData.demand.totalMatched}
-                  </span>
-                </div>
-                {exportReceiptData.demand.filtered.length > 0 && (
-                  <div className="space-y-1">
-                    {exportReceiptData.demand.filtered.map((f) => (
-                      <div key={f.reason} className="flex items-center justify-between text-[11px]">
-                        <span className="text-white/40">{REASON_LABELS[f.reason]}</span>
-                        <span className="text-amber-400/70">{f.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Supply Receipt */}
-              <div className="mb-4 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] text-white/50">Supply</span>
-                  <span className="text-[13px] font-medium text-white/90">
-                    {exportReceiptData.supply.totalExported} of {exportReceiptData.supply.totalMatched}
-                  </span>
-                </div>
-                {exportReceiptData.supply.filtered.length > 0 && (
-                  <div className="space-y-1">
-                    {exportReceiptData.supply.filtered.map((f) => (
-                      <div key={f.reason} className="flex items-center justify-between text-[11px]">
-                        <span className="text-white/40">{REASON_LABELS[f.reason]}</span>
-                        <span className="text-amber-400/70">{f.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  onClick={() => setShowExportReceipt(false)}
-                  className="px-4 py-2 text-[13px] text-white/50 hover:text-white/70 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleExportCSV}
-                  className="px-4 py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 transition-all active:scale-[0.98]"
-                >
-                  Download CSV
-                </button>
-              </div>
+              <button
+                onClick={handleExportCSV}
+                className="w-full py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 transition-all active:scale-[0.98]"
+              >
+                Download CSV
+              </button>
             </motion.div>
           </motion.div>
         )}
