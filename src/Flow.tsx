@@ -1206,7 +1206,8 @@ export default function Flow() {
     console.log('[MATCH] inputs', { demand: demand.length, supply: supply.length });
 
     // Run matching brain (async with yielding for large datasets)
-    const result = await matchRecords(demand, supply);
+    // Pass connectorMode for buyer-seller overlap validation (Supply Truth Constraint)
+    const result = await matchRecords(demand, supply, undefined, state.connectorMode || undefined);
 
     console.timeEnd('[MATCH] matchRecords');
     console.log('[MATCH] result', {

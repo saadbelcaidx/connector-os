@@ -11,6 +11,8 @@
  */
 
 import { NormalizedRecord } from '../schemas';
+import type { ConnectorMode } from '../services/SupplyFilterBuilder';
+import { validateMatch } from './buyerSellerTypes';
 
 // =============================================================================
 // TYPE SAFETY UTILITIES
@@ -70,6 +72,7 @@ export interface Match {
   score: number;  // 0-100
   reasons: string[];
   narrative?: MatchNarrative;  // PHASE-1 FIX: Optional neutral "why this match"
+  buyerSellerValid?: boolean;  // Supply Truth Constraint: buyer-seller overlap validated
 }
 
 export interface SupplyAggregate {
@@ -111,24 +114,34 @@ export interface MatchingResult {
 export async function matchRecords(
   demand: NormalizedRecord[],
   supply: NormalizedRecord[],
-  onProgress?: (current: number, total: number) => void
+  onProgress?: (current: number, total: number) => void,
+  mode?: ConnectorMode  // Optional: for buyer-seller validation
 ): Promise<MatchingResult> {
 
   const totalComparisons = demand.length * supply.length;
-  console.log(`[matchRecords] ENTER: ${demand.length} demand × ${supply.length} supply = ${totalComparisons} comparisons`);
+  console.log(`[matchRecords] ENTER: ${demand.length} demand × ${supply.length} supply = ${totalComparisons} comparisons, mode=${mode || 'none'}`);
   const startTime = performance.now();
 
   const allMatches: Match[] = [];
   let comparisonCount = 0;
+  let buyerSellerFiltered = 0;  // Track mismatches
   const YIELD_EVERY = 500; // Yield to event loop every N comparisons
 
   // Score every demand-supply pair with yielding
   for (const d of demand) {
     for (const s of supply) {
-      const { score, reasons, narrative } = scoreMatch(d, s);
+      const { score, reasons, narrative, buyerSellerValid } = scoreMatch(d, s, mode);
+
+      // SUPPLY TRUTH CONSTRAINT: If buyer-seller mismatch, skip this pair
+      if (buyerSellerValid === false) {
+        buyerSellerFiltered++;
+        // Do not add to matches - mismatch filtered out
+        comparisonCount++;
+        continue;
+      }
 
       if (score > 0) {
-        allMatches.push({ demand: d, supply: s, score, reasons, narrative });
+        allMatches.push({ demand: d, supply: s, score, reasons, narrative, buyerSellerValid });
       }
 
       comparisonCount++;
@@ -142,7 +155,7 @@ export async function matchRecords(
     }
   }
 
-  console.log(`[matchRecords] Scoring complete: ${comparisonCount} comparisons, ${allMatches.length} matches with score > 0`);
+  console.log(`[matchRecords] Scoring complete: ${comparisonCount} comparisons, ${allMatches.length} matches with score > 0, ${buyerSellerFiltered} buyer-seller mismatches filtered`);
 
   // Sort by score descending
   allMatches.sort((a, b) => b.score - a.score);
@@ -180,20 +193,32 @@ export async function matchRecords(
  */
 export function matchRecordsSync(
   demand: NormalizedRecord[],
-  supply: NormalizedRecord[]
+  supply: NormalizedRecord[],
+  mode?: ConnectorMode  // Optional: for buyer-seller validation
 ): MatchingResult {
 
   const allMatches: Match[] = [];
+  let buyerSellerFiltered = 0;
 
   // Score every demand-supply pair
   for (const d of demand) {
     for (const s of supply) {
-      const { score, reasons, narrative } = scoreMatch(d, s);
+      const { score, reasons, narrative, buyerSellerValid } = scoreMatch(d, s, mode);
+
+      // SUPPLY TRUTH CONSTRAINT: If buyer-seller mismatch, skip
+      if (buyerSellerValid === false) {
+        buyerSellerFiltered++;
+        continue;
+      }
 
       if (score > 0) {
-        allMatches.push({ demand: d, supply: s, score, reasons, narrative });
+        allMatches.push({ demand: d, supply: s, score, reasons, narrative, buyerSellerValid });
       }
     }
+  }
+
+  if (buyerSellerFiltered > 0) {
+    console.log(`[matchRecordsSync] ${buyerSellerFiltered} buyer-seller mismatches filtered`);
   }
 
   // Sort by score descending
@@ -488,12 +513,14 @@ function extractSupplyRole(supply: NormalizedRecord): string {
  * - Industry match
  * - Signal relevance
  * - Size compatibility
+ * - Buyer-seller overlap (SUPPLY TRUTH CONSTRAINT)
  * - (Future: historical success patterns)
  */
 function scoreMatch(
   demand: NormalizedRecord,
-  supply: NormalizedRecord
-): { score: number; reasons: string[]; narrative?: MatchNarrative } {
+  supply: NormalizedRecord,
+  mode?: ConnectorMode
+): { score: number; reasons: string[]; narrative?: MatchNarrative; buyerSellerValid?: boolean } {
 
   let score = 0;
   const reasons: string[] = [];
@@ -525,10 +552,46 @@ function scoreMatch(
     reasons.push('Base relevance');
   }
 
+  // ==========================================================================
+  // SUPPLY TRUTH CONSTRAINT: Buyer-seller overlap validation
+  // If mode is provided, validate that supply's buyers overlap with demand type
+  // If invalid → score = 0, no narrative, buyerSellerValid = false
+  // ==========================================================================
+  let buyerSellerValid: boolean | undefined;
+
+  if (mode && mode !== 'custom') {
+    const validation = validateMatch(
+      {
+        companyDescription: supply.companyDescription,
+        industry: supply.industry,
+        title: supply.title,
+      },
+      {
+        companyDescription: demand.companyDescription,
+        industry: demand.industry,
+        signal: demand.signal,
+      },
+      mode
+    );
+
+    buyerSellerValid = validation.valid;
+
+    if (!validation.valid) {
+      // SUPPLY TRUTH CONSTRAINT: Mismatch detected
+      // Return score 0, no narrative, mark as invalid
+      return {
+        score: 0,
+        reasons: [validation.reason || 'BUYER_SELLER_MISMATCH'],
+        narrative: undefined,
+        buyerSellerValid: false,
+      };
+    }
+  }
+
   // PHASE-1 FIX: Build neutral narrative for intro context
   const narrative = score > 0 ? buildNarrative(demand, supply, reasons) : undefined;
 
-  return { score: Math.min(score, 100), reasons, narrative };
+  return { score: Math.min(score, 100), reasons, narrative, buyerSellerValid };
 }
 
 /**
