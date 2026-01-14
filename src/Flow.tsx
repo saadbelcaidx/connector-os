@@ -2183,7 +2183,7 @@ export default function Flow() {
               <p className="text-[13px] text-white/40">
                 {state.isHubFlow
                   ? 'Routing contacts to Flow...'
-                  : 'signals loaded, matching...'}
+                  : 'Matching supply to demand...'}
               </p>
             </motion.div>
           )}
