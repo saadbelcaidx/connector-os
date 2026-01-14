@@ -417,9 +417,6 @@ const PRX2_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
 };
 
-// Token cache (valid for 24 hours)
-let mailtesterToken = null;
-let mailtesterTokenExpiry = null;
 // ============================================================
 // RATE LIMITER: Token Bucket (2 req/sec, burst 3)
 // ============================================================
@@ -600,62 +597,6 @@ function getMode() {
   return 'NORMAL';
 }
 
-// ============================================================
-// MAILTESTER TOKEN MANAGEMENT
-// ============================================================
-
-async function getMailtesterToken(retryCount = 0) {
-  // Return cached token if still valid (with 1 hour buffer)
-  if (mailtesterToken && mailtesterTokenExpiry && Date.now() < mailtesterTokenExpiry - 3600000) {
-    return mailtesterToken;
-  }
-
-  if (MAILTESTER_API_KEYS.length === 0) {
-    return null;
-  }
-
-  try {
-    const apiKey = getNextMailtesterKey();
-    const url = `https://token.mailtester.ninja/token?key=${apiKey}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    const text = await response.text();
-
-    // Check if response is JSON
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      // Not JSON - likely redirect or error page
-      if (response.status === 401) {
-        recordMetric('error');
-        return null;
-      }
-      throw new Error('Invalid response');
-    }
-
-    if (data.token) {
-      mailtesterToken = data.token;
-      mailtesterTokenExpiry = Date.now() + 24 * 60 * 60 * 1000;
-      return mailtesterToken;
-    } else {
-      recordMetric('error');
-      return null;
-    }
-  } catch (err) {
-    recordMetric('timeout');
-    // Retry once on timeout
-    if (retryCount === 0 && err.name === 'AbortError') {
-      await sleep(200);
-      return getMailtesterToken(1);
-    }
-    return null;
-  }
-}
 
 // ============================================================
 // PRX2 VERIFICATION (Primary - higher limits)
@@ -739,10 +680,8 @@ async function verifyWithDocumentedApiDirect(email, retryCount = 0) {
 
     const data = await response.json();
 
-    // Handle invalid/expired token - refresh and retry once
+    // Handle invalid/disabled key - retry once
     if (data.code === '--' || data.message === 'Invalid Token' || data.message === 'Disabled Key') {
-      mailtesterToken = null;
-      mailtesterTokenExpiry = null;
       if (retryCount === 0) {
         await sleep(200);
         return verifyWithDocumentedApiDirect(email, 1);
@@ -898,10 +837,8 @@ async function findWithMailtesterDirect(firstName, lastName, domain, retryCount 
     const data = await response.json();
     console.log(`[MailTester FIND] Response for ${firstName} ${lastName} @ ${domain}:`, JSON.stringify(data));
 
-    // Handle invalid/expired token
+    // Handle invalid/disabled key - retry once
     if (data.code === '--' || data.message === 'Invalid Token' || data.message === 'Disabled Key') {
-      mailtesterToken = null;
-      mailtesterTokenExpiry = null;
       if (retryCount === 0) {
         await sleep(200);
         return findWithMailtesterDirect(firstName, lastName, domain, 1);
@@ -1787,10 +1724,6 @@ app.post('/admin/mailtester/key', (req, res) => {
     MAILTESTER_API_KEYS = validKeys;
     keyIndex = 0; // Reset round-robin index
 
-    // Clear token cache
-    mailtesterToken = null;
-    mailtesterTokenExpiry = null;
-
     // Audit log
     db.prepare(`INSERT INTO admin_log (id, action, details, timestamp) VALUES (?, ?, ?, ?)`)
       .run(uuidv4(), 'mailtester_keys_replace', `Replaced with ${validKeys.length} keys`, new Date().toISOString());
@@ -1838,10 +1771,6 @@ app.post('/admin/mailtester/key', (req, res) => {
     MAILTESTER_API_KEYS.push(trimmedKey);
   }
 
-  // Clear token cache (force refresh)
-  mailtesterToken = null;
-  mailtesterTokenExpiry = null;
-
   // Audit log
   db.prepare(`INSERT INTO admin_log (id, action, details, timestamp) VALUES (?, ?, ?, ?)`)
     .run(uuidv4(), 'mailtester_key_add', `Key added: ${trimmedKey.slice(0, 8)}...`, new Date().toISOString());
@@ -1885,8 +1814,7 @@ app.get('/admin/status', (req, res) => {
       keys_configured: MAILTESTER_API_KEYS.length,
       key_prefixes: MAILTESTER_API_KEYS.map(k => k.slice(0, 8) + '...'),
       current_key_index: keyIndex,
-      token_valid: !!(mailtesterToken && mailtesterTokenExpiry && Date.now() < mailtesterTokenExpiry),
-      token_expires_in: mailtesterTokenExpiry ? Math.max(0, Math.round((mailtesterTokenExpiry - Date.now()) / 1000 / 60)) + ' minutes' : null,
+      status: MAILTESTER_API_KEYS.length > 0 ? 'ready' : 'no_keys',
     },
     rate_limit: {
       tokens_available: RATE_LIMIT.tokens.toFixed(2),
@@ -1907,30 +1835,25 @@ app.delete('/api/dev/cache', (req, res) => {
   db.prepare(`DELETE FROM verify_cache`).run();
   db.prepare(`DELETE FROM email_cache`).run();
   db.prepare(`DELETE FROM domain_stats`).run();
-  mailtesterToken = null;
-  mailtesterTokenExpiry = null;
   METRICS.window = [];
   console.log('[Dev] All caches cleared');
   res.json({ success: true, message: 'All caches cleared' });
 });
 
 // ============================================================
-// HEALTH CHECK (Enhanced)
+// HEALTH CHECK
 // ============================================================
+// Health is informational. It reflects capability, not liveness probes.
+// Keys configured = ready to verify. No network calls in /health.
 
 app.get('/health', (req, res) => {
   const mode = getMode();
 
-  // Determine mailtester status
+  // Mailtester status: keys exist = reachable, no keys = down
+  // RESTRICTED mode = temporary rate-limit protection, still operational
   let mailtesterStatus = 'down';
   if (MAILTESTER_API_KEYS.length > 0) {
-    if (mode === 'RESTRICTED') {
-      mailtesterStatus = 'degraded';
-    } else if (mailtesterToken && mailtesterTokenExpiry && Date.now() < mailtesterTokenExpiry) {
-      mailtesterStatus = 'reachable';
-    } else {
-      mailtesterStatus = 'degraded';
-    }
+    mailtesterStatus = mode === 'RESTRICTED' ? 'throttled' : 'reachable';
   }
 
   res.json({
