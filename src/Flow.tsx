@@ -1585,18 +1585,13 @@ export default function Flow() {
     };
     const supplyReceipt = buildSupplyReceipt(supplyInput);
 
-    console.log('[Export] Opening modal:', {
-      demand: { matched: demandReceipt.totalMatched, exported: demandReceipt.totalExported },
-      supply: { matched: supplyReceipt.totalMatched, exported: supplyReceipt.totalExported },
-    });
+    const totalExported = demandReceipt.totalExported + supplyReceipt.totalExported;
+    console.log('[Export] Opening modal:', { totalExported });
 
-    // FIX: Close first, then reopen after brief delay to ensure proper remount
-    setShowExportReceipt(false);
-    setTimeout(() => {
-      setExportModalKey(k => k + 1);
-      setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
-      setShowExportReceipt(true);
-    }, 50);
+    // FIX: Always increment key and set fresh data
+    setExportModalKey(prev => prev + 1);
+    setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
+    setShowExportReceipt(true);
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
@@ -2690,7 +2685,7 @@ export default function Flow() {
       </div>
 
       {/* Export Receipt Modal — Trust Layer */}
-      <AnimatePresence mode="wait">
+      <AnimatePresence>
         {showExportReceipt && exportReceiptData && (
           <motion.div
             key={`export-modal-${exportModalKey}`}
