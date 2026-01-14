@@ -475,3 +475,261 @@ export function validateMatch(
 
   return validateBuyerSellerOverlap(supplyBuyer, demandType, mode, supply);
 }
+
+// =============================================================================
+// COS VOCABULARY — SINGLE SOURCE OF TRUTH
+// =============================================================================
+
+/**
+ * Supply role vocabulary per mode.
+ * Used by intro generation to say WHO supply is.
+ * Crypto mode is STRICT: returns null if no safe token matches.
+ */
+export const SUPPLY_ROLE_VOCAB: Record<ConnectorMode, {
+  tokens: Array<{ pattern: RegExp; role: string }>;
+  fallback: string | null;
+}> = {
+  crypto: {
+    tokens: [
+      { pattern: /crypto|blockchain|web3|defi/, role: 'crypto platforms' },
+      { pattern: /fintech|payment|acquiring|merchant/, role: 'fintech product teams' },
+      { pattern: /exchange|trading/, role: 'exchanges' },
+      { pattern: /on.?ramp|off.?ramp|fiat/, role: 'on/off-ramp infrastructure' },
+      { pattern: /compliance|kyc|aml|fraud/, role: 'payment & compliance infrastructure' },
+      { pattern: /product|engineering/, role: 'fintech product teams' },
+    ],
+    fallback: null, // STRICT: no generic fallback for crypto
+  },
+  wealth_management: {
+    tokens: [
+      { pattern: /hnw|high.?net.?worth|uhnw/, role: 'HNW individuals' },
+      { pattern: /family.?office/, role: 'family offices' },
+      { pattern: /private.?client|affluent/, role: 'private clients' },
+      { pattern: /estate|trust/, role: 'estate planning clients' },
+    ],
+    fallback: 'HNW individuals',
+  },
+  biotech_licensing: {
+    tokens: [
+      { pattern: /pharma|biotech/, role: 'pharma BD teams' },
+      { pattern: /licensing|partnership/, role: 'licensing teams' },
+      { pattern: /clinical|therapeutic/, role: 'clinical development teams' },
+    ],
+    fallback: 'pharma BD teams',
+  },
+  recruiting: {
+    tokens: [
+      { pattern: /recruit|staffing|talent|headhunt/, role: 'recruiting teams' },
+      { pattern: /executive.?search/, role: 'executive search teams' },
+      { pattern: /hr|human.?resources/, role: 'HR teams' },
+    ],
+    fallback: 'hiring teams',
+  },
+  real_estate_capital: {
+    tokens: [
+      { pattern: /developer|sponsor/, role: 'RE developers' },
+      { pattern: /operator|owner/, role: 'property operators' },
+      { pattern: /gp|general.?partner/, role: 'GP sponsors' },
+    ],
+    fallback: 'RE developers',
+  },
+  logistics: {
+    tokens: [
+      { pattern: /shipper|manufacturer/, role: 'shippers' },
+      { pattern: /retailer|ecommerce|brand/, role: 'ecommerce brands' },
+      { pattern: /3pl|fulfillment/, role: 'fulfillment operators' },
+    ],
+    fallback: 'shippers',
+  },
+  enterprise_partnerships: {
+    tokens: [
+      { pattern: /enterprise|b2b/, role: 'enterprise teams' },
+      { pattern: /saas|platform/, role: 'SaaS platforms' },
+      { pattern: /integration|api/, role: 'integration teams' },
+    ],
+    fallback: 'enterprise teams',
+  },
+  custom: {
+    tokens: [],
+    fallback: 'teams in this space',
+  },
+};
+
+/**
+ * Demand value vocabulary per mode.
+ * Used by intro generation to say WHAT demand is.
+ */
+export const DEMAND_VALUE_VOCAB: Record<ConnectorMode, {
+  tokens: Array<{ pattern: RegExp; value: string }>;
+  fallback: string;
+}> = {
+  crypto: {
+    tokens: [
+      { pattern: /crypto|blockchain|web3/, value: 'crypto platforms' },
+      { pattern: /defi|protocol/, value: 'DeFi protocols' },
+      { pattern: /exchange|trading/, value: 'crypto exchanges' },
+      { pattern: /nft|collectible/, value: 'NFT platforms' },
+      { pattern: /fintech|payment/, value: 'fintech companies' },
+    ],
+    fallback: 'web3 projects',
+  },
+  wealth_management: {
+    tokens: [
+      { pattern: /ria|registered.?investment/, value: 'RIA firms' },
+      { pattern: /wealth|advisory/, value: 'wealth advisory firms' },
+      { pattern: /family.?office/, value: 'family offices' },
+      { pattern: /cfp|financial.?planning/, value: 'financial planning firms' },
+    ],
+    fallback: 'wealth advisory firms',
+  },
+  biotech_licensing: {
+    tokens: [
+      { pattern: /biotech|pharma/, value: 'biotech companies' },
+      { pattern: /clinical|therapeutic/, value: 'clinical-stage biotechs' },
+      { pattern: /drug|molecule|pipeline/, value: 'drug development companies' },
+    ],
+    fallback: 'biotech companies',
+  },
+  recruiting: {
+    tokens: [
+      { pattern: /hiring|talent|headcount/, value: 'companies scaling teams' },
+      { pattern: /startup|series/, value: 'high-growth startups' },
+      { pattern: /enterprise|large/, value: 'enterprise companies' },
+    ],
+    fallback: 'companies hiring',
+  },
+  real_estate_capital: {
+    tokens: [
+      { pattern: /developer|development/, value: 'RE developers' },
+      { pattern: /sponsor|gp/, value: 'RE sponsors' },
+      { pattern: /commercial|cre/, value: 'commercial RE firms' },
+      { pattern: /multifamily|residential/, value: 'multifamily operators' },
+    ],
+    fallback: 'RE developers',
+  },
+  logistics: {
+    tokens: [
+      { pattern: /shipper|manufacturer/, value: 'shippers' },
+      { pattern: /ecommerce|brand|retail/, value: 'ecommerce brands' },
+      { pattern: /cpg|consumer/, value: 'CPG companies' },
+    ],
+    fallback: 'shippers',
+  },
+  enterprise_partnerships: {
+    tokens: [
+      { pattern: /enterprise|b2b/, value: 'enterprise companies' },
+      { pattern: /saas|platform/, value: 'SaaS platforms' },
+      { pattern: /software|tech/, value: 'software companies' },
+    ],
+    fallback: 'enterprise companies',
+  },
+  custom: {
+    tokens: [],
+    fallback: 'companies',
+  },
+};
+
+/**
+ * Forbidden words for crypto mode (never use these).
+ * If detected in supply, return null role.
+ */
+export const CRYPTO_FORBIDDEN_WORDS = [
+  'financial services', 'wealth', 'advisory', 'banks', 'banking', 'ria', 'advisor'
+];
+
+// =============================================================================
+// COS EXTRACTION FUNCTIONS — SINGLE SOURCE OF TRUTH
+// =============================================================================
+
+/**
+ * Safe string conversion (handles arrays, null, numbers).
+ */
+function toStringSafe(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return v.map(toStringSafe).join(' ');
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+/**
+ * Get supply role for COS (Connector Overlap Statement).
+ * MODE-AWARE: Uses explicit mode vocabulary.
+ * Crypto mode is STRICT: returns null if no safe token matches or forbidden word detected.
+ *
+ * @param supply - Supply record
+ * @param mode - Connector mode (EXPLICIT from user selection)
+ * @returns Role string or null if no safe match
+ */
+export function getModeSupplyRole(
+  supply: { companyDescription?: string; industry?: string | string[]; title?: string },
+  mode?: ConnectorMode
+): string | null {
+  const title = toStringSafe(supply.title).toLowerCase();
+  const industry = toStringSafe(supply.industry).toLowerCase();
+  const desc = toStringSafe(supply.companyDescription).toLowerCase();
+  const combined = `${title} ${industry} ${desc}`;
+
+  // If mode provided, use mode-specific tokens
+  if (mode && mode !== 'custom') {
+    const config = SUPPLY_ROLE_VOCAB[mode];
+
+    // Check for token matches in order
+    for (const { pattern, role } of config.tokens) {
+      if (pattern.test(combined)) {
+        return role;
+      }
+    }
+
+    // Crypto mode: check for forbidden words → return null
+    if (mode === 'crypto') {
+      const hasForbidden = CRYPTO_FORBIDDEN_WORDS.some(word => combined.includes(word));
+      if (hasForbidden) {
+        console.log(`[COS] Crypto mode: forbidden word detected, returning null role`);
+        return null;
+      }
+    }
+
+    // Return mode fallback (null for crypto, specific for others)
+    return config.fallback;
+  }
+
+  // No mode: generic fallback
+  return 'teams in this space';
+}
+
+/**
+ * Get demand value for COS (Connector Overlap Statement).
+ * MODE-AWARE: Uses explicit mode vocabulary.
+ *
+ * @param demand - Demand record
+ * @param mode - Connector mode (EXPLICIT from user selection)
+ * @returns Value string (never null)
+ */
+export function getModeDemandValue(
+  demand: { companyDescription?: string; industry?: string | string[]; signal?: string },
+  mode?: ConnectorMode
+): string {
+  const desc = toStringSafe(demand.companyDescription).toLowerCase();
+  const industry = toStringSafe(demand.industry).toLowerCase();
+  const signal = toStringSafe(demand.signal).toLowerCase();
+  const combined = `${desc} ${industry} ${signal}`;
+
+  // If mode provided, use mode-specific tokens
+  if (mode && mode !== 'custom') {
+    const config = DEMAND_VALUE_VOCAB[mode];
+
+    // Check for token matches in order
+    for (const { pattern, value } of config.tokens) {
+      if (pattern.test(combined)) {
+        return value;
+      }
+    }
+
+    // Return mode fallback
+    return config.fallback;
+  }
+
+  // No mode: generic fallback
+  return 'companies';
+}
