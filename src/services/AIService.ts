@@ -32,6 +32,17 @@ export interface AIConfig {
   deployment?: string;     // Azure only
 }
 
+// Intro Source Metadata — Phase 1 (transparent fallback)
+export type IntroSource = 'ai' | 'fallback';
+export type FallbackReason = 'AI_NOT_CONFIGURED' | 'RATE_LIMITED' | 'VALIDATION_FAILED' | 'AI_ERROR';
+
+export interface IntroResult {
+  intro: string;
+  source: IntroSource;
+  fallbackReason?: FallbackReason;
+  attempts?: number;
+}
+
 export interface IntroArgs {
   type: 'demand' | 'supply';
   signalDetail: string;
@@ -41,6 +52,7 @@ export interface IntroArgs {
     contactName?: string;
     contactTitle?: string;
     preSignalContext?: string;
+    matchReason?: string;  // PHASE-1 FIX: Neutral "why this match" (e.g., "Industry match")
   };
   connectorMode?: ConnectorMode | null;
   jobSignal?: {
@@ -91,23 +103,31 @@ function canonicalFallback(args: IntroArgs): string {
 }
 
 // =============================================================================
-// SINGLE ENTRY POINT
+// SINGLE ENTRY POINT — Returns IntroResult with source metadata
 // =============================================================================
 
 export async function generateIntro(
   args: IntroArgs,
   cfg: AIConfig | null,
   userId: string = 'guest'
-): Promise<string> {
+): Promise<IntroResult> {
   // Gate 1: AI not configured
   if (!AI_ENABLED(cfg)) {
-    return canonicalFallback(args);
+    return {
+      intro: canonicalFallback(args),
+      source: 'fallback',
+      fallbackReason: 'AI_NOT_CONFIGURED',
+    };
   }
 
   // Gate 2: Rate limit
   const limit = userId === 'guest' ? AI_LIMITS.guest : AI_LIMITS.paid;
   if (!allowAICall(userId, limit)) {
-    return canonicalFallback(args);
+    return {
+      intro: canonicalFallback(args),
+      source: 'fallback',
+      fallbackReason: 'RATE_LIMITED',
+    };
   }
 
   // Try AI, fallback on any error
@@ -126,12 +146,24 @@ export async function generateIntro(
     const validation = validateIntro(result, ctx);
     if (!validation.valid) {
       console.warn('[AIService] AI output violated doctrine:', validation);
-      return canonicalFallback(args);
+      return {
+        intro: canonicalFallback(args),
+        source: 'fallback',
+        fallbackReason: 'VALIDATION_FAILED',
+      };
     }
 
-    return result;
-  } catch {
-    return canonicalFallback(args);
+    return {
+      intro: result,
+      source: 'ai',
+    };
+  } catch (e) {
+    console.error('[AIService] AI call failed:', e);
+    return {
+      intro: canonicalFallback(args),
+      source: 'fallback',
+      fallbackReason: 'AI_ERROR',
+    };
   }
 }
 

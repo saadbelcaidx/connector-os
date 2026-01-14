@@ -840,51 +840,6 @@ export default function Settings() {
                       counterpartyFilters={counterpartyFilters}
                     />
 
-                    {/* Revenue Recommendation Card */}
-                    {demandHealth?.revenueRecommendation && (
-                      <div className="mt-4 p-4 rounded-xl bg-gradient-to-b from-emerald-500/[0.04] to-emerald-500/[0.01] border border-emerald-500/[0.12]" style={{ animation: 'settings-fade-in 400ms ease-out' }}>
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-[11px] font-medium text-emerald-400/90 uppercase tracking-wider">Recommended Counterpart</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                            demandHealth.revenueRecommendation.confidence === 'high' ? 'bg-emerald-500/20 text-emerald-400' :
-                            demandHealth.revenueRecommendation.confidence === 'medium' ? 'bg-amber-500/20 text-amber-400' :
-                            'bg-white/10 text-white/50'
-                          }`}>
-                            {demandHealth.revenueRecommendation.confidence} confidence
-                          </span>
-                        </div>
-                        <p className="text-[14px] text-white/90 font-medium">
-                          {INTENT_HUMAN_LABELS[demandHealth.revenueRecommendation.recommendedIntent as keyof typeof INTENT_HUMAN_LABELS] || demandHealth.revenueRecommendation.recommendedIntent}
-                        </p>
-                        <ul className="mt-2 space-y-1">
-                          {demandHealth.revenueRecommendation.why.map((bullet, i) => (
-                            <li key={i} className="flex items-start gap-2 text-[11px] text-white/50">
-                              <span className="text-emerald-400/60 mt-0.5">→</span>
-                              <span>{bullet}</span>
-                            </li>
-                          ))}
-                        </ul>
-                        {demandHealth.revenueRecommendation.alternates.length > 0 && (
-                          <details className="mt-4 pt-3 border-t border-white/[0.04]">
-                            <summary className="text-[10px] text-white/30 cursor-pointer hover:text-white/40 transition-colors">
-                              Alternate monetization paths (fallback)
-                            </summary>
-                            <p className="mt-1.5 text-[9px] text-white/20 italic">
-                              Only if you already have supply access here or cannot pursue the primary path.
-                            </p>
-                            <div className="mt-2 space-y-1.5 pl-2 border-l border-white/[0.04]">
-                              {demandHealth.revenueRecommendation.alternates.map((alt, i) => (
-                                <div key={i} className="opacity-60">
-                                  <p className="text-[10px] text-white/40">
-                                    {INTENT_HUMAN_LABELS[alt.intent as keyof typeof INTENT_HUMAN_LABELS] || alt.intent}
-                                  </p>
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                      </div>
-                    )}
 
                     {demandHealth && (
                       <LearnMore title="What does this mean?">

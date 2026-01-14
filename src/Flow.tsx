@@ -95,6 +95,69 @@ import { InlineHelpLink } from './components/InlineHelpLink';
 import { explain, type UXBlock } from './services/Explainability';
 import { DOCS } from './config/docs';
 
+// Flow Guards — Zero Silent Failures
+import {
+  FlowBlock,
+  FlowBlockSetter,
+  guard,
+  BLOCKS,
+  FlowAbort,
+  wrapPipelineAction,
+} from './flow/flowGuards';
+
+// Export Receipt — Trust Layer (show what's filtered before download)
+import {
+  buildDemandReceipt,
+  buildSupplyReceipt,
+  formatReceiptSummary,
+  REASON_LABELS,
+  type ExportReceipt,
+  type DemandExportInput,
+  type SupplyExportInput,
+} from './export/exportReceipt';
+
+// =============================================================================
+// SIGNAL STATUS — Explicit 3-state for UX (no silent failures)
+// =============================================================================
+
+type SignalStatus = 'disabled' | 'unavailable' | 'available';
+
+/**
+ * Derive signal status from settings + enrichment results.
+ * Called once after enrichment completes. No per-record guessing.
+ */
+function deriveSignalStatus(
+  fetchSignals: boolean,
+  enrichedDemand: Map<string, EnrichmentResult>,
+  enrichedSupply: Map<string, EnrichmentResult>
+): { status: SignalStatus; coverage: { available: number; total: number } } {
+  // State 1: Signals disabled in settings
+  if (!fetchSignals) {
+    return { status: 'disabled', coverage: { available: 0, total: 0 } };
+  }
+
+  // Count records with signals
+  let available = 0;
+  let total = 0;
+
+  for (const [, enriched] of enrichedDemand.entries()) {
+    total++;
+    if (enriched.signals) available++;
+  }
+  for (const [, enriched] of enrichedSupply.entries()) {
+    total++;
+    if (enriched.signals) available++;
+  }
+
+  // State 2: Enabled but no data available
+  if (available === 0) {
+    return { status: 'unavailable', coverage: { available: 0, total } };
+  }
+
+  // State 3: Signals available
+  return { status: 'available', coverage: { available, total } };
+}
+
 // =============================================================================
 // INTRO GENERATION — Now handled by IntroGenerator.ts
 // Rich context, 15 real examples, validation with regeneration
@@ -172,6 +235,130 @@ function sanitizeSignal(signal: string | null | undefined): string {
   }
 
   return trimmed;
+}
+
+// =============================================================================
+// CSV EXPORT — Pure extraction from in-memory state
+// =============================================================================
+
+/**
+ * Escape CSV field — handles commas, quotes, newlines
+ */
+function escapeCSV(value: string | null | undefined): string {
+  if (value == null) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * Build CSV string from rows
+ */
+function buildCSV(headers: string[], rows: (string | null | undefined)[][]): string {
+  const headerLine = headers.map(escapeCSV).join(',');
+  const dataLines = rows.map(row => row.map(escapeCSV).join(','));
+  return [headerLine, ...dataLines].join('\r\n');
+}
+
+/**
+ * Trigger browser download of CSV file
+ */
+function downloadCSV(filename: string, csv: string): void {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+interface ExportData {
+  matchingResult: MatchingResult | null;
+  enrichedDemand: Map<string, EnrichmentResult>;
+  enrichedSupply: Map<string, EnrichmentResult>;
+  demandIntros: Map<string, string>;
+  supplyIntros: Map<string, string>;
+}
+
+/**
+ * Build demand CSV rows from in-memory state.
+ * Only includes records that WOULD be sent (have email + intro).
+ */
+function buildDemandExportRows(data: ExportData): (string | null)[][] {
+  if (!data.matchingResult) return [];
+
+  const rows: (string | null)[][] = [];
+
+  for (const match of data.matchingResult.demandMatches) {
+    const domain = match.demand.domain;
+    const enriched = data.enrichedDemand.get(domain);
+
+    // Same filter as routing: must have email
+    if (!enriched?.success || !enriched.email) continue;
+
+    const intro = data.demandIntros.get(domain) || '';
+    if (!intro) continue; // No intro = wouldn't be sent
+
+    rows.push([
+      'DEMAND',
+      enriched.email,
+      enriched.firstName || '',
+      enriched.lastName || '',
+      match.demand.company || '',
+      domain || '',
+      intro,
+      match.supply.company || '',
+      String(match.score),
+      match.reasons.join('; '),
+    ]);
+  }
+
+  return rows;
+}
+
+/**
+ * Build supply CSV rows from in-memory state.
+ * Only includes records that WOULD be sent (have email + intro).
+ */
+function buildSupplyExportRows(data: ExportData): (string | null)[][] {
+  if (!data.matchingResult) return [];
+
+  const rows: (string | null)[][] = [];
+
+  for (const agg of data.matchingResult.supplyAggregates) {
+    const domain = agg.supply.domain;
+    const enriched = data.enrichedSupply.get(domain);
+
+    // Same filter as routing: must have email
+    if (!enriched?.success || !enriched.email) continue;
+
+    const intro = data.supplyIntros.get(domain) || '';
+    if (!intro) continue; // No intro = wouldn't be sent
+
+    // Calculate average match score
+    const avgScore = agg.matches.length > 0
+      ? Math.round(agg.matches.reduce((sum, m) => sum + m.score, 0) / agg.matches.length)
+      : 0;
+
+    rows.push([
+      'SUPPLY',
+      enriched.email,
+      enriched.firstName || '',
+      enriched.lastName || '',
+      agg.supply.company || '',
+      domain || '',
+      intro,
+      String(agg.matches.length),
+      String(avgScore),
+    ]);
+  }
+
+  return rows;
 }
 
 /**
@@ -321,12 +508,22 @@ interface FlowState {
   sentDemand: number;
   sentSupply: number;
 
-  // Error
+  // Error (legacy string-based)
   error: string | null;
+
+  // FlowBlock — Structured error for zero silent failures
+  flowBlock: FlowBlock | null;
 
   // Audit (observability)
   auditData: RunAuditData | null;
   copyValidationFailures: CopyValidationResult[];
+
+  // Intro Source Stats — Phase 1 (transparent fallback)
+  introSourceStats: {
+    aiCount: number;
+    fallbackCount: number;
+    fallbackReasons: Record<string, number>;
+  };
 }
 
 // Pre-signal context entry (operator-written)
@@ -384,8 +581,10 @@ export default function Flow() {
     sentDemand: 0,
     sentSupply: 0,
     error: null,
+    flowBlock: null,
     auditData: null,
     copyValidationFailures: [],
+    introSourceStats: { aiCount: 0, fallbackCount: 0, fallbackReasons: {} },
   });
 
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -397,6 +596,10 @@ export default function Flow() {
 
   // Signals drawer — read-only overlay, no logic impact
   const [showSignalsDrawer, setShowSignalsDrawer] = useState(false);
+
+  // Export Receipt — Trust Layer (show what's filtered before download)
+  const [showExportReceipt, setShowExportReceipt] = useState(false);
+  const [exportReceiptData, setExportReceiptData] = useState<{ demand: ExportReceipt; supply: ExportReceipt } | null>(null);
 
   // Supply Annotations — Operator judgment (render-only, no matching impact)
   const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
@@ -412,6 +615,7 @@ export default function Flow() {
 
   const abortRef = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  const presignalRef = useRef<{ demand: string; supply: string }>({ demand: '', supply: '' });
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
 
@@ -424,6 +628,18 @@ export default function Flow() {
 
   // Debug mode check
   const isDebugMode = new URLSearchParams(window.location.search).get('debug') === '1';
+
+  // FlowBlock setter — Zero Silent Failures pattern
+  const setFlowBlock: FlowBlockSetter = useCallback((block) => {
+    setState(prev => ({ ...prev, flowBlock: block, step: block ? 'upload' : prev.step }));
+  }, []);
+
+  // Scroll to error when flowBlock appears
+  useEffect(() => {
+    if (state.flowBlock && errorRef.current) {
+      errorRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [state.flowBlock]);
 
   // Load settings (auth-aware: Supabase for logged-in, localStorage for guests)
   useEffect(() => {
@@ -685,7 +901,7 @@ export default function Flow() {
 
   const startFlow = useCallback(async () => {
     abortRef.current = false;
-    setState(prev => ({ ...prev, step: 'validating', error: null }));
+    setState(prev => ({ ...prev, step: 'validating', error: null, flowBlock: null }));
     setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading...' } }));
 
     try {
@@ -707,27 +923,9 @@ export default function Flow() {
         const { demand: hubDemand, supply: hubSupply, error: hubError } = getHubBothSides();
         console.log('[Flow] Hub adapter returned', hubDemand.length, 'demand +', hubSupply.length, 'supply');
 
-        // Check for cross-source matching block
-        if (hubError) {
-          console.error('[Flow] Hub ERROR:', hubError);
-          setState(prev => ({
-            ...prev,
-            step: 'upload',
-            error: toUserError('HUB_ERROR', hubError),
-          }));
-          return;
-        }
-
-        // Validate both sides exist
-        if (hubDemand.length === 0 || hubSupply.length === 0) {
-          console.error('[Flow] Hub ERROR: Missing one side - demand:', hubDemand.length, 'supply:', hubSupply.length);
-          setState(prev => ({
-            ...prev,
-            step: 'upload',
-            error: toUserError('HUB_MISSING_SIDE'),
-          }));
-          return;
-        }
+        // GUARDS — Hub validation
+        if (!guard(!hubError, BLOCKS.HUB_ERROR(hubError || 'Unknown hub error'), setFlowBlock)) return;
+        if (!guard(hubDemand.length > 0 && hubSupply.length > 0, BLOCKS.HUB_MISSING_SIDE, setFlowBlock)) return;
 
         setState(prev => ({ ...prev, progress: { current: 40, total: 100, message: 'Deduplicating...' } }));
 
@@ -770,23 +968,11 @@ export default function Flow() {
           return true;
         };
 
-        if (!validateRecords(dedupedDemand, 'demand')) {
-          setState(prev => ({
-            ...prev,
-            step: 'upload',
-            error: toUserError('CONTRACT_VIOLATION', 'demand records missing required fields'),
-          }));
-          return;
-        }
-
-        if (!validateRecords(dedupedSupply, 'supply')) {
-          setState(prev => ({
-            ...prev,
-            step: 'upload',
-            error: toUserError('CONTRACT_VIOLATION', 'supply records missing required fields'),
-          }));
-          return;
-        }
+        // GUARDS — Contract validation
+        if (!guard(validateRecords(dedupedDemand, 'demand'),
+          BLOCKS.CONTRACT_VIOLATION('Demand records missing required fields'), setFlowBlock)) return;
+        if (!guard(validateRecords(dedupedSupply, 'supply'),
+          BLOCKS.CONTRACT_VIOLATION('Supply records missing required fields'), setFlowBlock)) return;
 
         console.log('[Flow] Contract validation passed for both sides');
         // =======================================================================
@@ -826,14 +1012,9 @@ export default function Flow() {
       // END HUB ADAPTER - Normal flow continues below
       // =========================================================================
 
-      if (!settings?.apifyToken) {
-        setState(prev => ({ ...prev, step: 'upload', error: toUserError('MISSING_APIFY_TOKEN') }));
-        return;
-      }
-      if (!settings?.demandDatasetId) {
-        setState(prev => ({ ...prev, step: 'upload', error: toUserError('MISSING_DATASET_ID') }));
-        return;
-      }
+      // GUARDS — Zero Silent Failures
+      if (!guard(settings?.apifyToken, BLOCKS.NO_APIFY_TOKEN, setFlowBlock)) return;
+      if (!guard(settings?.demandDatasetId, BLOCKS.NO_DEMAND_DATASET, setFlowBlock)) return;
 
       setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading demand...' } }));
 
@@ -847,24 +1028,10 @@ export default function Flow() {
       const demandValidation = validateDataset(demandData);
       console.log('[Flow] Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
 
-      // Check for empty dataset
-      if (!demandData || demandData.length === 0) {
-        setState(prev => ({
-          ...prev,
-          step: 'upload',
-          error: toUserError('DATASET_EMPTY'),
-        }));
-        return;
-      }
-
-      if (!demandValidation.valid || !demandValidation.schema) {
-        setState(prev => ({
-          ...prev,
-          step: 'upload',
-          error: toUserError('DATASET_INVALID', demandValidation.error),
-        }));
-        return;
-      }
+      // GUARDS — Dataset validation
+      if (!guard(demandData && demandData.length > 0, BLOCKS.DATASET_EMPTY, setFlowBlock)) return;
+      if (!guard(demandValidation.valid && demandValidation.schema,
+        BLOCKS.SCHEMA_INVALID(demandValidation.error || 'Unknown schema'), setFlowBlock)) return;
 
       // Normalize demand
       const demandRecords = normalizeDataset(demandData, demandValidation.schema);
@@ -907,15 +1074,17 @@ export default function Flow() {
       await runMatching(demandRecords, supplyRecords, demandValidation.schema, supplySchema);
 
     } catch (err) {
+      // Handle FlowAbort (guard failures already set flowBlock)
+      if (err instanceof FlowAbort) {
+        setFlowBlock(err.uxBlock);
+        return;
+      }
+      // Unknown errors get surfaced
       console.error('[Flow] Validation failed:', err);
-      const detail = err instanceof Error ? err.message : undefined;
-      setState(prev => ({
-        ...prev,
-        step: 'upload',
-        error: toUserError('DATASET_FETCH_FAILED', detail),
-      }));
+      const detail = err instanceof Error ? err.message : 'Unknown error';
+      setFlowBlock(BLOCKS.DATASET_FETCH_FAILED(detail));
     }
-  }, [settings]);
+  }, [settings, setFlowBlock]);
 
   // Keep startFlow ref updated for Hub auto-start
   startFlowRef.current = startFlow;
@@ -951,16 +1120,8 @@ export default function Flow() {
   ) => {
     setState(prev => ({ ...prev, progress: { current: 80, total: 100, message: 'Finding matches...' } }));
 
-    // Both datasets required for matching
-    if (supply.length === 0) {
-      console.log(`[Flow] ERROR: No supply dataset - matching requires both datasets`);
-      setState(prev => ({
-        ...prev,
-        step: 'upload',
-        error: toUserError('MISSING_SUPPLY'),
-      }));
-      return;
-    }
+    // GUARD — Both datasets required for matching
+    if (!guard(supply.length > 0, BLOCKS.NO_SUPPLY_DATASET, setFlowBlock)) return;
 
     // Diagnostic logs
     console.time('[MATCH] matchRecords');
@@ -1122,13 +1283,21 @@ export default function Flow() {
     console.log(`  - Demand: ${demandSuccessCount}/${enrichedDemand.size} with email, ${demandTimeoutCount} timeouts`);
     console.log(`  - Supply: ${supplySuccessCount}/${enrichedSupply.size} with email, ${supplyTimeoutCount} timeouts`);
 
-    // Move to ready — intros will generate when user clicks Route
-    // This allows operator to add pre-signal context before intro generation
+    // Save enrichment results first
+    setState(prev => ({
+      ...prev,
+      enrichedDemand,
+      enrichedSupply,
+    }));
+
+    // Generate intros immediately after enrichment (READY = fully materialized)
+    setState(prev => ({ ...prev, step: 'generating' }));
+    await runIntroGeneration(matching, enrichedDemand, enrichedSupply);
+
+    // Now move to ready — intros exist, state is exportable and sendable
     setState(prev => ({
       ...prev,
       step: 'ready',
-      enrichedDemand,
-      enrichedSupply,
     }));
   };
 
@@ -1174,6 +1343,9 @@ export default function Flow() {
 
     let progress = 0;
     const total = demandWithEmail.length + supplyWithEmail.length;
+
+    // Intro source stats — Phase 1 (transparent fallback)
+    const introStats = { aiCount: 0, fallbackCount: 0, fallbackReasons: {} as Record<string, number> };
 
     // ==========================================================================
     // Calculate role counts per company (for richer signals)
@@ -1295,7 +1467,8 @@ export default function Flow() {
 
       // ANTIFRAGILE PATH: AIService.generateIntro (signal-only, no enrichment)
       // FIX 1 + FIX 3: Pass connector mode and job signal for mode-appropriate language
-      const intro = await generateIntro(
+      // PHASE-1 FIX: Pass match narrative "why" for neutral relevance explanation
+      const introResult = await generateIntro(
         {
           type: 'supply',
           signalDetail: sanitizedSignal,
@@ -1305,6 +1478,8 @@ export default function Flow() {
             contactName: contactName || undefined,
             // Operator-written pre-signal context (normalized lookup)
             preSignalContext: supplyPreSignalContext,
+            // PHASE-1 FIX: Neutral "why this match" reason
+            matchReason: agg.bestMatch.narrative?.why,
           },
           // FIX 1: Pass connector mode
           connectorMode: state.connectorMode,
@@ -1314,8 +1489,19 @@ export default function Flow() {
         aiConfig
       );
 
-      supplyIntros.set(agg.supply.domain, intro);
-      console.log(`[Flow] Supply intro (antifragile): "${intro}"`);
+      supplyIntros.set(agg.supply.domain, introResult.intro);
+      console.log(`[Flow] Supply intro (${introResult.source}${introResult.fallbackReason ? ':' + introResult.fallbackReason : ''}): "${introResult.intro}"`);
+
+      // Track intro source stats — Phase 1 (transparent fallback)
+      if (introResult.source === 'ai') {
+        introStats.aiCount++;
+      } else {
+        introStats.fallbackCount++;
+        if (introResult.fallbackReason) {
+          introStats.fallbackReasons[introResult.fallbackReason] =
+            (introStats.fallbackReasons[introResult.fallbackReason] || 0) + 1;
+        }
+      }
 
       progress++;
       setState(prev => ({
@@ -1332,14 +1518,135 @@ export default function Flow() {
     console.log(`[Flow] Intro generation complete:`);
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
+    console.log(`  - Intro sources: ai=${introStats.aiCount}, fallback=${introStats.fallbackCount}`, introStats.fallbackReasons);
 
     // Save intros to state (step transition handled by caller)
     setState(prev => ({
       ...prev,
       demandIntros,
       supplyIntros,
+      introSourceStats: introStats,
     }));
   };
+
+  // =============================================================================
+  // EXPORT RECEIPT — Trust Layer (show what's filtered before download)
+  // =============================================================================
+
+  const openExportReceipt = useCallback(() => {
+    if (!state.matchingResult) return;
+
+    // Build demand receipt
+    const demandInput: DemandExportInput = {
+      matches: state.matchingResult.demandMatches,
+      enriched: state.enrichedDemand,
+      intros: state.demandIntros,
+    };
+    const demandReceipt = buildDemandReceipt(demandInput);
+
+    // Build supply receipt
+    const supplyInput: SupplyExportInput = {
+      aggregates: state.matchingResult.supplyAggregates,
+      enriched: state.enrichedSupply,
+      intros: state.supplyIntros,
+    };
+    const supplyReceipt = buildSupplyReceipt(supplyInput);
+
+    console.log('[Export] Receipt computed:', {
+      demand: { matched: demandReceipt.totalMatched, exported: demandReceipt.totalExported },
+      supply: { matched: supplyReceipt.totalMatched, exported: supplyReceipt.totalExported },
+    });
+
+    setExportReceiptData({ demand: demandReceipt, supply: supplyReceipt });
+    setShowExportReceipt(true);
+  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
+
+  // =============================================================================
+  // PRESIGNAL CHANGE DETECTION — Invalidate and regenerate intros if context changes
+  // =============================================================================
+
+  useEffect(() => {
+    // Only trigger when in READY state (intros already exist)
+    if (state.step !== 'ready') return;
+    if (!state.matchingResult) return;
+
+    const currentDemand = settings?.presignalDemand || '';
+    const currentSupply = settings?.presignalSupply || '';
+    const prevDemand = presignalRef.current.demand;
+    const prevSupply = presignalRef.current.supply;
+
+    // Check if presignal changed
+    const demandChanged = currentDemand !== prevDemand;
+    const supplyChanged = currentSupply !== prevSupply;
+
+    if (demandChanged || supplyChanged) {
+      console.log('[Flow] Presignal context changed, regenerating intros...');
+      console.log(`  - Demand: "${prevDemand}" → "${currentDemand}"`);
+      console.log(`  - Supply: "${prevSupply}" → "${currentSupply}"`);
+
+      // Update ref
+      presignalRef.current = { demand: currentDemand, supply: currentSupply };
+
+      // Regenerate intros with new context
+      (async () => {
+        setState(prev => ({ ...prev, step: 'generating' }));
+        await runIntroGeneration(state.matchingResult!, state.enrichedDemand, state.enrichedSupply);
+        setState(prev => ({ ...prev, step: 'ready' }));
+      })();
+    }
+  }, [settings?.presignalDemand, settings?.presignalSupply, state.step, state.matchingResult, state.enrichedDemand, state.enrichedSupply]);
+
+  // Track initial presignal values when entering READY state
+  useEffect(() => {
+    if (state.step === 'ready') {
+      presignalRef.current = {
+        demand: settings?.presignalDemand || '',
+        supply: settings?.presignalSupply || '',
+      };
+    }
+  }, [state.step, settings?.presignalDemand, settings?.presignalSupply]);
+
+  // =============================================================================
+  // CSV EXPORT HANDLER — Pure extraction from in-memory state
+  // =============================================================================
+
+  const handleExportCSV = useCallback(() => {
+    const data: ExportData = {
+      matchingResult: state.matchingResult,
+      enrichedDemand: state.enrichedDemand,
+      enrichedSupply: state.enrichedSupply,
+      demandIntros: state.demandIntros,
+      supplyIntros: state.supplyIntros,
+    };
+
+    // Build demand CSV
+    const demandHeaders = [
+      'send_type', 'email', 'first_name', 'last_name', 'company_name',
+      'website', 'personalization', 'matched_supply_company', 'match_score', 'match_reasons'
+    ];
+    const demandRows = buildDemandExportRows(data);
+    if (demandRows.length > 0) {
+      const demandCSV = buildCSV(demandHeaders, demandRows);
+      downloadCSV(`demand_export_${Date.now()}.csv`, demandCSV);
+    }
+
+    // Build supply CSV
+    const supplyHeaders = [
+      'send_type', 'email', 'first_name', 'last_name', 'company_name',
+      'website', 'personalization', 'matched_demand_count', 'avg_match_score'
+    ];
+    const supplyRows = buildSupplyExportRows(data);
+    if (supplyRows.length > 0) {
+      const supplyCSV = buildCSV(supplyHeaders, supplyRows);
+      downloadCSV(`supply_export_${Date.now()}.csv`, supplyCSV);
+    }
+
+    // Log export count
+    console.log(`[CSV Export] Demand: ${demandRows.length} rows, Supply: ${supplyRows.length} rows`);
+
+    // Close receipt modal after download
+    setShowExportReceipt(false);
+  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
   // STEP 5: SEND VIA SENDER ADAPTER
@@ -1350,10 +1657,8 @@ export default function Flow() {
     const senderId = settings?.sendingProvider || 'instantly';
     const sender = resolveSender(senderId);
 
-    if (!sender) {
-      setState(prev => ({ ...prev, error: `Unknown sending provider: ${senderId}` }));
-      return;
-    }
+    // GUARD — Sender must exist
+    if (!guard(sender, BLOCKS.ROUTING_FAILED(`Unknown sending provider: ${senderId}`), setFlowBlock)) return;
 
     // Build sender config
     const senderConfig = buildSenderConfig({
@@ -1365,23 +1670,18 @@ export default function Flow() {
       sendingProvider: senderId,
     });
 
-    // Validate config
+    // GUARD — Config must be valid
     const configError = sender.validateConfig(senderConfig);
-    if (configError) {
-      setState(prev => ({ ...prev, error: configError }));
-      return;
-    }
+    if (!guard(!configError, BLOCKS.NO_SENDER_CONFIG, setFlowBlock)) return;
 
-    // Generate intros NOW (after user has had chance to add context)
+    // Intros already generated after enrichment (READY = fully materialized)
+    // Send is now pure routing — no intro generation here
     const { matchingResult, enrichedDemand, enrichedSupply } = state;
-    if (matchingResult) {
-      setState(prev => ({ ...prev, step: 'generating' }));
-      await runIntroGeneration(matchingResult, enrichedDemand, enrichedSupply);
-    }
 
     setState(prev => ({ ...prev, step: 'sending' }));
 
-    if (!matchingResult) return;
+    // GUARD — Matching result required for sending
+    if (!guard(matchingResult, BLOCKS.NO_MATCHES, setFlowBlock)) return;
 
     let sentDemand = 0;
     let sentSupply = 0;
@@ -1583,8 +1883,10 @@ export default function Flow() {
       sentDemand: 0,
       sentSupply: 0,
       error: null,
+      flowBlock: null,
       auditData: null,
       copyValidationFailures: [],
+      introSourceStats: { aiCount: 0, fallbackCount: 0, fallbackReasons: {} },
     });
   };
 
@@ -1686,8 +1988,60 @@ export default function Flow() {
               <h1 className="text-[17px] font-medium text-white/90 mb-2">Flow</h1>
               <p className="text-[13px] text-white/40 mb-6">Match · Enrich · Route</p>
 
-              {/* Error Banner - Premium AlertPanel with Explainability */}
-              {state.error && (() => {
+              {/* FlowBlock Banner — Zero Silent Failures (structured errors) */}
+              {state.flowBlock && (
+                <div ref={errorRef} className="mb-8 max-w-lg mx-auto">
+                  <div className={`p-4 rounded-xl border ${
+                    state.flowBlock.severity === 'warning'
+                      ? 'bg-amber-500/[0.06] border-amber-500/20'
+                      : state.flowBlock.severity === 'info'
+                      ? 'bg-blue-500/[0.06] border-blue-500/20'
+                      : 'bg-red-500/[0.06] border-red-500/20'
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1">
+                        <p className={`text-[13px] font-medium mb-1 ${
+                          state.flowBlock.severity === 'warning' ? 'text-amber-400' :
+                          state.flowBlock.severity === 'info' ? 'text-blue-400' : 'text-red-400'
+                        }`}>
+                          {state.flowBlock.title}
+                        </p>
+                        <p className="text-[12px] text-white/60 mb-2">{state.flowBlock.detail}</p>
+                        <p className="text-[11px] text-white/40">{state.flowBlock.next_step}</p>
+                      </div>
+                      <button
+                        onClick={() => setFlowBlock(null)}
+                        className="p-1 rounded-lg hover:bg-white/[0.06] text-white/40 hover:text-white/60"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.06]">
+                      <button
+                        onClick={() => navigate('/settings')}
+                        className="px-3 py-1.5 text-[11px] rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 transition-colors"
+                      >
+                        Open Settings
+                      </button>
+                      <button
+                        onClick={() => setFlowBlock(null)}
+                        className="px-3 py-1.5 text-[11px] rounded-lg text-white/40 hover:text-white/60 transition-colors"
+                      >
+                        Dismiss
+                      </button>
+                      {isDebugMode && (
+                        <span className="text-[10px] text-white/20 font-mono ml-auto">
+                          {state.flowBlock.code}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Legacy Error Banner - Premium AlertPanel with Explainability */}
+              {state.error && !state.flowBlock && (() => {
                 // Normalize error to string (defensive against objects leaking in)
                 const errorStr = safeRender(state.error);
 
@@ -1977,15 +2331,92 @@ export default function Flow() {
                       <p className="text-[13px] text-white/40 mt-1">Ready to Route</p>
                     </motion.div>
 
-                    {/* Dataset Health — Aggregate signals as confidence indicator */}
+                    {/* Dataset Health — Explicit 3-state signals UX */}
                     {/* DOCTRINE: Signals are for awareness only. Never affect copy. */}
                     {(() => {
-                      // Compute aggregate signal stats (pure read, no effects)
+                      // Derive signal status (disabled | unavailable | available)
+                      const { status: signalStatus, coverage } = deriveSignalStatus(
+                        settings?.fetchSignals || false,
+                        state.enrichedDemand,
+                        state.enrichedSupply
+                      );
+
+                      // Log once per status derivation (not per-domain)
+                      if (signalStatus !== 'disabled' && coverage.total > 0) {
+                        console.log(`[Signals] status=${signalStatus} coverage=${coverage.available}/${coverage.total}`);
+                      }
+
+                      // STATE 1: Signals disabled — show explanation + CTA
+                      if (signalStatus === 'disabled') {
+                        return (
+                          <motion.div
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.35, duration: 0.4 }}
+                            className="mb-8 max-w-[280px] mx-auto"
+                          >
+                            <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                              <div className="relative p-5">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-white/20" />
+                                  <span className="text-[11px] text-white/30 font-medium tracking-wide">Company Signals</span>
+                                </div>
+                                <p className="text-[13px] text-white/50 leading-relaxed mb-1">
+                                  Signals are turned off
+                                </p>
+                                <p className="text-[11px] text-white/30 leading-relaxed mb-4">
+                                  Enable "Fetch company signals" in Settings to pull funding & size data from Apollo.
+                                </p>
+                                <p className="text-[10px] text-white/20 italic mb-4">
+                                  Optional · uses Apollo credits · does not affect intros
+                                </p>
+                                <button
+                                  onClick={() => navigate('/settings')}
+                                  className="px-3 py-1.5 rounded-lg text-[11px] font-medium text-white/70 bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] hover:border-white/[0.15] transition-all duration-200"
+                                >
+                                  Enable signals
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      }
+
+                      // STATE 2: Signals enabled but unavailable — show explicit empty state
+                      if (signalStatus === 'unavailable') {
+                        return (
+                          <motion.div
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.35, duration: 0.4 }}
+                            className="mb-8 max-w-[280px] mx-auto"
+                          >
+                            <div className="relative overflow-hidden rounded-2xl border border-white/[0.06] bg-gradient-to-b from-white/[0.02] to-transparent">
+                              <div className="relative p-5">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400/40" />
+                                  <span className="text-[11px] text-white/30 font-medium tracking-wide">Company Signals</span>
+                                </div>
+                                <p className="text-[13px] text-white/50 leading-relaxed mb-1">
+                                  No company signals available
+                                </p>
+                                <p className="text-[11px] text-white/30 leading-relaxed">
+                                  Apollo didn't return funding or employee data for these companies.
+                                  This is common for early-stage or non-indexed businesses.
+                                </p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      }
+
+                      // STATE 3: Signals available — show full card with breakdown
+                      // Compute aggregate stats for display
                       const signalStats = {
                         total: 0,
-                        funded: 0,       // Has funding_total > 0
-                        recentActivity: 0, // Last round within 12 months
-                        growing: 0,      // 50+ employees
+                        funded: 0,
+                        recentActivity: 0,
+                        growing: 0,
                       };
 
                       const contactsWithSignals: Array<{ domain: string; name: string; signals: Signals }> = [];
@@ -2032,19 +2463,8 @@ export default function Flow() {
                         }
                       }
 
-                      if (signalStats.total === 0) return null;
-
-                      // Compute health score (simple heuristic)
-                      const coverage = signalStats.total / Math.max(totalReady, 1);
-                      const healthLabel = coverage >= 0.5 ? 'Strong' : coverage >= 0.25 ? 'Good' : 'Fair';
-
-                      // Format date helper
-                      const formatDate = (iso: string | null) => {
-                        if (!iso) return null;
-                        const d = new Date(iso);
-                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        return `${months[d.getMonth()]} ${d.getFullYear()}`;
-                      };
+                      const coverageRatio = signalStats.total / Math.max(totalReady, 1);
+                      const healthLabel = coverageRatio >= 0.5 ? 'Strong' : coverageRatio >= 0.25 ? 'Good' : 'Fair';
 
                       return (
                         <motion.div
@@ -2055,11 +2475,9 @@ export default function Flow() {
                         >
                           {/* Dataset Health Card — Linear-style */}
                           <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.01]">
-                            {/* Subtle glow */}
                             <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/[0.03] to-transparent pointer-events-none" />
 
                             <div className="relative p-5">
-                              {/* Header */}
                               <div className="flex items-center justify-between mb-4">
                                 <div className="flex items-center gap-2">
                                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" />
@@ -2075,7 +2493,6 @@ export default function Flow() {
                                 </motion.span>
                               </div>
 
-                              {/* Stats */}
                               <div className="space-y-2.5">
                                 <motion.div
                                   initial={{ opacity: 0, x: -8 }}
@@ -2121,7 +2538,6 @@ export default function Flow() {
                                 )}
                               </div>
 
-                              {/* Divider + Doctrine */}
                               <motion.div
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
@@ -2133,7 +2549,6 @@ export default function Flow() {
                                 </p>
                               </motion.div>
 
-                              {/* View breakdown toggle */}
                               <motion.button
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
@@ -2152,7 +2567,6 @@ export default function Flow() {
                             </div>
                           </div>
 
-                          {/* Per-company breakdown — Ultra-minimal table */}
                           <AnimatePresence>
                             {showSignalsDrawer && (
                               <motion.div
@@ -2163,13 +2577,11 @@ export default function Flow() {
                                 className="overflow-hidden"
                               >
                                 <div className="mt-2 rounded-xl border border-white/[0.06] bg-white/[0.015] overflow-hidden">
-                                  {/* Header */}
                                   <div className="px-4 py-2 border-b border-white/[0.04] grid grid-cols-[1fr_60px_72px] gap-2">
                                     <span className="text-[9px] text-white/25 uppercase tracking-wider">Company</span>
                                     <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Size</span>
                                     <span className="text-[9px] text-white/25 uppercase tracking-wider text-right">Round</span>
                                   </div>
-                                  {/* Rows — Only show companies with funding in last 12 months */}
                                   <div
                                     className="max-h-[180px] overflow-y-auto"
                                     style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.08) transparent' }}
@@ -2179,36 +2591,32 @@ export default function Flow() {
                                         if (!c.signals.latest_funding_round_date) return false;
                                         const roundDate = new Date(c.signals.latest_funding_round_date);
                                         const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
-                                        return monthsAgo <= 12; // Only last 12 months
+                                        return monthsAgo <= 12;
                                       })
                                       .slice(0, 20)
                                       .map((c, idx) => {
-                                      // Size (employee count)
-                                      const size = c.signals.estimated_num_employees
-                                        ? String(c.signals.estimated_num_employees)
-                                        : '—';
+                                        const size = c.signals.estimated_num_employees
+                                          ? String(c.signals.estimated_num_employees)
+                                          : '—';
+                                        const roundDate = new Date(c.signals.latest_funding_round_date!);
+                                        const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+                                        const round = monthsAgo <= 0 ? 'This month' : `${monthsAgo}mo ago`;
 
-                                      // Round timing
-                                      const roundDate = new Date(c.signals.latest_funding_round_date!);
-                                      const monthsAgo = Math.floor((now.getTime() - roundDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
-                                      const round = monthsAgo <= 0 ? 'This month' : `${monthsAgo}mo ago`;
-
-                                      return (
-                                        <motion.div
-                                          key={c.domain}
-                                          initial={{ opacity: 0 }}
-                                          animate={{ opacity: 1 }}
-                                          transition={{ delay: idx * 0.02, duration: 0.15 }}
-                                          className="px-4 py-2 grid grid-cols-[1fr_60px_72px] gap-2 hover:bg-white/[0.02] transition-colors"
-                                        >
-                                          <span className="text-[11px] text-white/60 truncate">{c.name}</span>
-                                          <span className="text-[11px] text-white/40 tabular-nums text-right">{size}</span>
-                                          <span className="text-[11px] text-white/40 text-right">{round}</span>
-                                        </motion.div>
-                                      );
-                                    })}
+                                        return (
+                                          <motion.div
+                                            key={c.domain}
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            transition={{ delay: idx * 0.02, duration: 0.15 }}
+                                            className="px-4 py-2 grid grid-cols-[1fr_60px_72px] gap-2 hover:bg-white/[0.02] transition-colors"
+                                          >
+                                            <span className="text-[11px] text-white/60 truncate">{c.name}</span>
+                                            <span className="text-[11px] text-white/40 tabular-nums text-right">{size}</span>
+                                            <span className="text-[11px] text-white/40 text-right">{round}</span>
+                                          </motion.div>
+                                        );
+                                      })}
                                   </div>
-                                  {/* Footer */}
                                   {contactsWithSignals.length > 20 && (
                                     <div className="px-4 py-2 border-t border-white/[0.04]">
                                       <span className="text-[10px] text-white/20">+{contactsWithSignals.length - 20} more</span>
@@ -2369,6 +2777,8 @@ export default function Flow() {
                       sentCount: state.sentDemand + state.sentSupply,
                       skippedReasons: [],
                       runStartedAt: new Date(),
+                      // Intro Sources — Phase 1 (transparent fallback)
+                      introSources: state.introSourceStats,
                     }}
                   />
                 </div>
@@ -2409,6 +2819,12 @@ export default function Flow() {
                         className="px-4 py-2 text-[13px] text-white/50 hover:text-white/70 transition-colors"
                       >
                         Start Over
+                      </button>
+                      <button
+                        onClick={openExportReceipt}
+                        className="px-4 py-2.5 text-[13px] font-medium rounded-lg border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-all active:scale-[0.98]"
+                      >
+                        Export CSV
                       </button>
                       <button
                         onClick={startSending}
@@ -2484,6 +2900,95 @@ export default function Flow() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Export Receipt Modal — Trust Layer */}
+      <AnimatePresence>
+        {showExportReceipt && exportReceiptData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowExportReceipt(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.2 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md mx-4 p-5 rounded-2xl bg-[#0A0A0A] border border-white/[0.08] shadow-2xl"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[15px] font-medium text-white/90">Export Preview</h3>
+                <button
+                  onClick={() => setShowExportReceipt(false)}
+                  className="p-1.5 rounded-lg hover:bg-white/[0.06] text-white/40 hover:text-white/60"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Demand Receipt */}
+              <div className="mb-4 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[12px] text-white/50">Demand</span>
+                  <span className="text-[13px] font-medium text-white/90">
+                    {exportReceiptData.demand.totalExported} of {exportReceiptData.demand.totalMatched}
+                  </span>
+                </div>
+                {exportReceiptData.demand.filtered.length > 0 && (
+                  <div className="space-y-1">
+                    {exportReceiptData.demand.filtered.map((f) => (
+                      <div key={f.reason} className="flex items-center justify-between text-[11px]">
+                        <span className="text-white/40">{REASON_LABELS[f.reason]}</span>
+                        <span className="text-amber-400/70">{f.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Supply Receipt */}
+              <div className="mb-4 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[12px] text-white/50">Supply</span>
+                  <span className="text-[13px] font-medium text-white/90">
+                    {exportReceiptData.supply.totalExported} of {exportReceiptData.supply.totalMatched}
+                  </span>
+                </div>
+                {exportReceiptData.supply.filtered.length > 0 && (
+                  <div className="space-y-1">
+                    {exportReceiptData.supply.filtered.map((f) => (
+                      <div key={f.reason} className="flex items-center justify-between text-[11px]">
+                        <span className="text-white/40">{REASON_LABELS[f.reason]}</span>
+                        <span className="text-amber-400/70">{f.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowExportReceipt(false)}
+                  className="px-4 py-2 text-[13px] text-white/50 hover:text-white/70 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleExportCSV}
+                  className="px-4 py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 transition-all active:scale-[0.98]"
+                >
+                  Download CSV
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Dock */}
       <Dock />

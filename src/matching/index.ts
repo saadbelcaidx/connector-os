@@ -49,11 +49,23 @@ function logNonStringOnce(fieldName: string, value: unknown): void {
 // TYPES
 // =============================================================================
 
+/**
+ * PHASE-1 FIX: Neutral narrative for "why this match"
+ * Used in intro generation to explain relevance without timing claims.
+ */
+export interface MatchNarrative {
+  demandType: string;      // e.g., "fintech company", "clinical-stage biotech"
+  supplyType: string;      // e.g., "engineering recruiter", "pharma BD"
+  why: string;             // First matching reason
+  neutral: true;           // Enforces no timing claims
+}
+
 export interface Match {
   demand: NormalizedRecord;
   supply: NormalizedRecord;
   score: number;  // 0-100
   reasons: string[];
+  narrative?: MatchNarrative;  // PHASE-1 FIX: Optional neutral "why this match"
 }
 
 export interface SupplyAggregate {
@@ -109,10 +121,10 @@ export async function matchRecords(
   // Score every demand-supply pair with yielding
   for (const d of demand) {
     for (const s of supply) {
-      const { score, reasons } = scoreMatch(d, s);
+      const { score, reasons, narrative } = scoreMatch(d, s);
 
       if (score > 0) {
-        allMatches.push({ demand: d, supply: s, score, reasons });
+        allMatches.push({ demand: d, supply: s, score, reasons, narrative });
       }
 
       comparisonCount++;
@@ -172,10 +184,10 @@ export function matchRecordsSync(
   // Score every demand-supply pair
   for (const d of demand) {
     for (const s of supply) {
-      const { score, reasons } = scoreMatch(d, s);
+      const { score, reasons, narrative } = scoreMatch(d, s);
 
       if (score > 0) {
-        allMatches.push({ demand: d, supply: s, score, reasons });
+        allMatches.push({ demand: d, supply: s, score, reasons, narrative });
       }
     }
   }
@@ -212,6 +224,47 @@ export function matchRecordsSync(
 // =============================================================================
 
 /**
+ * PHASE-1 FIX: Build neutral narrative for "why this match"
+ * Uses industry + title, NOT signals or timing.
+ */
+function buildNarrative(
+  demand: NormalizedRecord,
+  supply: NormalizedRecord,
+  reasons: string[]
+): MatchNarrative {
+  // Extract demand type from industry (fallback: "company")
+  const dIndustryRaw = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
+  const demandType = dIndustryRaw
+    ? `${toStringSafe(dIndustryRaw).toLowerCase()} company`
+    : 'company';
+
+  // Extract supply type from title (fallback: "provider")
+  const supplyTitle = toStringSafe(supply.title).toLowerCase();
+  let supplyType = 'provider';
+  if (/recruit|staffing|talent/.test(supplyTitle)) {
+    supplyType = 'recruiter';
+  } else if (/consultant|advisory/.test(supplyTitle)) {
+    supplyType = 'consultant';
+  } else if (/agency|partner/.test(supplyTitle)) {
+    supplyType = 'agency';
+  } else if (/bd|business development|licensing/.test(supplyTitle)) {
+    supplyType = 'BD team';
+  } else if (supplyTitle) {
+    supplyType = supplyTitle.slice(0, 30); // Use raw title if specific
+  }
+
+  // First reason as "why" (fallback: generic)
+  const why = reasons[0] || 'Overlap detected';
+
+  return {
+    demandType,
+    supplyType,
+    why,
+    neutral: true,
+  };
+}
+
+/**
  * Score a demand-supply pair.
  *
  * Factors:
@@ -223,7 +276,7 @@ export function matchRecordsSync(
 function scoreMatch(
   demand: NormalizedRecord,
   supply: NormalizedRecord
-): { score: number; reasons: string[] } {
+): { score: number; reasons: string[]; narrative?: MatchNarrative } {
 
   let score = 0;
   const reasons: string[] = [];
@@ -255,7 +308,10 @@ function scoreMatch(
     reasons.push('Base relevance');
   }
 
-  return { score: Math.min(score, 100), reasons };
+  // PHASE-1 FIX: Build neutral narrative for intro context
+  const narrative = score > 0 ? buildNarrative(demand, supply, reasons) : undefined;
+
+  return { score: Math.min(score, 100), reasons, narrative };
 }
 
 /**
@@ -414,11 +470,16 @@ function aggregateBySupply(matches: Match[]): SupplyAggregate[] {
     // Sort by score, best first
     supplierMatches.sort((a, b) => b.score - a.score);
 
+    // totalMatches counts unique demand companies, not raw match pairs
+    const uniqueDemandDomains = new Set(
+      supplierMatches.map(m => m.demand.domain).filter(Boolean)
+    );
+
     aggregates.push({
       supply: supplierMatches[0].supply,
       matches: supplierMatches,
       bestMatch: supplierMatches[0],
-      totalMatches: supplierMatches.length,
+      totalMatches: uniqueDemandDomains.size,
     });
   }
 

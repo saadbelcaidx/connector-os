@@ -45,6 +45,8 @@ export interface IntroContext {
   // Wellfound data — allows factual freshness claims only
   hasWellfoundData?: boolean;
   wellfoundJobCount?: number;
+  // PHASE-1 FIX: Neutral "why this match" reason (e.g., "Industry match", "Signal alignment")
+  matchReason?: string;
 }
 
 export interface ComposeIntroArgs {
@@ -293,7 +295,8 @@ export function isWellfoundAllowed(text: string, hasWellfoundData: boolean): boo
 
 export const CANONICAL_FALLBACKS = {
   demand: (ctx: IntroContext, mode: ConnectorMode = 'b2b_general'): string => {
-    const industryPhrase = ctx.industry || MODE_INDUSTRY_PHRASES[mode].demand;
+    // PHASE-1 FIX: Always use mode-specific language, never generic "companies"
+    const industryPhrase = MODE_INDUSTRY_PHRASES[mode].demand;
     const opening = CANONICAL_OPENINGS.demand;
 
     // If presignal exists, use presignal-aware structure
@@ -433,11 +436,16 @@ export function buildCanonicalPrompt(args: {
     ? 'I can make the intro if it\'s useful — if not, no worries.'
     : 'Happy to connect you if you\'re interested.';
 
+  // PHASE-1 FIX: Include mode-specific industry phrase so AI knows the niche
+  const modeIndustryPhrase = MODE_INDUSTRY_PHRASES[mode][side];
+
   return `Write a 2-sentence intro email for a connector reaching out (${side.toUpperCase()} side).
 
 === CONTEXT ===
 CONTACT: ${ctx.firstName}${ctx.contactTitle ? `, ${ctx.contactTitle}` : ''} at ${ctx.company}
 ${ctx.industry ? `INDUSTRY: ${ctx.industry}` : ''}
+MODE: ${mode} (use "${modeIndustryPhrase}" when referencing the type of ${side === 'demand' ? 'companies' : 'providers'})
+${ctx.matchReason ? `WHY MATCHED: ${ctx.matchReason} (weave this into "clear overlap" or "clean fit" phrasing)` : ''}
 ${presignalContextLine}
 === CONNECTOR DOCTRINE ===
 You are a connector curating introductions.
