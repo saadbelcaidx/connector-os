@@ -33,12 +33,6 @@ export interface IntroContext {
 }
 
 // =============================================================================
-// NEUTRAL FALLBACK
-// =============================================================================
-
-const NEUTRAL_SUMMARY = 'is a team in this space';
-
-// =============================================================================
 // PROBE INTRO GENERATOR
 // =============================================================================
 
@@ -50,7 +44,8 @@ function generateProbeIntro(
   const taxonomy = getTaxonomy(mode);
   const name = ctx.firstName || 'there';
   const company = ctx.company || 'your company';
-  const summary = ctx.summary?.what_they_do || NEUTRAL_SUMMARY;
+  // Use mode-specific summary, NEVER raw company descriptions
+  const summary = taxonomy.defaultSummary;
 
   // PROBE: Ask permission, never claim counterpart
   return `Hey ${name} —
@@ -69,9 +64,11 @@ function generateConnectIntroDemand(
   ctx: IntroContext,
   match: Match
 ): string {
+  const taxonomy = getTaxonomy(mode);
   const name = ctx.firstName || 'there';
   const company = ctx.company || 'your company';
-  const summary = ctx.summary?.what_they_do || NEUTRAL_SUMMARY;
+  // Use mode-specific summary, NEVER raw company descriptions
+  const summary = taxonomy.defaultSummary;
   const edgePhrase = getEdgePhrase(match.edge!.edge_type!);
   const supplyCategory = match.supply.summary?.category || 'providers';
 

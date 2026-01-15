@@ -11,6 +11,7 @@ export interface EdgeTaxonomy {
   validEdges: EdgeType[];
   forbiddenEdges: EdgeType[];
   defaultProbePhrase: string;
+  defaultSummary: string;  // Mode-specific neutral summary
 }
 
 export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
@@ -26,6 +27,7 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: ['HIRING', 'FUNDING_ROUND', 'LICENSING', 'CRYPTO', 'BIOTECH'],
     defaultProbePhrase: 'open to intros around active deals',
+    defaultSummary: 'is in commercial real estate',
   },
 
   crypto: {
@@ -39,6 +41,7 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: ['HIRING', 'WEALTH_CLIENT', 'REAL_ESTATE_DEAL', 'BIOTECH'],
     defaultProbePhrase: 'open to intros around compliance or infrastructure',
+    defaultSummary: 'is in the crypto space',
   },
 
   biotech: {
@@ -52,6 +55,7 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: ['HIRING', 'CRYPTO', 'REAL_ESTATE', 'WEALTH_CLIENT'],
     defaultProbePhrase: 'open to intros around licensing or partnerships',
+    defaultSummary: 'is in life sciences',
   },
 
   recruitment: {
@@ -65,6 +69,7 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: ['LICENSING', 'FUNDING', 'COMPLIANCE', 'CRYPTO', 'BIOTECH'],
     defaultProbePhrase: 'open to intros around hiring needs',
+    defaultSummary: 'is growing the team',
   },
 
   wealth_management: {
@@ -78,6 +83,7 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: ['HIRING', 'CRYPTO', 'REAL_ESTATE_DEAL', 'BIOTECH'],
     defaultProbePhrase: 'open to intros around client acquisition',
+    defaultSummary: 'is in wealth management',
   },
 
   logistics: {
@@ -91,6 +97,7 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: ['HIRING', 'LICENSING', 'WEALTH_CLIENT', 'CRYPTO', 'BIOTECH'],
     defaultProbePhrase: 'open to intros around fulfillment capacity',
+    defaultSummary: 'is in logistics',
   },
 
   b2b_broad: {
@@ -103,12 +110,14 @@ export const EDGE_TAXONOMY: Record<string, EdgeTaxonomy> = {
     ],
     forbiddenEdges: [], // No forbidden edges for broad mode
     defaultProbePhrase: 'open to intros around relevant partners',
+    defaultSummary: 'came up on my radar',
   },
 
   custom: {
     validEdges: [], // User must define via presignal
     forbiddenEdges: [],
     defaultProbePhrase: 'open to relevant intros',
+    defaultSummary: 'came up on my radar',
   },
 };
 

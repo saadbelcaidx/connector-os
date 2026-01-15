@@ -52,22 +52,17 @@ export interface IntroOutput {
 
 /**
  * Transform legacy ctx (from Flow.tsx) to edge module's IntroContext.
- * Converts companyDescription → summary.what_they_do
+ *
+ * INVARIANT: Never use companyDescription verbatim.
+ * Summary is null → edge module uses mode-specific neutral fallback.
  */
 function transformContext(legacy: LegacyIntroContext): IntroContext {
-  // If we have a company description, use it as the "what_they_do"
-  const summary = legacy.companyDescription
-    ? {
-        category: 'company',
-        who_they_serve: '',
-        what_they_do: legacy.companyDescription,
-      }
-    : null;
-
+  // DO NOT use companyDescription — it leaks raw marketing copy
+  // The edge module will use NEUTRAL_SUMMARY ("is a team in this space")
   return {
     firstName: legacy.firstName || 'there',
     company: legacy.company || 'a company',
-    summary,
+    summary: null,  // Intentionally null — forces safe fallback
   };
 }
 
