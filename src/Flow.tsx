@@ -2624,9 +2624,12 @@ export default function Flow() {
               className="text-center"
             >
               {(() => {
-                // Calculate enriched counts
+                // INVARIANT: Match count persists independently of enrichment
                 const demandMatches = state.matchingResult?.demandMatches || [];
                 const supplyAggregates = state.matchingResult?.supplyAggregates || [];
+                const matchCount = demandMatches.length; // This NEVER changes after edge preflight
+
+                // Enrichment results (can be 0 if BUDGET_EXCEEDED)
                 const demandEnriched = demandMatches.filter(m => {
                   const e = state.enrichedDemand.get(m.demand.domain);
                   return e?.success && e?.email;
@@ -2636,6 +2639,9 @@ export default function Flow() {
                   return e?.success && e?.email;
                 }).length;
                 const totalEnriched = demandEnriched + supplyEnriched;
+                const enrichmentFailed = matchCount > 0 && totalEnriched === 0;
+                const enrichmentPartial = matchCount > 0 && totalEnriched > 0 && totalEnriched < matchCount;
+
                 const isEditingContext = editingPresignalSide !== null;
                 const currentContext = settings?.presignalDemand || settings?.presignalSupply || '';
 
@@ -2669,15 +2675,28 @@ export default function Flow() {
                       </div>
                     </motion.div>
 
-                    {/* Count */}
-                    <motion.p
+                    {/* Count — INVARIANT: always show match count, route count separate */}
+                    <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.15 }}
-                      className="text-[14px] text-white/50 mb-8"
+                      className="text-center mb-6"
                     >
-                      {demandEnriched} Matches ready to route
-                    </motion.p>
+                      <p className="text-[18px] font-light text-white/80">{matchCount} matches found</p>
+                      {enrichmentFailed ? (
+                        <>
+                          <p className="text-[12px] text-amber-400/70 mt-2">0 ready to route (emails unavailable)</p>
+                          <p className="text-[11px] text-white/30 mt-2 max-w-xs">
+                            We found real matches, but couldn't retrieve contact emails yet.
+                            This usually happens when enrichment limits are reached.
+                          </p>
+                        </>
+                      ) : enrichmentPartial ? (
+                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} of {matchCount} ready to route</p>
+                      ) : (
+                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} ready to route</p>
+                      )}
+                    </motion.div>
 
                     {/* Route Context Input */}
                     <motion.div
@@ -2770,25 +2789,58 @@ export default function Flow() {
                       )}
                     </motion.div>
 
-                    {/* Generate Intros Button — white, consistent */}
-                    <motion.button
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.3 }}
-                      onClick={generateIntrosWithPresignal}
-                      disabled={isEditingContext || savingPresignal}
-                      className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
-                        hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
-                        shadow-[0_0_20px_rgba(255,255,255,0.1)]
-                        disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                      whileHover={{ boxShadow: '0 0 30px rgba(255,255,255,0.15)' }}
-                    >
-                      Generate Intros
-                    </motion.button>
+                    {/* Buttons — conditional on enrichment state */}
+                    {enrichmentFailed ? (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="flex flex-col items-center gap-3"
+                      >
+                        <button
+                          onClick={() => {
+                            // Reset enrichment state and go back to enriching
+                            setState(prev => ({
+                              ...prev,
+                              step: 'enriching',
+                              enrichedDemand: new Map(),
+                              enrichedSupply: new Map(),
+                            }));
+                          }}
+                          className="px-6 py-2.5 bg-white text-black rounded-xl font-medium text-[13px]
+                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+                        >
+                          Retry enrichment
+                        </button>
+                        <button
+                          onClick={() => window.open('/settings', '_blank')}
+                          className="px-4 py-2 text-[12px] text-white/40 hover:text-white/60 transition-colors"
+                        >
+                          Manage API keys
+                        </button>
+                      </motion.div>
+                    ) : (
+                      <>
+                        <motion.button
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.3 }}
+                          onClick={generateIntrosWithPresignal}
+                          disabled={isEditingContext || savingPresignal || demandEnriched === 0}
+                          className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
+                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
+                            shadow-[0_0_20px_rgba(255,255,255,0.1)]
+                            disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          whileHover={{ boxShadow: '0 0 30px rgba(255,255,255,0.15)' }}
+                        >
+                          Generate Intros
+                        </motion.button>
 
-                    <p className="mt-4 text-[10px] text-white/25">
-                      {currentContext ? 'Context will be used in all intros' : 'Skip context to use neutral intros'}
-                    </p>
+                        <p className="mt-4 text-[10px] text-white/25">
+                          {currentContext ? 'Context will be used in all intros' : 'Skip context to use neutral intros'}
+                        </p>
+                      </>
+                    )}
                   </div>
                 );
               })()}
