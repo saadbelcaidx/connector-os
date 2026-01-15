@@ -203,20 +203,29 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
 
   // Extract signal type from signal string (job title/description)
   const signalLower = (normalized.signal || '').toLowerCase();
+  const isJobPosting = normalized.schemaId === 'startup-jobs';
 
-  // Leadership signals
-  if (signalLower.includes('vp') || signalLower.includes('vice president')) {
-    signals.push({ type: 'VP_OPEN', source: 'signal' });
-    metadata.vpOpen = true;
-  }
-  if (signalLower.includes('ceo') || signalLower.includes('cfo') || signalLower.includes('cto') ||
-      signalLower.includes('coo') || signalLower.includes('chief')) {
-    signals.push({ type: 'C_LEVEL_OPEN', source: 'signal' });
-    metadata.cLevelOpen = true;
-  }
-  if (signalLower.includes('director') || signalLower.includes('head of')) {
-    signals.push({ type: 'LEADERSHIP_OPEN', source: 'signal' });
-    metadata.hasLeadershipRole = true;
+  // LEADERSHIP_GAP signals are ONLY valid when sourced from job postings
+  // For B2B_CONTACTS (schemaId === 'b2b-contacts'):
+  // job_title represents a CURRENT ROLE, NOT an open position.
+  // Therefore we must NEVER set vpOpen / cLevelOpen / hasLeadershipRole from contact titles.
+  if (isJobPosting) {
+    if (signalLower.includes('vp') || signalLower.includes('vice president')) {
+      signals.push({ type: 'VP_OPEN', source: 'job_posting' });
+      metadata.vpOpen = true;
+      metadata.jobPostingProvenance = true;
+    }
+    if (signalLower.includes('ceo') || signalLower.includes('cfo') || signalLower.includes('cto') ||
+        signalLower.includes('coo') || signalLower.includes('chief')) {
+      signals.push({ type: 'C_LEVEL_OPEN', source: 'job_posting' });
+      metadata.cLevelOpen = true;
+      metadata.jobPostingProvenance = true;
+    }
+    if (signalLower.includes('director') || signalLower.includes('head of')) {
+      signals.push({ type: 'LEADERSHIP_OPEN', source: 'job_posting' });
+      metadata.hasLeadershipRole = true;
+      metadata.jobPostingProvenance = true;
+    }
   }
 
   // Funding from company data

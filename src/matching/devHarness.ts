@@ -105,6 +105,42 @@ const noContactSupply: SupplyRecord = {
   metadata: {},
 };
 
+// Demand: B2B Contact with Director title (source: signal) - should NOT trigger LEADERSHIP_GAP
+const b2bContactDirector: DemandRecord = {
+  domain: 'baird.com',
+  company: 'Baird',
+  contact: 'John Director',
+  email: 'john@baird.com',
+  title: 'Director - Business Owner Solutions',
+  industry: 'Financial Services',
+  signals: [
+    // This simulates what B2B_CONTACTS would produce BEFORE the fix (wrong)
+    // After fix: B2B_CONTACTS won't produce these signals at all
+    { type: 'LEADERSHIP_OPEN', source: 'signal' },  // NOT job_posting → should be ignored
+  ],
+  metadata: {
+    hasLeadershipRole: true,
+    // Missing jobPostingProvenance → should be ignored
+  },
+};
+
+// Demand: Job Posting with VP title (source: job_posting) - SHOULD trigger LEADERSHIP_GAP
+const jobPostingVP: DemandRecord = {
+  domain: 'techstartup.com',
+  company: 'Tech Startup Inc',
+  contact: '',  // Job postings don't have contacts
+  email: '',
+  title: '',
+  industry: 'Technology',
+  signals: [
+    { type: 'VP_OPEN', source: 'job_posting' },  // Correct provenance
+  ],
+  metadata: {
+    vpOpen: true,
+    jobPostingProvenance: true,  // Key flag
+  },
+};
+
 // Supply: Unrelated industry (low score)
 const unrelatedSupply: SupplyRecord = {
   domain: 'pizzashop.com',
@@ -235,6 +271,25 @@ test('Full Sage/Hightower output is correct', () => {
     output.supplyIntro.body.includes('Worth a look?');
 
   return demandOk && supplyOk;
+});
+
+// =============================================================================
+// LEADERSHIP_GAP PROVENANCE TESTS (CRITICAL)
+// =============================================================================
+
+// Test 12: B2B Contact title should NOT trigger LEADERSHIP_GAP
+test('B2B Contact Director title does NOT produce LEADERSHIP_GAP', () => {
+  const edge = detectEdge(b2bContactDirector);
+  // Edge should be null because LEADERSHIP_OPEN signal has source: 'signal', not 'job_posting'
+  const hasLeadershipGap = edge !== null && edge.type === 'LEADERSHIP_GAP';
+  return hasLeadershipGap === false;
+});
+
+// Test 13: Job Posting VP should trigger LEADERSHIP_GAP
+test('Job Posting VP title DOES produce LEADERSHIP_GAP', () => {
+  const edge = detectEdge(jobPostingVP);
+  // Edge should be LEADERSHIP_GAP because VP_OPEN signal has source: 'job_posting'
+  return edge !== null && edge.type === 'LEADERSHIP_GAP';
 });
 
 // =============================================================================

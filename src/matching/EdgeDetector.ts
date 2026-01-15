@@ -122,24 +122,31 @@ function detectExpansion(demand: DemandRecord): DetectedEdge | null {
 
 /**
  * Check for LEADERSHIP_GAP edge.
- * Condition: C-level or VP role open.
+ * Condition: C-level or VP role open FROM JOB POSTING PROVENANCE ONLY.
+ *
+ * DOCTRINE: A role is only "open" if it comes from a job-posting schema.
+ * Contact titles (B2B_CONTACTS) represent CURRENT roles, not open positions.
  */
 function detectLeadershipGap(demand: DemandRecord): DetectedEdge | null {
-  const hasLeadershipRole = demand.signals.some(
-    s => s.type === 'C_LEVEL_OPEN' || s.type === 'c_level_open' ||
-         s.type === 'VP_OPEN' || s.type === 'vp_open' ||
-         s.type === 'LEADERSHIP_OPEN' || s.type === 'leadership_open'
+  // Only allow leadership gaps from JOB POSTING provenance
+  const hasLeadershipSignalFromJobPosting = demand.signals.some(
+    s =>
+      (s.type === 'C_LEVEL_OPEN' ||
+       s.type === 'VP_OPEN' ||
+       s.type === 'LEADERSHIP_OPEN') &&
+      s.source === 'job_posting'
   );
 
-  // Also check metadata for leadership indicators
-  const metadataIndicatesLeadership = demand.metadata.hasLeadershipRole === true ||
-    demand.metadata.cLevelOpen === true ||
-    demand.metadata.vpOpen === true;
+  const metadataIndicatesLeadershipFromJobPosting =
+    demand.metadata.jobPostingProvenance === true &&
+    (demand.metadata.hasLeadershipRole === true ||
+     demand.metadata.cLevelOpen === true ||
+     demand.metadata.vpOpen === true);
 
-  if (hasLeadershipRole || metadataIndicatesLeadership) {
+  if (hasLeadershipSignalFromJobPosting || metadataIndicatesLeadershipFromJobPosting) {
     return {
       type: 'LEADERSHIP_GAP',
-      evidence: 'has a VP/C-level role open',
+      evidence: 'has an open leadership role',
       confidence: CONFIDENCE.HIGH,
     };
   }
