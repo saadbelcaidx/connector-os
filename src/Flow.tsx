@@ -20,6 +20,11 @@ import { matchRecords, MatchingResult, filterByScore } from './matching';
 import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult, Signals } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
+// Deterministic Matching Pipeline — Edge → Match → Compose → Gate
+import { runMatchingPipeline } from './matching/pipeline';
+import type { DemandRecord, Signal } from './schemas/DemandRecord';
+import type { SupplyRecord } from './schemas/SupplyRecord';
+
 // AI Config type
 import { AIConfig } from './services/AIService';
 
@@ -1392,165 +1397,112 @@ export default function Flow() {
   ) => {
     const demandIntros = new Map<string, string>();
     const supplyIntros = new Map<string, string>();
-    const aiConfig = settings?.aiConfig || null;
 
-    // DEBUG: Log what we have
-    console.log('[Flow] Anti-Fragile intro generation starting:');
+    console.log('[Flow] Deterministic pipeline starting:');
     console.log('  - demandMatches:', matching.demandMatches.length);
     console.log('  - supplyAggregates:', matching.supplyAggregates.length);
-    console.log('  - enrichedDemand size:', enrichedDemand.size);
-    console.log('  - enrichedSupply size:', enrichedSupply.size);
-    console.log('  - AI configured:', aiConfig ? aiConfig.provider : 'none (using templates)');
 
-    // Count emails
-    const demandWithEmail = matching.demandMatches.filter(m => {
-      const e = enrichedDemand.get(m.demand.domain);
-      return e?.email;
-    });
-    const supplyWithEmail = matching.supplyAggregates.filter(a => {
-      const e = enrichedSupply.get(a.supply.domain);
-      return e?.email;
-    });
+    // Build supply pool from enriched supply aggregates
+    const supplyPool: SupplyRecord[] = matching.supplyAggregates
+      .filter(agg => {
+        const enriched = enrichedSupply.get(agg.supply.domain);
+        return enriched?.success && enriched.email;
+      })
+      .map(agg => {
+        const enriched = enrichedSupply.get(agg.supply.domain)!;
+        return {
+          domain: agg.supply.domain,
+          company: agg.supply.company,
+          contact: enriched.firstName || agg.supply.firstName || '',
+          email: enriched.email || '',
+          title: agg.supply.title || '',
+          capability: agg.supply.capability || agg.supply.services || '',
+          targetProfile: agg.supply.targetProfile || agg.supply.industry || '',
+          metadata: {
+            services: agg.supply.services,
+            specialization: agg.supply.specialization,
+            targetRegions: agg.supply.targetRegions,
+          },
+        };
+      });
 
-    console.log('  - demandWithEmail:', demandWithEmail.length);
-    console.log('  - supplyWithEmail:', supplyWithEmail.length);
+    console.log('  - supplyPool size:', supplyPool.length);
 
-    let progress = 0;
-    const total = demandWithEmail.length + supplyWithEmail.length;
-
-    // ==========================================================================
-    // Calculate role counts per company (for richer signals)
-    // "Stripe is hiring" → "Stripe is scaling engineering with 8+ roles"
-    // ==========================================================================
-    const roleCountByDomain = new Map<string, number>();
-    for (const match of matching.demandMatches) {
-      const domain = match.demand.domain;
-      roleCountByDomain.set(domain, (roleCountByDomain.get(domain) || 0) + 1);
+    if (supplyPool.length === 0) {
+      console.log('[Flow] No enriched supply - cannot generate intros');
+      setState(prev => ({ ...prev, demandIntros, supplyIntros }));
+      return;
     }
 
-    // ==========================================================================
-    // GENERATE DEMAND INTROS — Rich context, 15 examples, validation
-    // ==========================================================================
+    let progress = 0;
+    const total = matching.demandMatches.filter(m => {
+      const e = enrichedDemand.get(m.demand.domain);
+      return e?.success && e.email;
+    }).length;
+
+    // Process each demand through the deterministic pipeline
     for (const match of matching.demandMatches) {
       if (abortRef.current) break;
 
       const enriched = enrichedDemand.get(match.demand.domain);
       if (!enriched?.success || !enriched.email) continue;
 
-      // No name = not a match, skip
-      const firstName = enriched.firstName || match.demand.firstName;
-      if (!firstName) {
-        console.log(`[Flow] Skipping ${match.demand.company} - no name found`);
+      const contactName = enriched.firstName || match.demand.firstName || '';
+      if (!contactName) {
+        console.log(`[Flow] DROP: ${match.demand.company} - no contact name`);
         continue;
       }
 
-      // Get role count for this company (for specific signals)
-      const roleCount = roleCountByDomain.get(match.demand.domain) || 1;
-
-      // ========================================================================
-      // INTRO RELIABILITY CONTRACT — Layer 0 first, Layer 1 best-effort
-      // ========================================================================
-      const demandPreSignalContext = settings?.presignalDemand;
-
-      // Build IntroRequest for reliability contract
-      const introRequest: IntroRequest = {
-        side: 'demand',
-        mode: state.connectorMode || 'b2b_general',
-        ctx: {
-          firstName,
-          company: match.demand.company,
-          companyDescription: match.demand.companyDescription || undefined,
-          preSignalContext: demandPreSignalContext,
+      // Map to DemandRecord
+      const demandRecord: DemandRecord = {
+        domain: match.demand.domain,
+        company: match.demand.company,
+        contact: contactName,
+        email: enriched.email,
+        title: match.demand.title || '',
+        industry: match.demand.industry || '',
+        signals: (match.demand.signals || []).map((s: any) => ({
+          type: s.type || 'SIGNAL',
+          value: s.value,
+          source: s.source,
+        })),
+        metadata: {
+          revenueGrowth: match.demand.revenueGrowth,
+          revenue: match.demand.revenue,
+          services: match.demand.services,
+          profileTags: match.demand.profileTags,
+          needsTags: match.demand.needsTags,
+          location: match.demand.location,
         },
       };
 
-      console.log(`[Flow] Generating demand intro for ${firstName} at ${match.demand.company}...`);
-      console.log(`[Flow] Using per-side presignalDemand:`, demandPreSignalContext || '(none)');
+      // Run deterministic pipeline
+      const result = runMatchingPipeline(demandRecord, supplyPool);
 
-      // RELIABILITY CONTRACT: Layer 0 runs FIRST, AI enhancement best-effort
-      const result = await generateIntroWithAI(introRequest, aiConfig, user?.id || 'guest');
-      demandIntros.set(match.demand.domain, result.intro);
-      console.log(`[Flow] Demand intro generated: "${result.intro}"`);
+      if (result.dropped) {
+        console.log(`[Flow] DROP: ${match.demand.company} - ${result.reason}`);
+        continue;
+      }
+
+      // COMPOSE path — use verbatim output
+      demandIntros.set(match.demand.domain, result.output.demandIntro.body);
+      supplyIntros.set(result.output.payload.supply.domain, result.output.supplyIntro.body);
+
+      console.log(`[Flow] COMPOSE: ${match.demand.company} → ${result.output.payload.supply.company}`);
 
       progress++;
       setState(prev => ({
         ...prev,
-        progress: { current: progress, total, message: `Generating ${progress}/${total}` },
+        progress: { current: progress, total, message: `Processing ${progress}/${total}` },
         demandIntros: new Map(demandIntros),
-      }));
-
-      // Rate limit: 500ms between matches (generation + validation calls)
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
-    // ==========================================================================
-    // GENERATE SUPPLY INTROS — Reliability Contract (Layer 0 + Layer 1)
-    // ==========================================================================
-    for (const agg of matching.supplyAggregates) {
-      if (abortRef.current) break;
-
-      const enriched = enrichedSupply.get(agg.supply.domain);
-      if (!enriched?.success || !enriched.email) continue;
-
-      // No name = not a match, skip
-      const firstName = enriched.firstName || agg.supply.firstName;
-      if (!firstName) {
-        console.log(`[Flow] Skipping supply ${agg.supply.company} - no name found`);
-        continue;
-      }
-
-      const exampleCompany = agg.bestMatch.demand.company;  // ONE example only
-
-      // Get decision maker name
-      const demandEnriched = enrichedDemand.get(agg.bestMatch.demand.domain);
-      const contactName = demandEnriched?.firstName || agg.bestMatch.demand.firstName || null;
-
-      // CANONICAL: Use per-side presignal (applies to ALL supply contacts)
-      const supplyPreSignalContext = settings?.presignalSupply;
-
-      console.log(`[Flow] Generating supply intro for ${firstName}...`);
-      console.log(`[Flow] Using per-side presignalSupply:`, supplyPreSignalContext || '(none)');
-
-      // ========================================================================
-      // INTRO RELIABILITY CONTRACT — Layer 0 first, Layer 1 best-effort
-      // ========================================================================
-      // demandType comes from narrative.supplyRole ONLY (COS-derived)
-      // NEVER from contact title or signal
-      const demandType = agg.bestMatch.narrative?.supplyRole || undefined;
-
-      const introRequest: IntroRequest = {
-        side: 'supply',
-        mode: state.connectorMode || 'b2b_general',
-        ctx: {
-          firstName,
-          company: exampleCompany,
-          demandType,
-          preSignalContext: supplyPreSignalContext,
-        },
-      };
-
-      // RELIABILITY CONTRACT: Layer 0 runs FIRST, AI enhancement best-effort
-      const result = await generateIntroWithAI(introRequest, aiConfig, user?.id || 'guest');
-      supplyIntros.set(agg.supply.domain, result.intro);
-      console.log(`[Flow] Supply intro generated: "${result.intro}"`);
-
-      progress++;
-      setState(prev => ({
-        ...prev,
-        progress: { current: progress, total, message: `Generating ${progress}/${total}` },
         supplyIntros: new Map(supplyIntros),
       }));
-
-      // Rate limit: 500ms between calls
-      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Summary
-    console.log(`[Flow] Intro generation complete:`);
+    console.log(`[Flow] Pipeline complete:`);
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
 
-    // Save intros to state (step transition handled by caller)
     setState(prev => ({
       ...prev,
       demandIntros,
@@ -2352,12 +2304,32 @@ export default function Flow() {
                         <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
                           <div className="flex items-center justify-between mb-3">
                             <span className="text-[10px] text-white/30 uppercase tracking-wider">Route Context</span>
-                            <button
-                              onClick={() => startEditPresignal('demand')}
-                              className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
-                            >
-                              Edit
-                            </button>
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => startEditPresignal('demand')}
+                                className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  // Clear presignal from state
+                                  setSettings(prev => prev ? { ...prev, presignalDemand: '', presignalSupply: '' } : prev);
+                                  // Clear from DB/localStorage
+                                  if (user?.id) {
+                                    await supabase.from('operator_settings').update({ presignal_demand: '', presignal_supply: '' }).eq('user_id', user.id);
+                                  } else {
+                                    const guestSettings = JSON.parse(localStorage.getItem('guest_settings') || '{}');
+                                    guestSettings.presignalDemand = '';
+                                    guestSettings.presignalSupply = '';
+                                    localStorage.setItem('guest_settings', JSON.stringify(guestSettings));
+                                  }
+                                }}
+                                className="text-[10px] text-red-400/50 hover:text-red-400/80 transition-colors"
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </div>
                           <p className="text-[13px] text-white/60 leading-relaxed text-center">{safeRender(currentContext)}</p>
                         </div>

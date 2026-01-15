@@ -55,20 +55,78 @@ function extractFirstName(fullName: string): string {
 }
 
 /**
+ * Format capability string: sentence case, acronyms, conjunctions.
+ * Formatting only — no meaning added.
+ *
+ * "ria acquisition platform transitions wealth management"
+ * → "RIA acquisitions and platform transitions in wealth management"
+ */
+function formatCapability(raw: string): string {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return '';
+
+  // Known acronyms to uppercase
+  const acronyms = new Set(['ria', 'm&a', 'cfo', 'ceo', 'hr', 'it', 'saas', 'b2b']);
+
+  // Known domain words that signal "in [domain]" structure
+  const domains = new Set(['wealth', 'financial', 'healthcare', 'tech', 'saas', 'legal']);
+
+  // Split into tokens
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 0) return '';
+
+  // Format tokens
+  const formatted: string[] = [];
+  let insertedAnd = false;
+  let insertedIn = false;
+
+  for (let i = 0; i < tokens.length; i++) {
+    let token = tokens[i];
+
+    // Uppercase acronyms
+    if (acronyms.has(token)) {
+      token = token.toUpperCase();
+    }
+    // Sentence case first word
+    else if (i === 0) {
+      token = token.charAt(0).toUpperCase() + token.slice(1);
+    }
+
+    // Pluralize "acquisition" → "acquisitions", "transition" → "transitions"
+    if (token === 'acquisition') token = 'acquisitions';
+    if (token === 'transition') token = 'transitions';
+
+    // Insert "and" before second major concept (after first noun phrase)
+    if (!insertedAnd && i > 0 && (token === 'platform' || token === 'transitions')) {
+      formatted.push('and');
+      insertedAnd = true;
+    }
+
+    // Insert "in" before domain word
+    if (!insertedIn && domains.has(tokens[i])) {
+      formatted.push('in');
+      insertedIn = true;
+    }
+
+    formatted.push(token);
+  }
+
+  return formatted.join(' ');
+}
+
+/**
  * Generate "what they do" line from supply data.
  * Only uses actual capability from SupplyRecord, no invented claims.
  */
 function generateWhatTheyDo(supplyRecord: SupplyRecord): string {
-  // Use capability directly from supply record
   const capability = supplyRecord.capability || '';
-  const trimmed = capability.trim();
+  const formatted = formatCapability(capability);
 
-  if (!trimmed) {
+  if (!formatted) {
     return '';
   }
 
-  // Simple, factual statement based on capability
-  return `They focus on ${trimmed.toLowerCase()}.`;
+  return `They focus on ${formatted}.`;
 }
 
 // =============================================================================
@@ -134,21 +192,38 @@ export function composeIntros(
   // ==========================================================================
   // SUPPLY INTRO
   // ==========================================================================
-  // Template:
+  // Template (exact structure required):
   // Hey [firstName] —
   //
   // [demand.company] [edge.evidence].
   // [demand.contact] is [demand.title].
-  // [fitReason].
+  // [fitReason — capability only, no edge echo].
   //
   // Worth a look?
+
+  // Extract capability-only fitReason (first sentence before edge evidence)
+  // fitReason format: "Supply focuses on X. Demand shows Y." → take only first part
+  // Then format the capability part for clean grammar
+  const fitReasonParts = counterparty.fitReason.split('. ');
+  const rawFitReason = fitReasonParts[0];
+
+  // Extract and format capability from "Company focuses on X"
+  const focusMatch = rawFitReason.match(/^(.+) focuses on (.+)$/);
+  let capabilityFitReason: string;
+  if (focusMatch) {
+    const company = focusMatch[1];
+    const capability = formatCapability(focusMatch[2]);
+    capabilityFitReason = `${company} focuses on ${capability}.`;
+  } else {
+    capabilityFitReason = rawFitReason + '.';
+  }
 
   const supplyLines = [
     `Hey ${supplyFirstName} —`,
     '',
     `${demand.company} ${edge.evidence}.`,
     `${demand.contact} is ${demand.title || 'the point of contact'}.`,
-    counterparty.fitReason,
+    capabilityFitReason,
     '',
     'Worth a look?',
   ];
