@@ -498,7 +498,7 @@ export const SUPPLY_ROLE_VOCAB: Record<ConnectorMode, {
       { pattern: /compliance|kyc|aml|fraud/, role: 'payment & compliance infrastructure' },
       { pattern: /product|engineering/, role: 'fintech product teams' },
     ],
-    fallback: null, // STRICT: no generic fallback for crypto
+    fallback: 'teams building in crypto',
   },
   wealth_management: {
     tokens: [
