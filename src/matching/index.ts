@@ -12,7 +12,7 @@
 
 import { NormalizedRecord } from '../schemas';
 import type { ConnectorMode } from '../services/SupplyFilterBuilder';
-import { validateMatch, getModeSupplyRole, getModeDemandValue } from './buyerSellerTypes';
+import { validateMatch } from './buyerSellerTypes';
 
 // =============================================================================
 // TYPE SAFETY UTILITIES
@@ -52,18 +52,14 @@ function logNonStringOnce(fieldName: string, value: unknown): void {
 // =============================================================================
 
 /**
- * PHASE-1 FIX: Neutral narrative for "why this match"
- * Used in intro generation to explain relevance without timing claims.
+ * Neutral narrative for "why this match"
+ * Used for match context without timing claims.
  */
 export interface MatchNarrative {
   demandType: string;      // e.g., "fintech company", "clinical-stage biotech"
   supplyType: string;      // e.g., "engineering recruiter", "pharma BD"
   why: string;             // First matching reason
   neutral: true;           // Enforces no timing claims
-  // COS (Connector Overlap Statement) — relational copy
-  demandValue: string;     // e.g., "advisory firms focused on long-term, personalized planning"
-  supplyRole: string;      // e.g., "payments teams"
-  overlap: string;         // e.g., "I connect payments teams working closely with advisory firms..."
 }
 
 export interface Match {
@@ -253,15 +249,13 @@ export function matchRecordsSync(
 // =============================================================================
 
 /**
- * PHASE-1 FIX: Build neutral narrative for "why this match"
+ * Build neutral narrative for "why this match"
  * Uses industry + title, NOT signals or timing.
- * MODE-AWARE: Uses mode-specific vocabulary for all 8 modes.
  */
 function buildNarrative(
   demand: NormalizedRecord,
   supply: NormalizedRecord,
-  reasons: string[],
-  mode?: ConnectorMode
+  reasons: string[]
 ): MatchNarrative {
   // Extract demand type from industry (fallback: "company")
   const dIndustryRaw = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
@@ -287,32 +281,11 @@ function buildNarrative(
   // First reason as "why" (fallback: generic)
   const why = reasons[0] || 'Overlap detected';
 
-  // ==========================================================================
-  // COS (Connector Overlap Statement) — Deterministic relational copy
-  // MODE-AWARE: Uses single source of truth from buyerSellerTypes.ts
-  // If getModeSupplyRole() returns null → COS overlap = undefined
-  // ==========================================================================
-
-  // Extract demandValue (deterministic, mode-aware)
-  const demandValue = getModeDemandValue(demand, mode);
-
-  // Extract supplyRole (deterministic, mode-aware)
-  // Returns null in strict modes (crypto) if no safe token matches
-  const supplyRole = getModeSupplyRole(supply, mode);
-
-  // If supplyRole is null, COS overlap is undefined (per user.txt spec)
-  const overlap = supplyRole
-    ? `I connect ${supplyRole} working closely with ${demandValue}.`
-    : undefined;
-
   return {
     demandType,
     supplyType,
     why,
     neutral: true,
-    demandValue,
-    supplyRole: supplyRole || '', // Empty if no valid match (intro gen will skip COS)
-    overlap: overlap || '', // Empty if no valid COS
   };
 }
 
@@ -399,9 +372,8 @@ function scoreMatch(
     }
   }
 
-  // PHASE-1 FIX: Build neutral narrative for intro context
-  // Pass mode to buildNarrative for mode-aware COS vocabulary
-  const narrative = score > 0 ? buildNarrative(demand, supply, reasons, mode) : undefined;
+  // Build neutral narrative for intro context
+  const narrative = score > 0 ? buildNarrative(demand, supply, reasons) : undefined;
 
   return { score: Math.min(score, 100), reasons, narrative, buyerSellerValid };
 }

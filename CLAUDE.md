@@ -500,6 +500,43 @@ Signal → Match → Enrich → Intro → Route → Reply → Deal → $$$
 | `src/services/SignalsClient.ts` | Fetches demand signals |
 | `src/services/SupplySignalsClient.ts` | Fetches supply signals |
 
+### Intro Generation (Deterministic Templates)
+
+**NO AI. NO RETRIES. Just fill-in-the-blank templates.**
+
+| File | Purpose |
+|------|---------|
+| `src/copy/introDoctrine.ts` | **🎯 SINGLE SOURCE OF TRUTH** — 8 mode templates, `composeIntro()` |
+| `src/services/IntroGenerator.ts` | Thin wrapper — calls `composeIntro()` |
+| `src/services/IntroReliability.ts` | Async wrapper for backwards compat |
+
+**Troubleshooting intros:**
+```
+Bad intro? → src/copy/introDoctrine.ts:37-82 (MODE_TEMPLATES)
+Wrong pain framing? → Edit demandPain string for that mode
+Template not filling? → Check if companyDescription is passed
+```
+
+**8 Connector Modes:**
+- `recruiting` — "who lose months on leadership hires because recruiters don't really understand the space"
+- `biotech_licensing` — "who lose months in licensing because pharma BD teams don't really grasp the science"
+- `wealth_management` — "who leave millions on the table with generic advisors"
+- `real_estate_capital` — "who lose deals when capital partners underwrite too conservatively"
+- `logistics` — "who hit growth walls when 3PLs can't keep up"
+- `crypto` — "who lose months to licensing because consultants don't understand custody"
+- `enterprise_partnerships` — "who lose quarters on integrations because partners underestimate workflows"
+- `b2b_general` — "who lose time when providers don't really understand the space"
+
+**Template pattern:**
+- Demand: "Noticed [company] is [description] — I know companies in similar situations [pain]. I can connect you directly if useful."
+- Supply: "I'm in touch with [demand ICP] — looks like the type of [noun] you guys [verb]. I can connect you directly if useful."
+
+**NEVER add back:**
+- AI prompts
+- Retry loops
+- Token dictionaries (SUPPLY_ROLE_VOCAB, DEMAND_VALUE_VOCAB)
+- COS generation (getModeSupplyRole, getModeDemandValue)
+
 ### Pressure System
 | File | Purpose |
 |------|---------|
