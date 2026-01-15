@@ -1460,8 +1460,8 @@ export default function Flow() {
       `${runId}-demand`
     );
 
-    // Update state with demand results
-    setState(prev => ({ ...prev, enrichedDemand: new Map(enrichedDemand) }));
+    // NOTE: Don't update state yet — wait until both demand and supply are enriched
+    // to avoid race conditions where route_context renders with partial data
 
     // Enrich supply side — ONLY supplies paired with edge-positive demands
     const enrichedSupply = new Map<string, EnrichmentResult>();
@@ -1525,16 +1525,14 @@ export default function Flow() {
     console.log(`  - Demand: ${demandSuccessCount}/${enrichedDemand.size} with email, ${demandTimeoutCount} timeouts`);
     console.log(`  - Supply: ${supplySuccessCount}/${enrichedSupply.size} with email, ${supplyTimeoutCount} timeouts`);
 
-    // Save enrichment results first
+    // ATOMIC STATE UPDATE: Set enrichment results AND step change together
+    // This prevents race conditions where route_context renders before enrichment data is available
     setState(prev => ({
       ...prev,
       enrichedDemand,
       enrichedSupply,
+      step: 'route_context',
     }));
-
-    // FIX: Go to route_context step BEFORE intro generation
-    // User can now enter presignal before intros are generated
-    setState(prev => ({ ...prev, step: 'route_context' }));
     console.log('[Flow] Enrichment complete — waiting for route context before generating intros');
   };
 
