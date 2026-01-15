@@ -1,10 +1,10 @@
 /**
  * INTRO DOCTRINE — SSM-Style Deterministic Templates
  *
- * Fill-in-the-blank templates. No AI. No retries. No garbage.
+ * Intros are ASSEMBLED, not generated.
+ * Input → Normalize → Validate → Select Template → Fill Slots → Output
  *
- * INPUTS: firstName, company, companyDescription, mode, demandType
- * OUTPUT: Plain text intro
+ * NO OTHER PATH IS ALLOWED.
  */
 
 import { cleanCompanySummary, isSafeSlot } from '../matching/cleanCompanySummary';
@@ -29,8 +29,8 @@ export interface IntroContext {
   firstName: string;
   company: string;
   companyDescription?: string;
-  demandType?: { type?: string } | string;  // For demand: validates pain injection. For supply: describes who the demand is.
-  preSignalContext?: string;  // Operator-written context (e.g., "Saw your talk at the conference")
+  demandType?: { type?: string } | string;
+  preSignalContext?: string;
 }
 
 // =============================================================================
@@ -40,13 +40,28 @@ export interface IntroContext {
 const NEUTRAL_PAIN = 'teams who run into friction when evaluating new partners in this space';
 
 // =============================================================================
+// ALLOWED PAIN TARGETS — Pain injection requires BOTH mode AND demandType match
+// =============================================================================
+
+const ALLOWED_PAIN_TARGETS: Record<ConnectorMode, string[]> = {
+  recruiting: ['hiring_company', 'scaling_team', 'talent_search'],
+  biotech_licensing: ['biotech', 'pharma', 'life_sciences', 'drug_development'],
+  wealth_management: ['hnw_individual', 'family_office', 'wealth_client'],
+  real_estate_capital: ['developer', 'sponsor', 'real_estate_investor'],
+  logistics: ['ecommerce_brand', 'dtc_brand', 'fulfillment_seeker'],
+  crypto: ['crypto_platform', 'fintech_platform', 'exchange', 'defi_protocol'],
+  enterprise_partnerships: ['enterprise', 'saas_company', 'integration_seeker'],
+  b2b_general: [],  // b2b_general always uses its pain (no gating)
+};
+
+// =============================================================================
 // MODE TEMPLATES — Pain framing per vertical (MODE-LOCKED)
 // =============================================================================
 
 const MODE_TEMPLATES: Record<ConnectorMode, {
   demandPain: string;
-  demandFallback: string;  // Fallback summary if cleanCompanySummary fails
-  supplyFallback: string;  // Fallback demand type if narrative.supplyRole missing
+  demandFallback: string;
+  supplyFallback: string;
 }> = {
   recruiting: {
     demandPain: 'teams who lose months on leadership hires because recruiters don\'t really understand the space',
@@ -91,97 +106,69 @@ const MODE_TEMPLATES: Record<ConnectorMode, {
 };
 
 // =============================================================================
-// DEMAND INTRO — To companies with need
-// Template: "Noticed {{company}} {{demandSummary}} — I know {{pain}}."
+// PAIN SELECTION — Mode + demandType validation
 // =============================================================================
 
-/**
- * Helper to build neutral demand intro (used by safety assert)
- */
-function buildNeutralDemandIntro(name: string, company: string, demandSummary: string): string {
-  return `Hey ${name} —
+function selectPain(mode: ConnectorMode, demandType?: { type?: string } | string): string {
+  const template = MODE_TEMPLATES[mode] || MODE_TEMPLATES.b2b_general;
+  const allowedTargets = ALLOWED_PAIN_TARGETS[mode] || [];
 
-Noticed ${company} ${demandSummary} — I know ${NEUTRAL_PAIN}.
+  // b2b_general has no gating — always uses its pain
+  if (mode === 'b2b_general' || allowedTargets.length === 0) {
+    return template.demandPain;
+  }
 
-I can connect you directly if useful.`;
+  // Extract demandType value
+  const demandTypeValue = typeof demandType === 'object' ? demandType?.type : demandType;
+
+  // Check if demandType is in allowed targets
+  if (demandTypeValue && allowedTargets.includes(demandTypeValue)) {
+    return template.demandPain;
+  }
+
+  // demandType not in allowed targets → NEUTRAL_PAIN
+  return NEUTRAL_PAIN;
 }
+
+// =============================================================================
+// DEMAND INTRO — To companies with need
+// =============================================================================
 
 function generateDemandIntro(ctx: IntroContext, mode: ConnectorMode): string {
   const { firstName, company, companyDescription, demandType, preSignalContext } = ctx;
   const template = MODE_TEMPLATES[mode] || MODE_TEMPLATES.b2b_general;
   const name = firstName || 'there';
 
-  // ---------------------------------------------------------------------------
-  // PATCH 1: HARD GATE PAIN BY DEMAND TYPE (not just mode)
-  // ---------------------------------------------------------------------------
-  const demandTypeValue = typeof demandType === 'object' ? demandType?.type : demandType;
-  const isCryptoDemand =
-    demandTypeValue === 'crypto_platform' ||
-    demandTypeValue === 'fintech_platform' ||
-    demandTypeValue === 'exchange';
+  // SELECT PAIN (gated by mode + demandType)
+  const pain = selectPain(mode, demandType);
 
-  let pain: string;
-  if (mode === 'crypto' && isCryptoDemand) {
-    pain = template.demandPain;  // Crypto pain only for crypto demand
-  } else if (mode === 'crypto') {
-    pain = NEUTRAL_PAIN;  // Crypto mode but NOT crypto demand → neutral
-  } else {
-    pain = template.demandPain;  // Other modes use their pain
-  }
+  // VALIDATE SUMMARY (returns null if invalid)
+  const validatedSummary = cleanCompanySummary(companyDescription, company);
 
-  // ---------------------------------------------------------------------------
-  // PATCH 2: FORCE CLEAN SUMMARY (no raw description ever)
-  // ---------------------------------------------------------------------------
-  const safeSummary = cleanCompanySummary(companyDescription);
+  // FALLBACK if null
+  const demandSummary = validatedSummary !== null ? validatedSummary : template.demandFallback;
 
-  // HARD RULE: Discard if contains garbage patterns
-  const isGarbage = !safeSummary ||
-    safeSummary.length === 0 ||
-    /World's first/i.test(safeSummary) ||
-    safeSummary.includes(':') ||
-    safeSummary.includes('•') ||
-    !isSafeSlot(safeSummary);
-
-  const demandSummary = isGarbage ? template.demandFallback : safeSummary;
-
-  // If operator provided pre-signal context, use it as the hook
+  // PRE-SIGNAL CONTEXT PATH
   if (preSignalContext && isSafeSlot(preSignalContext)) {
-    const intro = `Hey ${name} —
+    return `Hey ${name} —
 
 ${preSignalContext.trim()}
 
 I know ${pain}.
 
 I can connect you directly if useful.`;
-
-    // PATCH 3: Safety assert for licensing pain leakage
-    if (mode === 'crypto' && !isCryptoDemand && intro.includes('licens')) {
-      return buildNeutralDemandIntro(name, company, demandSummary);
-    }
-
-    return intro;
   }
 
-  // Standard demand intro with company summary
-  const intro = `Hey ${name} —
+  // STANDARD DEMAND INTRO
+  return `Hey ${name} —
 
 Noticed ${company} ${demandSummary} — I know ${pain}.
 
 I can connect you directly if useful.`;
-
-  // ---------------------------------------------------------------------------
-  // PATCH 3: SAFETY ASSERT (seatbelt, not primary logic)
-  // ---------------------------------------------------------------------------
-  if (mode === 'crypto' && !isCryptoDemand && intro.includes('licens')) {
-    return buildNeutralDemandIntro(name, company, demandSummary);
-  }
-
-  return intro;
 }
 
 // =============================================================================
 // SUPPLY INTRO — To providers
-// Template: "I'm in touch with {{demandType}} — looks like the kind of teams you work with."
 // =============================================================================
 
 function generateSupplyIntro(ctx: IntroContext, mode: ConnectorMode): string {
@@ -189,13 +176,13 @@ function generateSupplyIntro(ctx: IntroContext, mode: ConnectorMode): string {
   const template = MODE_TEMPLATES[mode] || MODE_TEMPLATES.b2b_general;
   const name = firstName || 'there';
 
-  // Extract string value from demandType (can be object or string)
+  // Extract string value from demandType
   const demandTypeStr = typeof demandType === 'string' ? demandType : undefined;
 
-  // Use demandType if provided and safe, otherwise use mode fallback
+  // VALIDATE demandType
   const safeDemandType = isSafeSlot(demandTypeStr) ? demandTypeStr : template.supplyFallback;
 
-  // If operator provided pre-signal context, use it as the hook
+  // PRE-SIGNAL CONTEXT PATH
   if (preSignalContext && isSafeSlot(preSignalContext)) {
     return `Hey ${name} —
 
@@ -206,7 +193,7 @@ I'm in touch with ${safeDemandType} — looks like the kind of teams you work wi
 I can connect you directly if useful.`;
   }
 
-  // Standard supply intro
+  // STANDARD SUPPLY INTRO
   return `Hey ${name} —
 
 I'm in touch with ${safeDemandType} — looks like the kind of teams you work with.
@@ -235,9 +222,7 @@ export function composeIntro(args: ComposeIntroArgs): string {
 }
 
 // =============================================================================
-// VALIDATION — Always valid (deterministic templates can't fail)
+// EXPORTS FOR TESTING
 // =============================================================================
 
-export function validateIntro(): { valid: true } {
-  return { valid: true };
-}
+export { ALLOWED_PAIN_TARGETS, MODE_TEMPLATES, NEUTRAL_PAIN, selectPain };
