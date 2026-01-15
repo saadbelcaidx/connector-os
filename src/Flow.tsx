@@ -1514,13 +1514,9 @@ export default function Flow() {
       // ========================================================================
       // INTRO RELIABILITY CONTRACT — Layer 0 first, Layer 1 best-effort
       // ========================================================================
-      // Build demandICP from demand match (industry + signal)
-      const demandIndustry = Array.isArray(agg.bestMatch.demand.industry)
-        ? agg.bestMatch.demand.industry[0]
-        : agg.bestMatch.demand.industry;
-      const demandICP = demandIndustry
-        ? `a ${demandIndustry.toLowerCase()} ${agg.bestMatch.demand.signal ? 'that\'s ' + agg.bestMatch.demand.signal.toLowerCase() : ''}`.trim()
-        : agg.bestMatch.demand.company;
+      // demandType comes from narrative.supplyRole ONLY (COS-derived)
+      // NEVER from contact title or signal
+      const demandType = agg.bestMatch.narrative?.supplyRole || undefined;
 
       const introRequest: IntroRequest = {
         side: 'supply',
@@ -1528,8 +1524,7 @@ export default function Flow() {
         ctx: {
           firstName,
           company: exampleCompany,
-          companyDescription: agg.bestMatch.demand.companyDescription || undefined,
-          demandICP: demandICP || undefined,
+          demandType,
           preSignalContext: supplyPreSignalContext,
         },
       };

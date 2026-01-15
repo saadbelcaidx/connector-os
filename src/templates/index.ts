@@ -44,23 +44,23 @@ export function generateDemandIntro(record: NormalizedRecord & { connectorMode?:
 /**
  * Intro to SUPPLY side (recruiter/agency).
  * PHASE 3: Now routes through introDoctrine.composeIntro()
+ *
+ * demandType comes from narrative.supplyRole or mode fallback.
+ * NEVER from contact title or signal.
  */
 export function generateSupplyIntro(
   provider: NormalizedRecord & { connectorMode?: ConnectorMode; preSignalContext?: string },
-  bestDemandMatch: NormalizedRecord
+  bestDemandMatch: NormalizedRecord,
+  demandType?: string  // From narrative.supplyRole - NOT from title/signal
 ): string {
   const firstName = provider.firstName || provider.fullName?.split(' ')[0] || 'there';
   const company = bestDemandMatch.company || 'a company';
 
-  // Build demandICP from demand match data (who the demand company is)
-  const demandICP = buildDemandICP(bestDemandMatch);
-
   const ctx: IntroContext = {
     firstName,
     company,
-    // Pass demand company description so supply knows who they're being connected to
-    companyDescription: bestDemandMatch.companyDescription,
-    demandICP,
+    // demandType from COS (narrative.supplyRole) or undefined for mode fallback
+    demandType: demandType || undefined,
     preSignalContext: provider.preSignalContext,
   };
 
@@ -69,35 +69,6 @@ export function generateSupplyIntro(
     mode: provider.connectorMode || 'b2b_general',
     ctx,
   });
-}
-
-/**
- * Build a short ICP phrase from demand match data.
- * Examples: "a biotech scaling their BD team", "a fintech building out payments"
- */
-function buildDemandICP(demand: NormalizedRecord): string | undefined {
-  const parts: string[] = [];
-
-  // Start with industry if available
-  const industry = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
-  if (industry) {
-    parts.push(`a ${industry.toLowerCase()}`);
-  } else if (demand.company) {
-    parts.push(demand.company);
-  }
-
-  // Add activity hint from signal or description
-  if (demand.signalDetail) {
-    // e.g., "hiring engineers" → "scaling their engineering team"
-    const signal = demand.signalDetail.toLowerCase();
-    if (signal.includes('hiring') || signal.includes('scaling')) {
-      parts.push('scaling their team');
-    } else if (signal.includes('funding') || signal.includes('raised')) {
-      parts.push('in growth mode');
-    }
-  }
-
-  return parts.length > 0 ? parts.join(' ') : undefined;
 }
 
 // =============================================================================

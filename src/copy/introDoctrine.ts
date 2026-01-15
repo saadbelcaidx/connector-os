@@ -7,6 +7,8 @@
  * OUTPUT: Plain text intro
  */
 
+import { cleanCompanySummary, isSafeSlot } from '../matching/cleanCompanySummary';
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -27,167 +29,123 @@ export interface IntroContext {
   firstName: string;
   company: string;
   companyDescription?: string;
-  demandICP?: string;  // For supply side: describes who the demand is
+  demandType?: string;  // For supply side: describes who the demand is (from narrative.supplyRole or mode fallback)
   preSignalContext?: string;  // Operator-written context (e.g., "Saw your talk at the conference")
 }
 
 // =============================================================================
-// MODE TEMPLATES — Pain framing per vertical
+// MODE TEMPLATES — Pain framing per vertical (MODE-LOCKED)
 // =============================================================================
 
 const MODE_TEMPLATES: Record<ConnectorMode, {
   demandPain: string;
-  supplyVerb: string;
-  supplyNoun: string;
+  supplyFallback: string;  // Fallback demand type if narrative.supplyRole missing
 }> = {
   recruiting: {
-    demandPain: 'who lose months on leadership hires because recruiters don\'t really understand the space',
-    supplyVerb: 'place',
-    supplyNoun: 'roles',
+    demandPain: 'teams who lose months on leadership hires because recruiters don\'t really understand the space',
+    supplyFallback: 'a company scaling their team',
   },
   biotech_licensing: {
-    demandPain: 'who lose months in licensing because pharma BD teams don\'t really grasp the science or timing',
-    supplyVerb: 'work on',
-    supplyNoun: 'deals',
+    demandPain: 'teams who lose months in licensing because pharma BD teams don\'t really grasp the science or timing',
+    supplyFallback: 'a biotech in growth mode',
   },
   wealth_management: {
-    demandPain: 'who leave millions on the table with generic advisors who don\'t understand concentrated stock or tax-efficient diversification',
-    supplyVerb: 'work with',
-    supplyNoun: 'clients',
+    demandPain: 'clients who leave millions on the table with generic advisors who don\'t understand concentrated stock or tax-efficient diversification',
+    supplyFallback: 'a high-net-worth client',
   },
   real_estate_capital: {
-    demandPain: 'who lose deals when capital partners underwrite too conservatively or don\'t get the thesis',
-    supplyVerb: 'fund',
-    supplyNoun: 'deals',
+    demandPain: 'sponsors who lose deals when capital partners underwrite too conservatively or don\'t get the thesis',
+    supplyFallback: 'a developer looking for capital',
   },
   logistics: {
-    demandPain: 'who hit growth walls when 3PLs can\'t keep up with speed or returns volume',
-    supplyVerb: 'work with',
-    supplyNoun: 'clients',
+    demandPain: 'brands who hit growth walls when 3PLs can\'t keep up with speed or returns volume',
+    supplyFallback: 'a brand scaling fulfillment',
   },
   crypto: {
-    demandPain: 'who lose months to licensing because consultants don\'t really understand custody or state-by-state requirements',
-    supplyVerb: 'advise',
-    supplyNoun: 'clients',
+    demandPain: 'teams who lose months to licensing because consultants don\'t really understand custody or state-by-state requirements',
+    supplyFallback: 'a crypto company navigating compliance',
   },
   enterprise_partnerships: {
-    demandPain: 'who lose quarters on integrations because partners underestimate workflows and buying cycles',
-    supplyVerb: 'take on',
-    supplyNoun: 'projects',
+    demandPain: 'teams who lose quarters on integrations because partners underestimate workflows and buying cycles',
+    supplyFallback: 'an enterprise looking for partners',
   },
   b2b_general: {
-    demandPain: 'who lose time when providers don\'t really understand the space',
-    supplyVerb: 'work with',
-    supplyNoun: 'clients',
+    demandPain: 'teams who lose time when providers don\'t really understand the space',
+    supplyFallback: 'a company in growth mode',
   },
 };
 
 // =============================================================================
-// DESCRIPTION EXTRACTOR — Pull key phrase from company description
-// =============================================================================
-
-function extractDescriptionPhrase(description: string | undefined): string {
-  if (!description || description.trim().length < 10) {
-    return '';
-  }
-
-  const clean = description.trim();
-
-  // If description is short enough, use it directly
-  if (clean.length <= 80) {
-    // Remove trailing period if present
-    return clean.replace(/\.$/, '').toLowerCase();
-  }
-
-  // Take first sentence or first 80 chars
-  const firstSentence = clean.split(/[.!?]/)[0];
-  if (firstSentence && firstSentence.length <= 80) {
-    return firstSentence.toLowerCase();
-  }
-
-  // Truncate to first 80 chars at word boundary
-  const truncated = clean.substring(0, 80).replace(/\s+\S*$/, '');
-  return truncated.toLowerCase();
-}
-
-// =============================================================================
 // DEMAND INTRO — To companies with need
-// Pattern: "Noticed [company] is [description] — I know [similar people] [pain]"
+// Template: "Noticed {{company}} {{companySummary}} — I know {{demandPain}}."
 // =============================================================================
 
 function generateDemandIntro(ctx: IntroContext, mode: ConnectorMode): string {
   const { firstName, company, companyDescription, preSignalContext } = ctx;
-  const template = MODE_TEMPLATES[mode];
+  const template = MODE_TEMPLATES[mode] || MODE_TEMPLATES.b2b_general;
   const name = firstName || 'there';
 
-  const descPhrase = extractDescriptionPhrase(companyDescription);
+  // Sanitize company description
+  const companySummary = cleanCompanySummary(companyDescription);
 
   // If operator provided pre-signal context, use it as the hook
-  if (preSignalContext && preSignalContext.trim().length > 0) {
+  if (preSignalContext && isSafeSlot(preSignalContext)) {
     return `Hey ${name} —
 
 ${preSignalContext.trim()}
 
-I know companies in similar situations ${template.demandPain}.
+I know ${template.demandPain}.
 
 I can connect you directly if useful.`;
   }
 
-  if (descPhrase) {
+  // If we have a safe company summary, use it
+  if (isSafeSlot(companySummary)) {
     return `Hey ${name} —
 
-Noticed ${company} is ${descPhrase} — I know companies in similar situations ${template.demandPain}.
+Noticed ${company} ${companySummary} — I know ${template.demandPain}.
 
 I can connect you directly if useful.`;
   }
 
-  // Fallback without description
+  // Fallback: static mode template (no slots)
   return `Hey ${name} —
 
-I know companies like ${company} ${template.demandPain}.
+I know ${template.demandPain}.
 
 I can connect you directly if useful.`;
 }
 
 // =============================================================================
 // SUPPLY INTRO — To providers
-// Pattern: "I'm in touch with [demand ICP] dealing with [pain] — looks like your space"
+// Template: "I'm in touch with {{demandType}} — looks like the kind of teams you work with."
 // =============================================================================
 
 function generateSupplyIntro(ctx: IntroContext, mode: ConnectorMode): string {
-  const { firstName, company, demandICP, companyDescription, preSignalContext } = ctx;
-  const template = MODE_TEMPLATES[mode];
+  const { firstName, demandType, preSignalContext } = ctx;
+  const template = MODE_TEMPLATES[mode] || MODE_TEMPLATES.b2b_general;
   const name = firstName || 'there';
 
-  // Use demandICP if provided, otherwise extract from description
-  const icpPhrase = demandICP || extractDescriptionPhrase(companyDescription);
+  // Use demandType if provided and safe, otherwise use mode fallback
+  const safeDemandType = isSafeSlot(demandType) ? demandType : template.supplyFallback;
 
   // If operator provided pre-signal context, use it as the hook
-  if (preSignalContext && preSignalContext.trim().length > 0) {
-    const icpDetail = icpPhrase ? ` — ${icpPhrase}` : '';
+  if (preSignalContext && isSafeSlot(preSignalContext)) {
     return `Hey ${name} —
 
 ${preSignalContext.trim()}
 
-I'm in touch with a company${icpDetail} that looks like the type of ${template.supplyNoun} you guys ${template.supplyVerb}.
+I'm in touch with ${safeDemandType} — looks like the kind of teams you work with.
 
-I can connect you directly if useful. Would that be helpful?`;
+I can connect you directly if useful.`;
   }
 
-  if (icpPhrase) {
-    return `Hey ${name} —
-
-I'm in touch with ${icpPhrase} — looks like the type of ${template.supplyNoun} you guys ${template.supplyVerb}.
-
-I can connect you directly if useful. Would that be helpful?`;
-  }
-
-  // Fallback without ICP description
+  // Standard supply intro
   return `Hey ${name} —
 
-I'm in touch with a company that looks like the type of ${template.supplyNoun} you guys ${template.supplyVerb}.
+I'm in touch with ${safeDemandType} — looks like the kind of teams you work with.
 
-I can connect you directly if useful. Would that be helpful?`;
+I can connect you directly if useful.`;
 }
 
 // =============================================================================
