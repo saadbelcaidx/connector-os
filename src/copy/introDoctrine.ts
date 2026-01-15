@@ -34,10 +34,14 @@ export interface IntroContext {
 }
 
 // =============================================================================
-// NEUTRAL PAIN — Used when mode-specific pain is inappropriate
+// NEUTRAL CONSTANTS — Used when specificity is uncertain
 // =============================================================================
 
 const NEUTRAL_PAIN = 'teams who run into friction when evaluating new partners in this space';
+
+// NEUTRAL FALLBACK — One fallback for ALL modes. Boring by design.
+// Used when cleanCompanySummary fails. Never mode-specific.
+const NEUTRAL_SUMMARY_FALLBACK = 'is a team in this space';
 
 // =============================================================================
 // ALLOWED PAIN TARGETS — Pain injection requires BOTH mode AND demandType match
@@ -60,47 +64,38 @@ const ALLOWED_PAIN_TARGETS: Record<ConnectorMode, string[]> = {
 
 const MODE_TEMPLATES: Record<ConnectorMode, {
   demandPain: string;
-  demandFallback: string;
   supplyFallback: string;
 }> = {
   recruiting: {
     demandPain: 'teams who lose months on leadership hires because recruiters don\'t really understand the space',
-    demandFallback: 'is scaling their team',
     supplyFallback: 'a company scaling their team',
   },
   biotech_licensing: {
     demandPain: 'teams who lose months in licensing because pharma BD teams don\'t really grasp the science or timing',
-    demandFallback: 'is advancing their pipeline',
     supplyFallback: 'a biotech in growth mode',
   },
   wealth_management: {
     demandPain: 'clients who leave millions on the table with generic advisors who don\'t understand concentrated stock or tax-efficient diversification',
-    demandFallback: 'is evaluating wealth strategies',
     supplyFallback: 'a high-net-worth client',
   },
   real_estate_capital: {
     demandPain: 'sponsors who lose deals when capital partners underwrite too conservatively or don\'t get the thesis',
-    demandFallback: 'is raising capital',
     supplyFallback: 'a developer looking for capital',
   },
   logistics: {
     demandPain: 'brands who hit growth walls when 3PLs can\'t keep up with speed or returns volume',
-    demandFallback: 'is scaling fulfillment',
     supplyFallback: 'a brand scaling fulfillment',
   },
   crypto: {
     demandPain: 'teams who lose months to licensing because consultants don\'t really understand custody or state-by-state requirements',
-    demandFallback: 'is navigating compliance',
     supplyFallback: 'a crypto company navigating compliance',
   },
   enterprise_partnerships: {
     demandPain: 'teams who lose quarters on integrations because partners underestimate workflows and buying cycles',
-    demandFallback: 'is building partnerships',
     supplyFallback: 'an enterprise looking for partners',
   },
   b2b_general: {
     demandPain: 'teams who lose time when providers don\'t really understand the space',
-    demandFallback: 'is in growth mode',
     supplyFallback: 'a company in growth mode',
   },
 };
@@ -136,17 +131,18 @@ function selectPain(mode: ConnectorMode, demandType?: { type?: string } | string
 
 function generateDemandIntro(ctx: IntroContext, mode: ConnectorMode): string {
   const { firstName, company, companyDescription, demandType, preSignalContext } = ctx;
-  const template = MODE_TEMPLATES[mode] || MODE_TEMPLATES.b2b_general;
   const name = firstName || 'there';
 
   // SELECT PAIN (gated by mode + demandType)
   const pain = selectPain(mode, demandType);
 
   // VALIDATE SUMMARY (returns null if invalid)
+  // cleanCompanySummary is the ONLY path to use companyDescription
+  // If it returns null → use NEUTRAL fallback. NEVER raw description.
   const validatedSummary = cleanCompanySummary(companyDescription, company);
 
-  // FALLBACK if null
-  const demandSummary = validatedSummary !== null ? validatedSummary : template.demandFallback;
+  // FALLBACK: Always NEUTRAL. Never mode-specific. Boring by design.
+  const demandSummary = validatedSummary !== null ? validatedSummary : NEUTRAL_SUMMARY_FALLBACK;
 
   // PRE-SIGNAL CONTEXT PATH
   if (preSignalContext && isSafeSlot(preSignalContext)) {
@@ -225,4 +221,4 @@ export function composeIntro(args: ComposeIntroArgs): string {
 // EXPORTS FOR TESTING
 // =============================================================================
 
-export { ALLOWED_PAIN_TARGETS, MODE_TEMPLATES, NEUTRAL_PAIN, selectPain };
+export { ALLOWED_PAIN_TARGETS, MODE_TEMPLATES, NEUTRAL_PAIN, NEUTRAL_SUMMARY_FALLBACK, selectPain };

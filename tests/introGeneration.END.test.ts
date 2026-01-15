@@ -12,6 +12,7 @@ import {
   ALLOWED_PAIN_TARGETS,
   MODE_TEMPLATES,
   NEUTRAL_PAIN,
+  NEUTRAL_SUMMARY_FALLBACK,
   selectPain,
 } from '../src/copy/introDoctrine';
 import { cleanCompanySummary } from '../src/matching/cleanCompanySummary';
@@ -226,8 +227,8 @@ describe('Demand Intro Generation', () => {
         // cleanCompanySummary must return null for garbage
         expect(cleanCompanySummary(garbageDesc)).toBeNull();
 
-        // Fallback must be used
-        expect(intro.includes(MODE_TEMPLATES[mode].demandFallback)).toBe(true);
+        // NEUTRAL fallback must be used (same for ALL modes)
+        expect(intro.includes(NEUTRAL_SUMMARY_FALLBACK)).toBe(true);
 
         // Pain assertion
         if (mode === 'b2b_general' || ALLOWED_PAIN_TARGETS[mode].length === 0) {
@@ -343,7 +344,7 @@ describe('Snapshot Tests', () => {
     `);
   });
 
-  it('crypto invalid path snapshot (NEUTRAL_PAIN)', () => {
+  it('crypto invalid path snapshot (NEUTRAL_PAIN + NEUTRAL_FALLBACK)', () => {
     const intro = composeIntro({
       side: 'demand',
       mode: 'crypto',
@@ -355,10 +356,11 @@ describe('Snapshot Tests', () => {
       },
     });
 
+    // MUST use NEUTRAL fallback, NOT "is navigating compliance"
     expect(intro).toMatchInlineSnapshot(`
       "Hey Jane —
 
-      Noticed RevOpsCo is navigating compliance — I know teams who run into friction when evaluating new partners in this space.
+      Noticed RevOpsCo is a team in this space — I know teams who run into friction when evaluating new partners in this space.
 
       I can connect you directly if useful."
     `);
@@ -376,10 +378,11 @@ describe('Snapshot Tests', () => {
       },
     });
 
+    // MUST use NEUTRAL fallback
     expect(intro).toMatchInlineSnapshot(`
       "Hey Bob —
 
-      Noticed GenericCo is in growth mode — I know teams who lose time when providers don't really understand the space.
+      Noticed GenericCo is a team in this space — I know teams who lose time when providers don't really understand the space.
 
       I can connect you directly if useful."
     `);
