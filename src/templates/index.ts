@@ -26,8 +26,7 @@ export function generateDemandIntro(record: NormalizedRecord & { connectorMode?:
   const ctx: IntroContext = {
     firstName,
     company,
-    industry: Array.isArray(record.industry) ? record.industry[0] : record.industry || undefined,
-    contactTitle: record.title || undefined,
+    companyDescription: record.companyDescription || undefined,
     preSignalContext: record.preSignalContext,
   };
 
@@ -53,10 +52,15 @@ export function generateSupplyIntro(
   const firstName = provider.firstName || provider.fullName?.split(' ')[0] || 'there';
   const company = bestDemandMatch.company || 'a company';
 
+  // Build demandICP from demand match data (who the demand company is)
+  const demandICP = buildDemandICP(bestDemandMatch);
+
   const ctx: IntroContext = {
     firstName,
     company,
-    industry: Array.isArray(bestDemandMatch.industry) ? bestDemandMatch.industry[0] : bestDemandMatch.industry || undefined,
+    // Pass demand company description so supply knows who they're being connected to
+    companyDescription: bestDemandMatch.companyDescription,
+    demandICP,
     preSignalContext: provider.preSignalContext,
   };
 
@@ -65,6 +69,35 @@ export function generateSupplyIntro(
     mode: provider.connectorMode || 'b2b_general',
     ctx,
   });
+}
+
+/**
+ * Build a short ICP phrase from demand match data.
+ * Examples: "a biotech scaling their BD team", "a fintech building out payments"
+ */
+function buildDemandICP(demand: NormalizedRecord): string | undefined {
+  const parts: string[] = [];
+
+  // Start with industry if available
+  const industry = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
+  if (industry) {
+    parts.push(`a ${industry.toLowerCase()}`);
+  } else if (demand.company) {
+    parts.push(demand.company);
+  }
+
+  // Add activity hint from signal or description
+  if (demand.signalDetail) {
+    // e.g., "hiring engineers" → "scaling their engineering team"
+    const signal = demand.signalDetail.toLowerCase();
+    if (signal.includes('hiring') || signal.includes('scaling')) {
+      parts.push('scaling their team');
+    } else if (signal.includes('funding') || signal.includes('raised')) {
+      parts.push('in growth mode');
+    }
+  }
+
+  return parts.length > 0 ? parts.join(' ') : undefined;
 }
 
 // =============================================================================

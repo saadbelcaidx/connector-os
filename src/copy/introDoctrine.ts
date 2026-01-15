@@ -28,6 +28,7 @@ export interface IntroContext {
   company: string;
   companyDescription?: string;
   demandICP?: string;  // For supply side: describes who the demand is
+  preSignalContext?: string;  // Operator-written context (e.g., "Saw your talk at the conference")
 }
 
 // =============================================================================
@@ -115,11 +116,22 @@ function extractDescriptionPhrase(description: string | undefined): string {
 // =============================================================================
 
 function generateDemandIntro(ctx: IntroContext, mode: ConnectorMode): string {
-  const { firstName, company, companyDescription } = ctx;
+  const { firstName, company, companyDescription, preSignalContext } = ctx;
   const template = MODE_TEMPLATES[mode];
   const name = firstName || 'there';
 
   const descPhrase = extractDescriptionPhrase(companyDescription);
+
+  // If operator provided pre-signal context, use it as the hook
+  if (preSignalContext && preSignalContext.trim().length > 0) {
+    return `Hey ${name} —
+
+${preSignalContext.trim()}
+
+I know companies in similar situations ${template.demandPain}.
+
+I can connect you directly if useful.`;
+  }
 
   if (descPhrase) {
     return `Hey ${name} —
@@ -143,12 +155,24 @@ I can connect you directly if useful.`;
 // =============================================================================
 
 function generateSupplyIntro(ctx: IntroContext, mode: ConnectorMode): string {
-  const { firstName, company, demandICP, companyDescription } = ctx;
+  const { firstName, company, demandICP, companyDescription, preSignalContext } = ctx;
   const template = MODE_TEMPLATES[mode];
   const name = firstName || 'there';
 
   // Use demandICP if provided, otherwise extract from description
   const icpPhrase = demandICP || extractDescriptionPhrase(companyDescription);
+
+  // If operator provided pre-signal context, use it as the hook
+  if (preSignalContext && preSignalContext.trim().length > 0) {
+    const icpDetail = icpPhrase ? ` — ${icpPhrase}` : '';
+    return `Hey ${name} —
+
+${preSignalContext.trim()}
+
+I'm in touch with a company${icpDetail} that looks like the type of ${template.supplyNoun} you guys ${template.supplyVerb}.
+
+I can connect you directly if useful. Would that be helpful?`;
+  }
 
   if (icpPhrase) {
     return `Hey ${name} —
