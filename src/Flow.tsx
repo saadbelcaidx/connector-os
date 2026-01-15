@@ -1459,11 +1459,8 @@ export default function Flow() {
         ctx: {
           firstName,
           company: match.demand.company,
-          industry: match.demand.industry,
-          contactTitle: enriched.title || undefined,
+          companyDescription: match.demand.companyDescription || undefined,
           preSignalContext: demandPreSignalContext,
-          connectorOverlap: match.narrative?.overlap,
-          supplyRole: match.narrative?.supplyRole,
         },
       };
 
@@ -1517,17 +1514,23 @@ export default function Flow() {
       // ========================================================================
       // INTRO RELIABILITY CONTRACT — Layer 0 first, Layer 1 best-effort
       // ========================================================================
+      // Build demandICP from demand match (industry + signal)
+      const demandIndustry = Array.isArray(agg.bestMatch.demand.industry)
+        ? agg.bestMatch.demand.industry[0]
+        : agg.bestMatch.demand.industry;
+      const demandICP = demandIndustry
+        ? `a ${demandIndustry.toLowerCase()} ${agg.bestMatch.demand.signal ? 'that\'s ' + agg.bestMatch.demand.signal.toLowerCase() : ''}`.trim()
+        : agg.bestMatch.demand.company;
+
       const introRequest: IntroRequest = {
         side: 'supply',
         mode: state.connectorMode || 'b2b_general',
         ctx: {
           firstName,
           company: exampleCompany,
-          contactName: contactName || undefined,
+          companyDescription: agg.bestMatch.demand.companyDescription || undefined,
+          demandICP: demandICP || undefined,
           preSignalContext: supplyPreSignalContext,
-          matchReason: agg.bestMatch.narrative?.why,
-          connectorOverlap: agg.bestMatch.narrative?.overlap,
-          supplyRole: agg.bestMatch.narrative?.supplyRole,
         },
       };
 
