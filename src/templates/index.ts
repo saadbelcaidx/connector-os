@@ -18,8 +18,16 @@ import { composeIntro, IntroContext, ConnectorMode } from '../copy/introDoctrine
 /**
  * Intro to DEMAND side (company hiring).
  * PHASE 3: Now routes through introDoctrine.composeIntro()
+ *
+ * demandType gates pain injection (e.g., crypto pain only for crypto_platform/fintech_platform/exchange)
  */
-export function generateDemandIntro(record: NormalizedRecord & { connectorMode?: ConnectorMode; preSignalContext?: string }): string {
+export function generateDemandIntro(
+  record: NormalizedRecord & {
+    connectorMode?: ConnectorMode;
+    preSignalContext?: string;
+    demandType?: { type?: string } | string;  // Gates pain injection
+  }
+): string {
   const firstName = record.firstName || record.fullName?.split(' ')[0] || 'there';
   const company = record.company || 'your company';
 
@@ -27,6 +35,7 @@ export function generateDemandIntro(record: NormalizedRecord & { connectorMode?:
     firstName,
     company,
     companyDescription: record.companyDescription || undefined,
+    demandType: record.demandType,  // For pain gating
     preSignalContext: record.preSignalContext,
   };
 
