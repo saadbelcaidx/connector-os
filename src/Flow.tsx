@@ -20,10 +20,13 @@ import { matchRecords, MatchingResult, filterByScore } from './matching';
 import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult, Signals } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
-// Deterministic Matching Pipeline — Edge → Match → Compose → Gate
-import { runMatchingPipeline } from './matching/pipeline';
-import type { DemandRecord, Signal } from './schemas/DemandRecord';
+// Deterministic Pipeline Components — Edge Preflight + Compose
+import { detectEdge } from './matching/EdgeDetector';
+import { composeIntros } from './matching/Composer';
+import type { DemandRecord } from './schemas/DemandRecord';
 import type { SupplyRecord } from './schemas/SupplyRecord';
+import type { Edge } from './schemas/Edge';
+import type { Counterparty } from './schemas/IntroOutput';
 
 // AI Config type
 import { AIConfig } from './services/AIService';
@@ -184,6 +187,77 @@ function extractStageFromFunding(funding: string): string | null {
   if (lower.includes('seed')) return 'Seed';
   if (lower.includes('public') || lower.includes('ipo')) return 'Public';
   return null;
+}
+
+// =============================================================================
+// EDGE PREFLIGHT — Transform NormalizedRecord → DemandRecord for EdgeDetector
+// =============================================================================
+
+/**
+ * Transform NormalizedRecord (Flow's format) → DemandRecord (EdgeDetector format).
+ * Extracts signals from signal string and metadata from raw data.
+ */
+function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
+  const signals: { type: string; value?: string; source?: string }[] = [];
+  const metadata: Record<string, any> = {};
+
+  // Extract signal type from signal string (job title/description)
+  const signalLower = (normalized.signal || '').toLowerCase();
+
+  // Leadership signals
+  if (signalLower.includes('vp') || signalLower.includes('vice president')) {
+    signals.push({ type: 'VP_OPEN', source: 'signal' });
+    metadata.vpOpen = true;
+  }
+  if (signalLower.includes('ceo') || signalLower.includes('cfo') || signalLower.includes('cto') ||
+      signalLower.includes('coo') || signalLower.includes('chief')) {
+    signals.push({ type: 'C_LEVEL_OPEN', source: 'signal' });
+    metadata.cLevelOpen = true;
+  }
+  if (signalLower.includes('director') || signalLower.includes('head of')) {
+    signals.push({ type: 'LEADERSHIP_OPEN', source: 'signal' });
+    metadata.hasLeadershipRole = true;
+  }
+
+  // Funding from company data
+  if (normalized.companyFunding) {
+    signals.push({ type: 'FUNDING', value: normalized.companyFunding, source: 'company' });
+    metadata.hasFunding = true;
+  }
+
+  // Growth indicators from raw data
+  const raw = normalized.raw || {};
+  if (raw.company?.inc_5000 || raw.inc_5000) {
+    signals.push({ type: 'INC_5000', value: 'true', source: 'raw' });
+    metadata.inc5000 = true;
+  }
+  if (raw.company?.revenue_growth || raw.revenue_growth) {
+    signals.push({ type: 'GROWTH', value: 'revenue', source: 'raw' });
+    metadata.revenueGrowth = true;
+  }
+
+  // Multiple roles indicator (from raw if available)
+  if (raw.open_roles_count && raw.open_roles_count >= 3) {
+    signals.push({ type: 'MULTIPLE_OPEN_ROLES', value: String(raw.open_roles_count), source: 'raw' });
+    metadata.openRolesCount = raw.open_roles_count;
+  }
+
+  // Hiring pressure (days open)
+  if (raw.days_open && raw.days_open >= 30) {
+    signals.push({ type: 'HIRING_OPEN_ROLES_30D', value: String(raw.days_open), source: 'raw' });
+    metadata.openRolesDays = raw.days_open;
+  }
+
+  return {
+    domain: normalized.domain,
+    company: normalized.company,
+    contact: normalized.fullName || `${normalized.firstName} ${normalized.lastName}`.trim() || '',
+    email: normalized.email || '',
+    title: normalized.title || '',
+    industry: Array.isArray(normalized.industry) ? normalized.industry[0] || '' : (normalized.industry || ''),
+    signals,
+    metadata,
+  };
 }
 
 /**
@@ -540,7 +614,7 @@ function toUserError(code: ErrorCode, detail?: string): string {
 // =============================================================================
 
 interface FlowState {
-  step: 'upload' | 'validating' | 'matching' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
+  step: 'upload' | 'validating' | 'matching' | 'matches_found' | 'no_matches' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
 
   // Source tracking (for UI labels)
   isHubFlow: boolean;
@@ -557,6 +631,9 @@ interface FlowState {
 
   // Matching
   matchingResult: MatchingResult | null;
+
+  // Edge Preflight — Detected edges by domain (for composition)
+  detectedEdges: Map<string, Edge>;
 
   // Enrichment
   enrichedDemand: Map<string, EnrichmentResult>;
@@ -631,6 +708,7 @@ export default function Flow() {
     demandRecords: [],
     supplyRecords: [],
     matchingResult: null,
+    detectedEdges: new Map(),
     enrichedDemand: new Map(),
     enrichedSupply: new Map(),
     demandIntros: new Map(),
@@ -1239,34 +1317,102 @@ export default function Flow() {
     }
 
     // =======================================================================
-    // INVARIANT: After matchRecords, we MUST advance to enriching
+    // PHASE 1: EDGE PREFLIGHT (FREE) — Detect edges BEFORE enrichment
+    // No edge = No enrichment = No credits spent
     // =======================================================================
-    console.log('[MATCH] advancing step', { from: 'matching', to: 'enriching' });
+    console.log('[EDGE_PREFLIGHT] Starting edge detection on', filtered.demandMatches.length, 'matched demands');
+    setState(prev => ({ ...prev, progress: { current: 90, total: 100, message: 'Looking for real connection signals...' } }));
+
+    const edgePositiveMatches: typeof filtered.demandMatches = [];
+    const detectedEdges = new Map<string, Edge>();
+    let edgesFound = 0;
+    let edgesMissing = 0;
+
+    for (const match of filtered.demandMatches) {
+      const demandRecord = toDemandRecord(match.demand);
+      const edge = detectEdge(demandRecord);
+
+      if (edge) {
+        edgePositiveMatches.push(match);
+        detectedEdges.set(match.demand.domain, edge);
+        edgesFound++;
+        console.log(`[EDGE_PREFLIGHT] ✓ EDGE: ${match.demand.company} → ${edge.type} (${edge.evidence})`);
+      } else {
+        edgesMissing++;
+        console.log(`[EDGE_PREFLIGHT] ✗ NO_EDGE: ${match.demand.company}`);
+      }
+    }
+
+    console.log(`[EDGE_PREFLIGHT] Complete: ${edgesFound} edges found, ${edgesMissing} dropped`);
+    console.log(`[EDGE_PREFLIGHT] Edge-positive ratio: ${((edgesFound / (edgesFound + edgesMissing)) * 100).toFixed(1)}%`);
+
+    // =======================================================================
+    // EDGE GATE: If zero edges, abort flow — no enrichment, no credits spent
+    // =======================================================================
+    if (edgePositiveMatches.length === 0) {
+      console.log('[EDGE_PREFLIGHT] ABORT: Zero edges detected — showing no_matches UI');
+      console.log('[EDGE_PREFLIGHT] NO CREDITS SPENT — edge preflight is FREE');
+      setState(prev => ({
+        ...prev,
+        step: 'no_matches',
+        matchingResult: filtered, // Keep original for UI display
+        progress: { current: 100, total: 100, message: 'No matches found' },
+      }));
+      return;
+    }
+
+    // Update filtered with only edge-positive matches for enrichment
+    const edgeFiltered: MatchingResult = {
+      ...filtered,
+      demandMatches: edgePositiveMatches,
+    };
+
+    // Store detected edges in state for later use in composition
+    console.log('[EDGE_PREFLIGHT] Matches found:', edgePositiveMatches.length, 'edge-positive');
+    console.log('[EDGE_PREFLIGHT] CREDITS SAVED:', edgesMissing, 'records skipped (no edge)');
+
+    // =======================================================================
+    // UI PAUSE: Show "Matches found" panel, wait for user action
+    // User must click "Find the right people" to proceed to enrichment
+    // NO CREDITS SPENT YET
+    // =======================================================================
+    console.log('[MATCH] advancing step', { from: 'matching', to: 'matches_found' });
+
+    setState(prev => ({
+      ...prev,
+      step: 'matches_found',
+      matchingResult: edgeFiltered, // Only edge-positive matches
+      detectedEdges, // Store detected edges for composition
+      progress: { current: 100, total: 100, message: 'Matches found' },
+      // Store schemas for later enrichment call
+      demandSchema,
+      supplySchema,
+    }));
+
+    // Don't auto-proceed to enrichment — wait for user action
+    console.log('[EDGE_PREFLIGHT] Paused at matches_found — waiting for user to click "Find the right people"');
+  };
+
+  // =============================================================================
+  // STEP 2.5: PROCEED TO ENRICHMENT (User clicks "Find the right people")
+  // =============================================================================
+
+  const proceedToEnrichment = async () => {
+    if (!state.matchingResult || !state.demandSchema) {
+      console.error('[ENRICH] Cannot proceed - missing matching result or schema');
+      return;
+    }
+
+    console.log('[ENRICH] User clicked "Find the right people" - proceeding to enrichment');
+    console.log('[ENRICH] This will use credits for', state.matchingResult.demandMatches.length, 'records');
 
     setState(prev => ({
       ...prev,
       step: 'enriching',
-      matchingResult: filtered,
-      progress: { current: 0, total: filtered.demandMatches.length, message: 'Enriching contacts...' },
+      progress: { current: 0, total: state.matchingResult?.demandMatches.length || 0, message: 'Finding decision-makers…' },
     }));
 
-    // Heartbeat to confirm setState executed
-    setTimeout(() => console.log('[MATCH] post-setState heartbeat'), 0);
-
-    // =======================================================================
-    // RUNTIME GUARD: If matches exist, enrichment MUST be called
-    // =======================================================================
-    if (filtered.demandMatches.length > 0 || filtered.supplyAggregates.length > 0) {
-      console.log('[MATCH] matches exist, calling runEnrichment');
-      await runEnrichment(filtered, demandSchema, supplySchema);
-    } else {
-      console.error('[MATCH] CRITICAL: No matches to enrich - flow ends here');
-      setState(prev => ({
-        ...prev,
-        step: 'ready',
-        progress: { current: 100, total: 100, message: 'No matches found' },
-      }));
-    }
+    await runEnrichment(state.matchingResult, state.demandSchema, state.supplySchema);
   };
 
   // =============================================================================
@@ -1317,9 +1463,21 @@ export default function Flow() {
     // Update state with demand results
     setState(prev => ({ ...prev, enrichedDemand: new Map(enrichedDemand) }));
 
-    // Enrich supply side
+    // Enrich supply side — ONLY supplies paired with edge-positive demands
     const enrichedSupply = new Map<string, EnrichmentResult>();
-    const supplyToEnrich = matching.supplyAggregates;
+
+    // Extract unique supplies from demand matches (not all supplyAggregates)
+    const matchedSupplyDomains = new Set<string>();
+    const supplyToEnrich: { supply: NormalizedRecord }[] = [];
+
+    for (const match of matching.demandMatches) {
+      if (!matchedSupplyDomains.has(match.supply.domain)) {
+        matchedSupplyDomains.add(match.supply.domain);
+        supplyToEnrich.push({ supply: match.supply });
+      }
+    }
+
+    console.log(`[Flow] Enriching ${supplyToEnrich.length} matched supplies (not all ${matching.supplyAggregates.length})`);
 
     for (const agg of supplyToEnrich) {
       if (abortRef.current) break;
@@ -1398,108 +1556,108 @@ export default function Flow() {
     const demandIntros = new Map<string, string>();
     const supplyIntros = new Map<string, string>();
 
-    console.log('[Flow] Deterministic pipeline starting:');
+    console.log('[COMPOSE] Starting intro composition:');
     console.log('  - demandMatches:', matching.demandMatches.length);
     console.log('  - supplyAggregates:', matching.supplyAggregates.length);
-
-    // Build supply pool from enriched supply aggregates
-    const supplyPool: SupplyRecord[] = matching.supplyAggregates
-      .filter(agg => {
-        const enriched = enrichedSupply.get(agg.supply.domain);
-        return enriched?.success && enriched.email;
-      })
-      .map(agg => {
-        const enriched = enrichedSupply.get(agg.supply.domain)!;
-        return {
-          domain: agg.supply.domain,
-          company: agg.supply.company,
-          contact: enriched.firstName || agg.supply.firstName || '',
-          email: enriched.email || '',
-          title: agg.supply.title || '',
-          capability: agg.supply.capability || agg.supply.services || '',
-          targetProfile: agg.supply.targetProfile || agg.supply.industry || '',
-          metadata: {
-            services: agg.supply.services,
-            specialization: agg.supply.specialization,
-            targetRegions: agg.supply.targetRegions,
-          },
-        };
-      });
-
-    console.log('  - supplyPool size:', supplyPool.length);
-
-    if (supplyPool.length === 0) {
-      console.log('[Flow] No enriched supply - cannot generate intros');
-      setState(prev => ({ ...prev, demandIntros, supplyIntros }));
-      return;
-    }
+    console.log('  - detectedEdges:', state.detectedEdges.size);
 
     let progress = 0;
+    let composed = 0;
+    let dropped = 0;
+
     const total = matching.demandMatches.filter(m => {
       const e = enrichedDemand.get(m.demand.domain);
       return e?.success && e.email;
     }).length;
 
-    // Process each demand through the deterministic pipeline
+    // Process each demand match using pre-detected edges
     for (const match of matching.demandMatches) {
       if (abortRef.current) break;
 
-      const enriched = enrichedDemand.get(match.demand.domain);
-      if (!enriched?.success || !enriched.email) continue;
-
-      const contactName = enriched.firstName || match.demand.firstName || '';
-      if (!contactName) {
-        console.log(`[Flow] DROP: ${match.demand.company} - no contact name`);
+      // GATE 1: Check for detected edge (from preflight)
+      const edge = state.detectedEdges.get(match.demand.domain);
+      if (!edge) {
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - no edge detected`);
+        dropped++;
         continue;
       }
 
-      // Map to DemandRecord
+      // GATE 2: Check demand enrichment
+      const demandEnriched = enrichedDemand.get(match.demand.domain);
+      if (!demandEnriched?.success || !demandEnriched.email) {
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - demand not enriched`);
+        dropped++;
+        continue;
+      }
+
+      // GATE 3: Check supply enrichment
+      const supplyEnriched = enrichedSupply.get(match.supply.domain);
+      if (!supplyEnriched?.success || !supplyEnriched.email) {
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - supply not enriched`);
+        dropped++;
+        continue;
+      }
+
+      // Build DemandRecord
       const demandRecord: DemandRecord = {
         domain: match.demand.domain,
         company: match.demand.company,
-        contact: contactName,
-        email: enriched.email,
-        title: match.demand.title || '',
-        industry: match.demand.industry || '',
-        signals: (match.demand.signals || []).map((s: any) => ({
-          type: s.type || 'SIGNAL',
-          value: s.value,
-          source: s.source,
-        })),
-        metadata: {
-          revenueGrowth: match.demand.revenueGrowth,
-          revenue: match.demand.revenue,
-          services: match.demand.services,
-          profileTags: match.demand.profileTags,
-          needsTags: match.demand.needsTags,
-          location: match.demand.location,
-        },
+        contact: demandEnriched.firstName || match.demand.firstName || '',
+        email: demandEnriched.email,
+        title: demandEnriched.title || match.demand.title || '',
+        industry: Array.isArray(match.demand.industry) ? match.demand.industry[0] || '' : (match.demand.industry || ''),
+        signals: [],
+        metadata: {},
       };
 
-      // Run deterministic pipeline
-      const result = runMatchingPipeline(demandRecord, supplyPool);
+      // Build SupplyRecord (use raw fields for extended data)
+      const supplyRaw = match.supply.raw || {};
+      const supplyRecord: SupplyRecord = {
+        domain: match.supply.domain,
+        company: match.supply.company,
+        contact: supplyEnriched.firstName || match.supply.firstName || '',
+        email: supplyEnriched.email || '',
+        title: supplyEnriched.title || match.supply.title || '',
+        capability: supplyRaw.capability || supplyRaw.services || match.supply.headline || match.supply.signal || '',
+        targetProfile: supplyRaw.targetProfile || (Array.isArray(match.supply.industry) ? (match.supply.industry as string[])[0] : match.supply.industry) || '',
+        metadata: {},
+      };
 
-      if (result.dropped) {
-        console.log(`[Flow] DROP: ${match.demand.company} - ${result.reason}`);
+      // Build Counterparty (for Composer)
+      const counterparty: Counterparty = {
+        company: supplyRecord.company,
+        contact: supplyRecord.contact,
+        email: supplyRecord.email,
+        fitReason: `${supplyRecord.company} focuses on ${supplyRecord.capability}. ${demandRecord.company} ${edge.evidence}.`,
+      };
+
+      // Compose intros using deterministic Composer
+      try {
+        const composed_output = composeIntros(demandRecord, edge, counterparty, supplyRecord);
+
+        demandIntros.set(match.demand.domain, composed_output.demandBody);
+        supplyIntros.set(match.supply.domain, composed_output.supplyBody);
+
+        console.log(`[COMPOSE] ✓ ${match.demand.company} → ${match.supply.company} (${edge.type})`);
+        composed++;
+      } catch (err) {
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - Composer error: ${err}`);
+        dropped++;
         continue;
       }
-
-      // COMPOSE path — use verbatim output
-      demandIntros.set(match.demand.domain, result.output.demandIntro.body);
-      supplyIntros.set(result.output.payload.supply.domain, result.output.supplyIntro.body);
-
-      console.log(`[Flow] COMPOSE: ${match.demand.company} → ${result.output.payload.supply.company}`);
 
       progress++;
       setState(prev => ({
         ...prev,
-        progress: { current: progress, total, message: `Processing ${progress}/${total}` },
+        progress: { current: progress, total, message: `Writing clean introductions…` },
         demandIntros: new Map(demandIntros),
         supplyIntros: new Map(supplyIntros),
       }));
     }
 
-    console.log(`[Flow] Pipeline complete:`);
+    console.log(`[COMPOSE] Complete:`);
+    console.log(`  - Composed: ${composed}`);
+    console.log(`  - Dropped: ${dropped}`);
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
 
@@ -2190,7 +2348,240 @@ export default function Flow() {
                 className="w-8 h-8 mx-auto mb-6 rounded-full border-2 border-white/10 border-t-white/50"
               />
               <p className="text-[14px] text-white/50 font-medium">
-                {state.isHubFlow ? 'Routing contacts...' : 'Finding matches...'}
+                Looking for real connection signals…
+              </p>
+            </motion.div>
+          )}
+
+          {/* MATCHES FOUND — User must click to proceed to enrichment */}
+          {state.step === 'matches_found' && (
+            <motion.div
+              key="matches_found"
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-center max-w-sm mx-auto"
+            >
+              {(() => {
+                const matches = state.matchingResult?.demandMatches || [];
+                const totalScanned = state.demandRecords.length;
+                const edgeCount = matches.length;
+
+                // Get top 3 matches for preview
+                const previewMatches = matches.slice(0, 3);
+                const moreCount = Math.max(0, matches.length - 3);
+
+                // Translate edge evidence to 2nd grade language
+                const simplifyEvidence = (edge: Edge | undefined): string => {
+                  if (!edge) return 'Good fit';
+                  const evidence = edge.evidence.toLowerCase();
+                  if (evidence.includes('vp') || evidence.includes('c-level') || evidence.includes('leadership')) {
+                    return 'Needs a leader';
+                  }
+                  if (evidence.includes('funding') || evidence.includes('raised')) {
+                    return 'Just raised money';
+                  }
+                  if (evidence.includes('growth') || evidence.includes('growing')) {
+                    return 'Growing fast';
+                  }
+                  if (evidence.includes('hiring') || evidence.includes('roles')) {
+                    return 'Hiring';
+                  }
+                  return 'Good timing';
+                };
+
+                // Simplify supply capability to 2nd grade
+                const simplifyCapability = (supply: NormalizedRecord, edge: Edge | undefined): string => {
+                  if (!edge) return 'Can help';
+                  const evidence = edge.evidence.toLowerCase();
+                  if (evidence.includes('vp') || evidence.includes('c-level') || evidence.includes('leadership')) {
+                    return 'Finds leaders';
+                  }
+                  if (evidence.includes('funding') || evidence.includes('growth')) {
+                    return 'Helps growth';
+                  }
+                  if (evidence.includes('hiring') || evidence.includes('roles')) {
+                    return 'Finds talent';
+                  }
+                  return 'Can help';
+                };
+
+                return (
+                  <>
+                    {/* Primary heading */}
+                    <motion.h2
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="text-[36px] font-light text-white/90 mb-2"
+                    >
+                      Found {edgeCount} matches
+                    </motion.h2>
+
+                    {/* Filter explanation - reframe as quality */}
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.1 }}
+                      className="text-[11px] text-white/40 mb-6"
+                    >
+                      <p>{totalScanned} scanned · {totalScanned - edgeCount} filtered out</p>
+                      <p className="text-white/25 mt-1">Only showing companies with real timing signals</p>
+                    </motion.div>
+
+                    {/* Column labels - maps to card layout */}
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.15 }}
+                      className="flex items-center justify-between text-[10px] text-white/30 mb-3 px-4"
+                    >
+                      <span>Companies that need help</span>
+                      <span>People who can help</span>
+                    </motion.div>
+
+                    {/* Preview cards - animated stagger */}
+                    <div className="space-y-2.5 mb-6">
+                      {previewMatches.map((match, i) => {
+                        const edge = state.detectedEdges.get(match.demand.domain);
+                        const demandNeed = simplifyEvidence(edge);
+                        const supplyHelp = simplifyCapability(match.supply, edge);
+
+                        return (
+                          <motion.div
+                            key={match.demand.domain}
+                            initial={{ opacity: 0, y: 15, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            transition={{ delay: 0.2 + (i * 0.1), duration: 0.3 }}
+                            className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]
+                              hover:bg-white/[0.05] hover:border-white/[0.1] transition-all duration-200"
+                          >
+                            <div className="flex items-center justify-between text-[13px]">
+                              <span className="text-white/70 font-medium truncate max-w-[140px]">
+                                {match.demand.company}
+                              </span>
+                              <span className="text-white/30 mx-2">→</span>
+                              <span className="text-white/50 truncate max-w-[120px]">
+                                {match.supply.company}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] mt-1.5 text-white/30">
+                              <span>{demandNeed}</span>
+                              <span>{supplyHelp}</span>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+
+                    {/* More count */}
+                    {moreCount > 0 && (
+                      <motion.p
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.5 }}
+                        className="text-[12px] text-white/25 mb-8"
+                      >
+                        +{moreCount} more
+                      </motion.p>
+                    )}
+
+                    {/* CTA Button */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.55 }}
+                      className="relative group inline-block"
+                    >
+                      <motion.button
+                        onClick={proceedToEnrichment}
+                        className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
+                          hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
+                          shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+                        whileHover={{ boxShadow: '0 0 30px rgba(255,255,255,0.15)' }}
+                      >
+                        Find the right people
+                      </motion.button>
+                    </motion.div>
+
+                    {/* Matches low? Educational note */}
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.7 }}
+                      className="mt-10 pt-6 border-t border-white/[0.06]"
+                    >
+                      <p className="text-[11px] text-white/50 mb-1">
+                        Matches low? Improve your dataset.
+                      </p>
+                      <p className="text-[10px] text-white/40 max-w-[280px] mx-auto">
+                        We only show companies when there's a real match. We can't lie to you.
+                      </p>
+                    </motion.div>
+                  </>
+                );
+              })()}
+            </motion.div>
+          )}
+
+          {/* NO MATCHES — Clean, friendly, no blame */}
+          {state.step === 'no_matches' && (
+            <motion.div
+              key="no_matches"
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-center max-w-md mx-auto"
+            >
+              {/* Primary heading */}
+              <h2 className="text-[32px] font-light text-white/90 mb-3">
+                No matches found
+              </h2>
+
+              {/* Secondary text */}
+              <p className="text-[14px] text-white/40 mb-8">
+                These datasets don't line up right now.
+              </p>
+
+              {/* Helper copy */}
+              <div className="space-y-1.5 mb-10 text-[13px] text-white/30">
+                <p>This usually means:</p>
+                <p className="pl-4">• No clear need on one side</p>
+                <p className="pl-4">• Or no fit on the other</p>
+              </div>
+
+              {/* CTA Button */}
+              <button
+                onClick={() => {
+                  // Reset to upload step to try different datasets
+                  setState(prev => ({
+                    ...prev,
+                    step: 'upload',
+                    matchingResult: null,
+                    detectedEdges: new Map(),
+                    enrichedDemand: new Map(),
+                    enrichedSupply: new Map(),
+                    demandIntros: new Map(),
+                    supplyIntros: new Map(),
+                    progress: { current: 0, total: 0, message: '' },
+                  }));
+                }}
+                className="px-6 py-2.5 bg-white/[0.06] border border-white/[0.08] text-white/70 rounded-xl text-[14px]
+                  hover:bg-white/[0.08] hover:border-white/[0.12] hover:text-white/90
+                  transition-all duration-200"
+              >
+                Try different datasets
+              </button>
+
+              {/* Optional help link */}
+              <p className="mt-6 text-[11px] text-white/20">
+                <a href="/library?page=matching" className="hover:text-white/40 underline underline-offset-2">
+                  How to improve matches
+                </a>
+              </p>
+
+              {/* No credits message */}
+              <p className="mt-8 text-[11px] text-emerald-500/60">
+                No credits spent.
               </p>
             </motion.div>
           )}
@@ -2204,7 +2595,8 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <p className="text-[14px] text-white/50 font-medium mb-4">Finding contacts</p>
+              <p className="text-[14px] text-white/50 font-medium mb-2">Finding decision-makers…</p>
+              <p className="text-[11px] text-white/30 mb-6">We only do this when there's a real match.</p>
               <p className="text-[28px] font-light text-white/80 mb-6">
                 {state.progress.current} <span className="text-white/30">of {state.progress.total}</span>
               </p>
@@ -2249,15 +2641,43 @@ export default function Flow() {
 
                 return (
                   <div className="flex flex-col items-center">
-                    {/* Count */}
+                    {/* Checkmark — subtle purple, Linear style */}
                     <motion.div
+                      initial={{ scale: 0.8, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: "spring", stiffness: 200, damping: 15 }}
+                      className="relative w-12 h-12 mb-4"
+                    >
+                      <div className="absolute inset-0 rounded-full bg-violet-500/10 blur-lg" />
+                      <div className="relative w-full h-full rounded-full bg-gradient-to-b from-violet-500/15 to-violet-500/5 border border-violet-500/20 flex items-center justify-center">
+                        <motion.svg
+                          className="w-5 h-5 text-violet-400/80"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2.5}
+                        >
+                          <motion.path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M5 13l4 4L19 7"
+                            initial={{ pathLength: 0 }}
+                            animate={{ pathLength: 1 }}
+                            transition={{ duration: 0.4, delay: 0.2 }}
+                          />
+                        </motion.svg>
+                      </div>
+                    </motion.div>
+
+                    {/* Count */}
+                    <motion.p
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="text-center mb-8"
+                      transition={{ delay: 0.15 }}
+                      className="text-[14px] text-white/50 mb-8"
                     >
-                      <span className="text-[48px] font-light text-white/90 tracking-tight">{totalEnriched}</span>
-                      <p className="text-[13px] text-white/40 mt-1">Contacts Enriched</p>
-                    </motion.div>
+                      {demandEnriched} Matches ready to route
+                    </motion.p>
 
                     {/* Route Context Input */}
                     <motion.div
@@ -2350,14 +2770,18 @@ export default function Flow() {
                       )}
                     </motion.div>
 
-                    {/* Generate Intros Button */}
+                    {/* Generate Intros Button — white, consistent */}
                     <motion.button
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3 }}
                       onClick={generateIntrosWithPresignal}
                       disabled={isEditingContext || savingPresignal}
-                      className="px-8 py-3 rounded-xl bg-gradient-to-b from-emerald-500/20 to-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[13px] font-medium hover:from-emerald-500/30 hover:to-emerald-500/15 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
+                        hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
+                        shadow-[0_0_20px_rgba(255,255,255,0.1)]
+                        disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      whileHover={{ boxShadow: '0 0 30px rgba(255,255,255,0.15)' }}
                     >
                       Generate Intros
                     </motion.button>
@@ -2459,18 +2883,73 @@ export default function Flow() {
                       </div>
                     </motion.div>
 
-                    {/* Count — THE thing */}
+                    {/* Count — total contacts being reached */}
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3 }}
-                      className="text-center mb-8"
+                      className="text-center mb-6"
                     >
-                      <span className="text-[56px] font-light text-white tracking-tight">{totalReady}</span>
-                      <p className="text-[15px] text-white/50 mt-1 font-medium">Intros ready</p>
-                      <p className="text-[12px] text-white/25 mt-2">
-                        {demandEnriched} demand · {supplyEnriched} supply
-                      </p>
+                      <p className="text-[18px] font-light text-white/80">Found {demandEnriched} matches</p>
+                      <p className="text-[12px] text-white/40 mt-2">These will reach {demandEnriched + supplyEnriched} people</p>
+                      <p className="text-[11px] text-white/30 mt-0.5">{demandEnriched} demand · {supplyEnriched} supply</p>
+                    </motion.div>
+
+                    {/* Intro Preview Cards — 2 samples */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.4 }}
+                      className="w-full max-w-md space-y-3 mb-8"
+                    >
+                      {(() => {
+                        // Get first match with both intros
+                        const matchesWithIntros = demandMatches
+                          .filter(m => state.demandIntros.get(m.demand.domain) && state.supplyIntros.get(m.supply.domain))
+                          .slice(0, 1);
+
+                        if (matchesWithIntros.length === 0) return null;
+
+                        const match = matchesWithIntros[0];
+                        const demandIntro = state.demandIntros.get(match.demand.domain) || '';
+                        const supplyIntro = state.supplyIntros.get(match.supply.domain) || '';
+
+                        return (
+                          <>
+                            {/* Demand intro preview — compact, left-aligned */}
+                            <motion.div
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.5 }}
+                              className="text-left"
+                            >
+                              <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">
+                                To {match.demand.company}
+                              </p>
+                              <p className="text-[12px] text-white/60 leading-[1.7] whitespace-pre-line">
+                                {demandIntro}
+                              </p>
+                            </motion.div>
+
+                            <div className="h-px bg-white/[0.04] my-4" />
+
+                            {/* Supply intro preview — compact, left-aligned */}
+                            <motion.div
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.65 }}
+                              className="text-left"
+                            >
+                              <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">
+                                To {match.supply.company}
+                              </p>
+                              <p className="text-[12px] text-white/60 leading-[1.7] whitespace-pre-line">
+                                {supplyIntro}
+                              </p>
+                            </motion.div>
+                          </>
+                        );
+                      })()}
                     </motion.div>
 
                     {/* Error surface */}
@@ -2512,6 +2991,9 @@ export default function Flow() {
 
               {/* Route button with presignal gate */}
               {(() => {
+                // Match count for button text
+                const matchCount = state.matchingResult?.demandMatches.length || 0;
+
                 // CANONICAL: Check for presignal violations using per-side presignal
                 const hasPresignalViolation = (() => {
                   if (!state.matchingResult) return false;
@@ -2561,7 +3043,7 @@ export default function Flow() {
                             : 'bg-white text-black hover:bg-white/90 active:scale-[0.98]'
                         }`}
                       >
-                        Route to Instantly
+                        Route {matchCount} matches
                       </button>
                     </div>
                   </div>

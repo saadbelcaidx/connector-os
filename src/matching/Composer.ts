@@ -41,6 +41,29 @@ function containsBannedPhrase(text: string): boolean {
 // =============================================================================
 
 /**
+ * Clean company name by removing legal suffixes.
+ * "Demars Financial Group Llc" → "Demars Financial Group"
+ */
+function cleanCompanyName(name: string): string {
+  if (!name) return name;
+
+  // Suffixes to remove (case-insensitive)
+  const suffixes = [
+    /,?\s*(llc|l\.l\.c\.|inc\.?|inc|corp\.?|corporation|ltd\.?|limited|co\.?|company|pllc|p\.l\.l\.c\.|lp|l\.p\.|llp|l\.l\.p\.)\s*$/i
+  ];
+
+  let cleaned = name.trim();
+  for (const suffix of suffixes) {
+    cleaned = cleaned.replace(suffix, '').trim();
+  }
+
+  // Remove trailing comma if any
+  cleaned = cleaned.replace(/,\s*$/, '').trim();
+
+  return cleaned;
+}
+
+/**
  * Extract first name from full name.
  * Falls back to full contact name if no space found.
  */
@@ -55,11 +78,25 @@ function extractFirstName(fullName: string): string {
 }
 
 /**
- * Format capability string: sentence case, acronyms, conjunctions.
- * Formatting only — no meaning added.
+ * Extract primary title from potentially comma-separated titles.
+ * "Vice President, Financial Advisor, Owner" → "Vice President"
+ */
+function extractPrimaryTitle(title: string): string {
+  if (!title) return '';
+
+  const trimmed = title.trim();
+
+  // Split by comma and take first
+  const parts = trimmed.split(',');
+  return parts[0].trim();
+}
+
+/**
+ * Format capability string: sentence case, acronyms only.
+ * NO preposition insertion — caller controls prepositions.
  *
  * "ria acquisition platform transitions wealth management"
- * → "RIA acquisitions and platform transitions in wealth management"
+ * → "RIA acquisitions and platform transitions wealth management"
  */
 function formatCapability(raw: string): string {
   const trimmed = raw.trim().toLowerCase();
@@ -68,9 +105,6 @@ function formatCapability(raw: string): string {
   // Known acronyms to uppercase
   const acronyms = new Set(['ria', 'm&a', 'cfo', 'ceo', 'hr', 'it', 'saas', 'b2b']);
 
-  // Known domain words that signal "in [domain]" structure
-  const domains = new Set(['wealth', 'financial', 'healthcare', 'tech', 'saas', 'legal']);
-
   // Split into tokens
   const tokens = trimmed.split(/\s+/);
   if (tokens.length === 0) return '';
@@ -78,7 +112,6 @@ function formatCapability(raw: string): string {
   // Format tokens
   const formatted: string[] = [];
   let insertedAnd = false;
-  let insertedIn = false;
 
   for (let i = 0; i < tokens.length; i++) {
     let token = tokens[i];
@@ -102,12 +135,6 @@ function formatCapability(raw: string): string {
       insertedAnd = true;
     }
 
-    // Insert "in" before domain word
-    if (!insertedIn && domains.has(tokens[i])) {
-      formatted.push('in');
-      insertedIn = true;
-    }
-
     formatted.push(token);
   }
 
@@ -115,18 +142,58 @@ function formatCapability(raw: string): string {
 }
 
 /**
+ * Clean doubled prepositions from text.
+ * "with in wealth" → "with wealth"
+ * "in in wealth" → "in wealth"
+ */
+function cleanDoubledPrepositions(text: string): string {
+  return text
+    .replace(/\bwith in\b/gi, 'with')
+    .replace(/\bin in\b/gi, 'in')
+    .replace(/\bfor for\b/gi, 'for')
+    .replace(/\bon on\b/gi, 'on');
+}
+
+/**
+ * Check if text looks like a raw persona label (not a capability).
+ * Personas describe WHO they target, not WHAT they do.
+ */
+function isPersonaLabel(text: string): boolean {
+  const lower = text.toLowerCase();
+  const personaPatterns = [
+    'owner', 'founder', 'founding partner', 'ceo', 'cfo', 'cto',
+    'partner', 'principal', 'director', 'vp ', 'vice president',
+    'executive', 'c-level', 'c-suite', 'decision maker'
+  ];
+  return personaPatterns.some(p => lower.includes(p));
+}
+
+/**
  * Generate "what they do" line from supply data.
  * Only uses actual capability from SupplyRecord, no invented claims.
+ *
+ * RULE: Do not output raw persona labels as capabilities.
+ * If capability is a persona (who they target), use neutral fallback.
  */
 function generateWhatTheyDo(supplyRecord: SupplyRecord): string {
   const capability = supplyRecord.capability || '';
-  const formatted = formatCapability(capability);
 
+  // If empty, no line
+  if (!capability.trim()) {
+    return '';
+  }
+
+  // If it's a persona label, use neutral fallback
+  if (isPersonaLabel(capability)) {
+    return 'They work with firms like yours.';
+  }
+
+  const formatted = formatCapability(capability);
   if (!formatted) {
     return '';
   }
 
-  return `They focus on ${formatted}.`;
+  return `They help with ${formatted}.`;
 }
 
 // =============================================================================
@@ -158,6 +225,10 @@ export function composeIntros(
   const demandFirstName = extractFirstName(demand.contact);
   const supplyFirstName = extractFirstName(counterparty.contact);
 
+  // Clean company names (strip Llc, Inc, etc.)
+  const demandCompany = cleanCompanyName(demand.company);
+  const supplyCompany = cleanCompanyName(counterparty.company);
+
   // Generate "what they do" line from supply record's capability
   const whatTheyDo = generateWhatTheyDo(supplyRecord);
 
@@ -176,14 +247,14 @@ export function composeIntros(
   const demandLines = [
     `Hey ${demandFirstName} —`,
     '',
-    `I'm connected to ${counterparty.contact} at ${counterparty.company}.`,
+    `I'm connected to ${counterparty.contact} at ${supplyCompany}.`,
   ];
 
   if (whatTheyDo) {
     demandLines.push(whatTheyDo);
   }
 
-  demandLines.push(`${demand.company} ${edge.evidence}.`);
+  demandLines.push(`${demandCompany} ${edge.evidence}.`);
   demandLines.push('');
   demandLines.push('Worth an intro?');
 
@@ -201,29 +272,33 @@ export function composeIntros(
   //
   // Worth a look?
 
-  // Extract capability-only fitReason (first sentence before edge evidence)
-  // fitReason format: "Supply focuses on X. Demand shows Y." → take only first part
-  // Then format the capability part for clean grammar
-  const fitReasonParts = counterparty.fitReason.split('. ');
-  const rawFitReason = fitReasonParts[0];
+  // ==========================================================================
+  // FIT REASON — Explain WHY they fit, not WHO supply is
+  // ==========================================================================
+  // RULE: Don't restate brand + persona. Explain the connection.
+  // BAD:  "Lincoln Capital focuses on Owner/founding partner."
+  // GOOD: "This fits your focus on owner-led firms."
 
-  // Extract and format capability from "Company focuses on X"
-  const focusMatch = rawFitReason.match(/^(.+) focuses on (.+)$/);
-  let capabilityFitReason: string;
-  if (focusMatch) {
-    const company = focusMatch[1];
-    const capability = formatCapability(focusMatch[2]);
-    capabilityFitReason = `${company} focuses on ${capability}.`;
+  let fitReasonLine: string;
+
+  // Check if we have actual capability (not persona)
+  const capability = supplyRecord.capability || '';
+
+  if (!capability.trim() || isPersonaLabel(capability)) {
+    // No real capability or it's a persona — use neutral fit line
+    fitReasonLine = 'Looks like a fit based on what you do.';
   } else {
-    capabilityFitReason = rawFitReason + '.';
+    // Real capability — frame as why they fit
+    const formatted = formatCapability(capability);
+    fitReasonLine = `This aligns with your work in ${formatted}.`;
   }
 
   const supplyLines = [
     `Hey ${supplyFirstName} —`,
     '',
-    `${demand.company} ${edge.evidence}.`,
-    `${demand.contact} is ${demand.title || 'the point of contact'}.`,
-    capabilityFitReason,
+    `${demandCompany} ${edge.evidence}.`,
+    `${demand.contact} is ${extractPrimaryTitle(demand.title) || 'the point of contact'}.`,
+    fitReasonLine,
     '',
     'Worth a look?',
   ];
@@ -231,19 +306,33 @@ export function composeIntros(
   const supplyBody = supplyLines.join('\n');
 
   // ==========================================================================
+  // GRAMMAR CLEANUP: Remove doubled prepositions
+  // ==========================================================================
+  const cleanedDemandBody = cleanDoubledPrepositions(demandBody);
+  const cleanedSupplyBody = cleanDoubledPrepositions(supplyBody);
+
+  // ==========================================================================
   // VALIDATION: Check for banned phrases
   // ==========================================================================
-  if (containsBannedPhrase(demandBody)) {
+  if (containsBannedPhrase(cleanedDemandBody)) {
     throw new Error(`COMPOSER_ERROR: Demand intro contains banned phrase`);
   }
 
-  if (containsBannedPhrase(supplyBody)) {
+  if (containsBannedPhrase(cleanedSupplyBody)) {
     throw new Error(`COMPOSER_ERROR: Supply intro contains banned phrase`);
   }
 
+  // ==========================================================================
+  // THREAD INTEGRITY: Both intros reference the SAME demand company
+  // ==========================================================================
+  // Demand intro: tells demand about supply → mentions demandCompany
+  // Supply intro: tells supply about demand → mentions demandCompany
+  // Both use the same `demand` record passed to this function.
+  // No cross-leak possible within Composer — integrity maintained.
+
   return {
-    demandBody,
-    supplyBody,
+    demandBody: cleanedDemandBody,
+    supplyBody: cleanedSupplyBody,
   };
 }
 
