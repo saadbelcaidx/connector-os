@@ -537,6 +537,74 @@ Template not filling? → Check if companyDescription is passed
 - Token dictionaries (SUPPLY_ROLE_VOCAB, DEMAND_VALUE_VOCAB)
 - COS generation (getModeSupplyRole, getModeDemandValue)
 
+### Composer — Intro Text Generation
+
+**File:** `src/matching/Composer.ts`
+
+The Composer generates intro text for both demand and supply sides of a match. It enforces language rules, cleans data, and ensures thread integrity.
+
+**Core Functions:**
+
+| Function | Purpose |
+|----------|---------|
+| `composeIntros()` | Main export — generates both intros from match data |
+| `cleanCompanyName()` | Strips legal suffixes: "Acme LLC" → "Acme" |
+| `extractPrimaryTitle()` | Takes first title: "VP, FA, Owner" → "VP" |
+| `extractFirstName()` | Gets first name from full name |
+| `formatCapability()` | Formats capability string with acronyms |
+| `cleanDoubledPrepositions()` | Removes "with in" → "with", "in in" → "in" |
+| `isPersonaLabel()` | Detects if capability is a persona (WHO not WHAT) |
+| `generateWhatTheyDo()` | Creates capability line with persona fallback |
+| `validateNoBannedPhrases()` | Checks text against banned phrase list |
+
+**Banned Phrases (NEVER use):**
+- "I work with"
+- "My client"
+- "We partner with"
+- "Our client"
+- "Our partner"
+- "We work with"
+
+**Allowed Phrases:**
+- "I'm connected to"
+- "I'm in touch with"
+- "I know"
+
+**Thread Integrity Rule:**
+Both demand intro and supply intro MUST reference the same demand company. The `composeIntros()` function receives a single `demand` record and uses it for both outputs — no cross-leak possible.
+
+**Persona Detection:**
+If `capability` contains persona labels (Owner, Founder, CEO, VP, etc.), use neutral fallback:
+- "What they do" line: "They work with firms like yours."
+- "Fit reason" line: "Looks like a fit based on what you do."
+
+**Legal Suffix Stripping:**
+Removes: LLC, L.L.C., Inc, Corp, Corporation, Ltd, Limited, Co, Company, PLLC, LP, LLP
+
+**Intro Templates:**
+
+Demand intro:
+```
+Hey [firstName] —
+
+I'm connected to [counterparty.contact] at [supplyCompany].
+[What they do — capability or neutral fallback].
+[demandCompany] [edge.evidence].
+
+Worth an intro?
+```
+
+Supply intro:
+```
+Hey [firstName] —
+
+[demandCompany] [edge.evidence].
+[demand.contact] is [primaryTitle].
+[Fit reason — why they match].
+
+Worth a look?
+```
+
 ### Pressure System
 | File | Purpose |
 |------|---------|
@@ -828,6 +896,26 @@ Run in Supabase SQL Editor
 - **Step-based navigation** — clear progress through the flow
 - **Settings integration** — uses same settings as MatchingEngineV3
 - **Guest mode compatible** — works with localStorage settings
+
+### Flow Copy Conventions
+
+**Terminology hierarchy (matches vs intros):**
+
+| Term | Count | Meaning |
+|------|-------|---------|
+| **Matches** | 6 | Demand-supply pairings (edge-positive) |
+| **Intros** | 10 | Actual contacts being reached (6 demand + 4 supply) |
+
+**Step copy:**
+
+| Step | Primary | Secondary |
+|------|---------|-----------|
+| `matches_found` | "Found 6 matches" | "X scanned · Y filtered out" |
+| `ready` | "Found 6 matches" | "These will reach 10 people (6 demand · 4 supply)" |
+| Route button | "Route 6 matches" | — |
+| `complete` | "10" (big) | "Intros sent" + breakdown |
+
+**Rule:** Match count is primary (what you found), intro count is secondary (what gets sent).
 
 ### vs MatchingEngineV3 (Legacy)
 
