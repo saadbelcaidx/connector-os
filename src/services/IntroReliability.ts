@@ -17,10 +17,19 @@ import type { IntroSide, IntroContext, Match, EdgeInput, IntroResult } from '../
 // TYPES
 // =============================================================================
 
+// Legacy context from Flow.tsx (backwards compatible)
+export interface LegacyIntroContext {
+  firstName: string;
+  company: string;
+  companyDescription?: string;
+  preSignalContext?: string;
+  demandType?: string;
+}
+
 export interface IntroRequest {
   side: IntroSide;
   mode: string;
-  ctx: IntroContext;
+  ctx: LegacyIntroContext;  // Accept legacy format, transform internally
   // Edge data (required for CONNECT intros, optional for PROBE)
   edge?: EdgeInput | null;
   // Match context for symmetrical intros
@@ -40,6 +49,27 @@ export interface IntroOutput {
 // =============================================================================
 // DTO TRANSFORMATION
 // =============================================================================
+
+/**
+ * Transform legacy ctx (from Flow.tsx) to edge module's IntroContext.
+ * Converts companyDescription → summary.what_they_do
+ */
+function transformContext(legacy: LegacyIntroContext): IntroContext {
+  // If we have a company description, use it as the "what_they_do"
+  const summary = legacy.companyDescription
+    ? {
+        category: 'company',
+        who_they_serve: '',
+        what_they_do: legacy.companyDescription,
+      }
+    : null;
+
+  return {
+    firstName: legacy.firstName || 'there',
+    company: legacy.company || 'a company',
+    summary,
+  };
+}
 
 function buildMatch(request: IntroRequest): Match {
   return {
@@ -70,7 +100,8 @@ function buildMatch(request: IntroRequest): Match {
  */
 export function generateIntroReliable(request: IntroRequest): IntroOutput {
   const match = buildMatch(request);
-  const result = composeIntroWithEdge(request.side, match, request.ctx);
+  const ctx = transformContext(request.ctx);  // Transform legacy → edge format
+  const result = composeIntroWithEdge(request.side, match, ctx);
 
   // LOGGING
   console.log(`[IntroReliability] side=${request.side} mode=${request.mode} validation=${result.validation} type=${result.type}`);
