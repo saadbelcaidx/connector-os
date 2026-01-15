@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
-import { composeIntro } from '../copy/introDoctrine';
+import { composeIntroWithEdge } from '../edge';
+import type { IntroSide, IntroContext, Match } from '../edge';
 
 interface InstantlyLeadPayload {
   campaign: string;  // Note: "campaign" not "campaign_id"
@@ -36,17 +37,24 @@ export interface DualSendParams {
 
 /**
  * Generate fallback intro text when AI is not configured.
- * PHASE 3: Routes through introDoctrine.composeIntro() — NO timing defaults.
+ * PHASE 7: Routes through edge module — PROBE intro (safe, permission-asking).
  */
 function generateIntroText(type: 'DEMAND' | 'SUPPLY', firstName: string, companyName: string, _signal?: string): string {
-  return composeIntro({
-    side: type === 'DEMAND' ? 'demand' : 'supply',
-    mode: 'b2b_general',
-    ctx: {
-      firstName: firstName || 'there',
-      company: companyName || 'a company',
-    },
-  });
+  const ctx: IntroContext = {
+    firstName: firstName || 'there',
+    company: companyName || 'a company',
+    summary: null,
+  };
+
+  const match: Match = {
+    mode: 'b2b_broad',
+    demand: { domain: 'unknown', summary: null },
+    supply: { domain: 'unknown', summary: null },
+    edge: null, // No edge = PROBE intro
+  };
+
+  const result = composeIntroWithEdge(type === 'DEMAND' ? 'demand' : 'supply', match, ctx);
+  return result.intro || '';
 }
 
 export async function sendToInstantly(

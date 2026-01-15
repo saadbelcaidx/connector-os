@@ -1,66 +1,52 @@
 /**
- * TEMPLATES — PHASE 3 CANONICAL WRAPPERS
+ * TEMPLATES — DTO SHAPING ONLY
  *
- * All intro generation now routes through introDoctrine.ts.
- * These are thin wrappers that preserve function signatures for backwards compatibility.
+ * This file does ONE job: shape DTOs for the edge module.
+ * NO copy logic. NO phrases. NO templates.
  *
- * NO string templates allowed in this file.
- * NO timing defaults allowed in this file.
+ * All intro composition happens in src/edge/composeIntroWithEdge.ts
  */
 
 import { NormalizedRecord } from '../schemas';
-import { composeIntro, IntroContext, ConnectorMode } from '../copy/introDoctrine';
+import { composeIntroWithEdge } from '../edge';
+import type { IntroContext, Match } from '../edge';
 
 // =============================================================================
-// DEMAND TEMPLATE — Routes to canonical doctrine
+// DTO SHAPING — Extract firstName + company, route to edge
 // =============================================================================
 
 /**
- * Intro to DEMAND side (company hiring).
- * PHASE 3: Now routes through introDoctrine.composeIntro()
- *
- * demandType gates pain injection (e.g., crypto pain only for crypto_platform/fintech_platform/exchange)
+ * Shape demand DTO and route to edge module.
  */
 export function generateDemandIntro(
-  record: NormalizedRecord & {
-    connectorMode?: ConnectorMode;
-    preSignalContext?: string;
-    demandType?: { type?: string } | string;  // Gates pain injection
-  }
+  record: NormalizedRecord & { connectorMode?: string }
 ): string {
   const firstName = record.firstName || record.fullName?.split(' ')[0] || 'there';
-  const company = record.company || 'your company';
+  const company = record.company || 'a company';
 
   const ctx: IntroContext = {
     firstName,
     company,
-    companyDescription: record.companyDescription || undefined,
-    demandType: record.demandType,  // For pain gating
-    preSignalContext: record.preSignalContext,
+    summary: null,
   };
 
-  return composeIntro({
-    side: 'demand',
-    mode: record.connectorMode || 'b2b_general',
-    ctx,
-  });
+  const match: Match = {
+    mode: record.connectorMode || 'b2b_broad',
+    demand: { domain: 'unknown', summary: null },
+    supply: { domain: 'unknown', summary: null },
+    edge: null,
+  };
+
+  const result = composeIntroWithEdge('demand', match, ctx);
+  return result.intro || '';
 }
 
-// =============================================================================
-// SUPPLY TEMPLATE — Routes to canonical doctrine
-// =============================================================================
-
 /**
- * Intro to SUPPLY side (recruiter/agency).
- * PHASE 3: Now routes through introDoctrine.composeIntro()
- *
- * demandType comes from narrative.supplyRole or mode fallback.
- * NEVER from contact title or signal.
+ * Shape supply DTO and route to edge module.
  */
 export function generateSupplyIntro(
-  provider: NormalizedRecord & { connectorMode?: ConnectorMode; preSignalContext?: string },
-  bestDemandMatch: NormalizedRecord,
-  demandType?: string  // From narrative.supplyRole - NOT from title/signal
+  provider: NormalizedRecord & { connectorMode?: string },
+  bestDemandMatch: NormalizedRecord
 ): string {
   const firstName = provider.firstName || provider.fullName?.split(' ')[0] || 'there';
   const company = bestDemandMatch.company || 'a company';
@@ -68,29 +54,27 @@ export function generateSupplyIntro(
   const ctx: IntroContext = {
     firstName,
     company,
-    // demandType from COS (narrative.supplyRole) or undefined for mode fallback
-    demandType: demandType || undefined,
-    preSignalContext: provider.preSignalContext,
+    summary: null,
   };
 
-  return composeIntro({
-    side: 'supply',
-    mode: provider.connectorMode || 'b2b_general',
-    ctx,
-  });
+  const match: Match = {
+    mode: provider.connectorMode || 'b2b_broad',
+    demand: { domain: 'unknown', summary: null },
+    supply: { domain: 'unknown', summary: null },
+    edge: null,
+  };
+
+  const result = composeIntroWithEdge('supply', match, ctx);
+  return result.intro || '';
 }
 
 // =============================================================================
-// HELPERS — Validation only (no generation logic)
+// VALIDATION — Structural only
 // =============================================================================
 
-/**
- * Check if an intro is valid.
- */
 export function isValidIntro(intro: string): boolean {
   if (!intro || intro.length < 20) return false;
   const lower = intro.toLowerCase();
-  // Accept both "hey" and "hi" starters
   if (!lower.startsWith('hey') && !lower.startsWith('hi')) return false;
   if (!intro.includes('?')) return false;
   return true;

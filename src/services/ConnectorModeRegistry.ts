@@ -17,7 +17,8 @@
  * getCopyTemplate() now routes through introDoctrine for canonical output.
  */
 
-import { composeIntro, ConnectorMode as DoctrineMode } from '../copy/introDoctrine';
+import { composeIntroWithEdge } from '../edge';
+import type { IntroSide, IntroContext, Match } from '../edge';
 
 // =============================================================================
 // TYPES
@@ -1109,24 +1110,33 @@ export function getAllowedVocabulary(mode: ConnectorMode): string[] {
 
 /**
  * Get copy template for a side.
- * PHASE 6: Routes through introDoctrine for canonical, doctrine-compliant output.
- * Legacy copyTemplates in ModeContract are ignored.
+ * PHASE 7: Routes through edge module. No edge = PROBE intro (safe, permission-asking).
  */
 export function getCopyTemplate(mode: ConnectorMode, side: 'demand' | 'supply'): string {
-  // Map ConnectorMode to DoctrineMode (they overlap but have different type definitions)
-  const doctrineMode: DoctrineMode = mode === 'recruiting' ? 'recruiting'
-    : mode === 'biotech_licensing' ? 'biotech_licensing'
+  // Map to edge mode names
+  const edgeMode = mode === 'recruiting' ? 'recruitment'
+    : mode === 'biotech_licensing' ? 'biotech'
     : mode === 'crypto' ? 'crypto'
-    : 'b2b_general';
+    : mode === 'wealth_management' ? 'wealth_management'
+    : mode === 'real_estate_capital' ? 'real_estate'
+    : mode === 'logistics' ? 'logistics'
+    : 'b2b_broad';
 
-  return composeIntro({
-    side: side === 'demand' ? 'demand' : 'supply',
-    mode: doctrineMode,
-    ctx: {
-      firstName: '{firstName}',
-      company: '{company}',
-    },
-  });
+  const match: Match = {
+    mode: edgeMode,
+    demand: { domain: 'placeholder', summary: null },
+    supply: { domain: 'placeholder', summary: null },
+    edge: null, // No edge = PROBE intro
+  };
+
+  const ctx: IntroContext = {
+    firstName: '{firstName}',
+    company: '{company}',
+    summary: null,
+  };
+
+  const result = composeIntroWithEdge(side as IntroSide, match, ctx);
+  return result.intro || '';
 }
 
 /**

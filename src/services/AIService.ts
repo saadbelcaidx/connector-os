@@ -8,13 +8,8 @@
  */
 
 import { allowAICall, AI_LIMITS } from './aiRateLimit';
-import {
-  validateIntro,
-  composeIntro,
-  ConnectorMode,
-  IntroSide,
-  IntroContext,
-} from '../copy/introDoctrine';
+import { composeIntroWithEdge } from '../edge';
+import type { IntroSide, IntroContext, Match } from '../edge';
 
 // =============================================================================
 // TYPES
@@ -56,7 +51,7 @@ export interface IntroArgs {
     connectorOverlap?: string;  // e.g., "I connect payments teams working closely with advisory firms..."
     supplyRole?: string;        // e.g., "payments product teams"
   };
-  connectorMode?: ConnectorMode | null;
+  connectorMode?: string | null;
   jobSignal?: {
     hasJobPostingUrl?: boolean;
     hasScrapedJobTitle?: boolean;
@@ -85,26 +80,40 @@ export function humanGreeting(firstName?: string): { greeting: string; hasName: 
 }
 
 // =============================================================================
-// PHASE 4: CANONICAL FALLBACK — routes through introDoctrine
+// PHASE 7: EDGE-BASED FALLBACK — routes through edge module
 // =============================================================================
+
+function mapToEdgeMode(mode?: string | null): string {
+  if (!mode) return 'b2b_broad';
+  const mapping: Record<string, string> = {
+    'recruiting': 'recruitment',
+    'biotech_licensing': 'biotech',
+    'wealth_management': 'wealth_management',
+    'real_estate_capital': 'real_estate',
+    'enterprise_partnerships': 'b2b_broad',
+    'logistics': 'logistics',
+    'crypto': 'crypto',
+    'b2b_general': 'b2b_broad',
+  };
+  return mapping[mode] || 'b2b_broad';
+}
 
 function canonicalFallback(args: IntroArgs): string {
   const ctx: IntroContext = {
     firstName: args.context.firstName || 'there',
     company: args.context.company || 'a company',
-    contactTitle: args.context.contactTitle,
-    preSignalContext: args.context.preSignalContext,
-    hasWellfoundData: hasJobEvidence(args.jobSignal),
-    // COS (Connector Overlap Statement) — relational copy
-    connectorOverlap: args.context.connectorOverlap,
-    supplyRole: args.context.supplyRole,
+    summary: null, // No validated summary = neutral fallback
   };
 
-  return composeIntro({
-    side: args.type as IntroSide,
-    mode: (args.connectorMode as ConnectorMode) || 'b2b_general',
-    ctx,
-  });
+  const match: Match = {
+    mode: mapToEdgeMode(args.connectorMode),
+    demand: { domain: 'unknown', summary: null },
+    supply: { domain: 'unknown', summary: null },
+    edge: null, // No edge = PROBE intro (safe, permission-asking)
+  };
+
+  const result = composeIntroWithEdge(args.type as IntroSide, match, ctx);
+  return result.intro || '';
 }
 
 // =============================================================================
