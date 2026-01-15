@@ -9,7 +9,6 @@
 
 import { allowAICall, AI_LIMITS } from './aiRateLimit';
 import {
-  buildCanonicalPrompt,
   validateIntro,
   composeIntro,
   ConnectorMode,
@@ -117,115 +116,16 @@ export async function generateIntro(
   cfg: AIConfig | null,
   userId: string = 'guest'
 ): Promise<IntroResult> {
-  // Gate 1: AI not configured
-  if (!AI_ENABLED(cfg)) {
-    return {
-      intro: canonicalFallback(args),
-      source: 'fallback',
-      fallbackReason: 'AI_NOT_CONFIGURED',
-    };
-  }
-
-  // Gate 2: Rate limit
-  const limit = userId === 'guest' ? AI_LIMITS.guest : AI_LIMITS.paid;
-  if (!allowAICall(userId, limit)) {
-    return {
-      intro: canonicalFallback(args),
-      source: 'fallback',
-      fallbackReason: 'RATE_LIMITED',
-    };
-  }
-
-  // Try AI, fallback on any error
-  try {
-    const result = await callAIProvider(cfg!, args);
-
-    // PHASE 4: Validate AI output against doctrine
-    const ctx: IntroContext = {
-      firstName: args.context.firstName || 'there',
-      company: args.context.company || 'a company',
-      contactTitle: args.context.contactTitle,
-      preSignalContext: args.context.preSignalContext,
-      hasWellfoundData: hasJobEvidence(args.jobSignal),
-      // COS (Connector Overlap Statement) — relational copy
-      connectorOverlap: args.context.connectorOverlap,
-      supplyRole: args.context.supplyRole,
-    };
-
-    const validation = validateIntro(result, ctx);
-    if (!validation.valid) {
-      console.warn('[AIService] AI output violated doctrine:', validation);
-      return {
-        intro: canonicalFallback(args),
-        source: 'fallback',
-        fallbackReason: 'VALIDATION_FAILED',
-      };
-    }
-
-    return {
-      intro: result,
-      source: 'ai',
-    };
-  } catch (e) {
-    console.error('[AIService] AI call failed:', e);
-    return {
-      intro: canonicalFallback(args),
-      source: 'fallback',
-      fallbackReason: 'AI_ERROR',
-    };
-  }
-}
-
-// =============================================================================
-// PROVIDER SWITCH
-// =============================================================================
-
-async function callAIProvider(cfg: AIConfig, args: IntroArgs): Promise<string> {
-  // PHASE 4: Use canonical prompt from introDoctrine
-  const ctx: IntroContext = {
-    firstName: args.context.firstName || 'there',
-    company: args.context.company || 'a company',
-    contactTitle: args.context.contactTitle,
-    preSignalContext: args.context.preSignalContext,
-    hasWellfoundData: hasJobEvidence(args.jobSignal),
-    // COS (Connector Overlap Statement) — relational copy
-    connectorOverlap: args.context.connectorOverlap,
-    supplyRole: args.context.supplyRole,
+  // DETERMINISTIC ONLY: No AI, just fill-in-the-blank templates
+  return {
+    intro: canonicalFallback(args),
+    source: 'fallback',
+    fallbackReason: 'AI_NOT_CONFIGURED',
   };
-
-  const prompt = buildCanonicalPrompt({
-    side: args.type as IntroSide,
-    ctx,
-    mode: (args.connectorMode as ConnectorMode) || 'b2b_general',
-  });
-
-  switch (cfg.provider) {
-    case 'azure':
-      return callAzure(cfg, prompt);
-    case 'openai':
-      return callOpenAI(cfg, prompt);
-    case 'anthropic':
-      return callAnthropic(cfg, prompt);
-    default:
-      throw new Error('Unsupported provider');
-  }
 }
 
 // =============================================================================
-// HELPER: Job evidence check (for Wellfound factual claims)
-// =============================================================================
-
-function hasJobEvidence(jobSignal?: IntroArgs['jobSignal']): boolean {
-  if (!jobSignal) return false;
-  return Boolean(
-    jobSignal.hasJobPostingUrl ||
-    jobSignal.hasScrapedJobTitle ||
-    (jobSignal.openRolesCount && jobSignal.openRolesCount > 0)
-  );
-}
-
-// =============================================================================
-// PROVIDER ADAPTERS (unchanged — just make API calls)
+// PROVIDER ADAPTERS (kept for reply-brain and other AI features)
 // =============================================================================
 
 async function callAzure(cfg: AIConfig, prompt: string): Promise<string> {

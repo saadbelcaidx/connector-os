@@ -32,6 +32,193 @@ import {
 } from './EvidenceGate';
 
 // =============================================================================
+// PRESIGNAL ENFORCEMENT (PRODUCTION BLOCKER)
+// =============================================================================
+
+/**
+ * Presignal status - computed once per entity
+ */
+export type PreSignalStatus = 'present' | 'missing';
+
+/**
+ * Activity and timing words that REQUIRE presignal evidence.
+ * These cannot be derived from company descriptions.
+ */
+export const ACTIVITY_TIMING_WORDS = [
+  'hiring',
+  'scaling',
+  'growing',
+  'expanding',
+  'ramping up',
+  'building out',
+  'bringing on',
+  'looking for',
+  'seeking',
+  'recently',
+  'now',
+  'currently',
+  'just',
+  'active',
+  'exciting phase',
+] as const;
+
+/**
+ * Neutral vocabulary allowed when no presignal exists
+ */
+export const NEUTRAL_VOCABULARY_ALLOWLIST = [
+  'relevant',
+  'exploring',
+  'worth a conversation',
+  'could be useful',
+  'open to an intro',
+  'might be interesting',
+  'potentially helpful',
+] as const;
+
+/**
+ * Minimum presignal length to be considered valid
+ */
+const MIN_PRESIGNAL_LENGTH = 20;
+
+/**
+ * Check if presignal exists and is valid
+ */
+export function hasPresignal(presignalContext: string | undefined | null): boolean {
+  return typeof presignalContext === 'string' && presignalContext.trim().length >= MIN_PRESIGNAL_LENGTH;
+}
+
+/**
+ * Check if text contains activity or timing language
+ */
+export function containsActivityTimingLanguage(text: string): { found: boolean; words: string[] } {
+  const textLower = text.toLowerCase();
+  const found: string[] = [];
+
+  for (const word of ACTIVITY_TIMING_WORDS) {
+    if (textLower.includes(word.toLowerCase())) {
+      found.push(word);
+    }
+  }
+
+  return { found: found.length > 0, words: found };
+}
+
+/**
+ * Get presignal status for an entity
+ */
+export function getPresignalStatus(presignalContext: string | undefined | null): PreSignalStatus {
+  return hasPresignal(presignalContext) ? 'present' : 'missing';
+}
+
+/**
+ * Check if intro uses only neutral vocabulary (allowed when no presignal)
+ */
+export function isNeutralIntro(text: string): boolean {
+  const activityCheck = containsActivityTimingLanguage(text);
+  return !activityCheck.found;
+}
+
+/**
+ * Attempt to neutralize an intro by removing activity/timing language.
+ * Returns null if the intro cannot be safely neutralized (too much activity language).
+ *
+ * NOTE: This is a best-effort transformation. The result should still be validated.
+ */
+export function neutralizeIntro(text: string): { neutralized: string | null; changes: string[] } {
+  const activityCheck = containsActivityTimingLanguage(text);
+
+  if (!activityCheck.found) {
+    // Already neutral
+    return { neutralized: text, changes: [] };
+  }
+
+  let result = text;
+  const changes: string[] = [];
+
+  // Replace activity words with neutral alternatives
+  const REPLACEMENTS: Record<string, string> = {
+    'hiring': 'building their team',
+    'scaling': 'growing',
+    'growing': 'evolving',
+    'expanding': 'evolving',
+    'recently': '',
+    'now': '',
+    'currently': '',
+    'just': '',
+    'active': 'open',
+    'exciting phase': 'interesting position',
+    'ramping up': 'building',
+    'building out': 'developing',
+    'bringing on': 'adding',
+    'looking for': 'exploring options for',
+    'seeking': 'exploring',
+  };
+
+  for (const word of activityCheck.words) {
+    const replacement = REPLACEMENTS[word.toLowerCase()];
+    if (replacement !== undefined) {
+      const regex = new RegExp(word, 'gi');
+      result = result.replace(regex, replacement);
+      changes.push(`"${word}" → "${replacement || '(removed)'}"`);
+    }
+  }
+
+  // Clean up double spaces
+  result = result.replace(/\s{2,}/g, ' ').trim();
+
+  // Re-check if still has activity language
+  const recheck = containsActivityTimingLanguage(result);
+  if (recheck.found) {
+    // Could not fully neutralize — block instead
+    return { neutralized: null, changes };
+  }
+
+  return { neutralized: result, changes };
+}
+
+/**
+ * Enforce neutral mode for intro without presignal.
+ * Returns the neutralized intro if possible, or an error if it cannot be neutralized.
+ */
+export function enforceNeutralMode(
+  text: string,
+  presignalContext: string | undefined | null
+): {
+  result: 'pass' | 'neutralized' | 'blocked';
+  text: string | null;
+  changes: string[];
+  error?: string;
+} {
+  // If presignal exists, pass through unchanged
+  if (hasPresignal(presignalContext)) {
+    return { result: 'pass', text, changes: [] };
+  }
+
+  // Check if already neutral
+  if (isNeutralIntro(text)) {
+    return { result: 'pass', text, changes: [] };
+  }
+
+  // Attempt to neutralize
+  const { neutralized, changes } = neutralizeIntro(text);
+
+  if (neutralized === null) {
+    return {
+      result: 'blocked',
+      text: null,
+      changes,
+      error: 'Intro contains too much activity/timing language to safely neutralize. Rewrite with neutral language.',
+    };
+  }
+
+  return {
+    result: 'neutralized',
+    text: neutralized,
+    changes,
+  };
+}
+
+// =============================================================================
 // STABLE ERROR CODES (for Explainability integration)
 // =============================================================================
 
@@ -46,6 +233,7 @@ export const COPY_ERROR_CODES = {
   LANE_CROSSING_SUPPLY_IN_DEMAND: 'LANE_CROSSING_SUPPLY_PHRASE_IN_DEMAND',
   FORBIDDEN_WORD: 'COPY_FORBIDDEN_WORD',
   EVIDENCE_REQUIRED: 'COPY_EVIDENCE_REQUIRED',
+  PRESIGNAL_REQUIRED: 'PRESIGNAL_REQUIRED',  // HARD BLOCK
 } as const;
 
 export type CopyErrorCode = typeof COPY_ERROR_CODES[keyof typeof COPY_ERROR_CODES];
@@ -90,6 +278,7 @@ export interface CopyValidationOptions {
   side: 'demand' | 'supply';
   evidence: EvidenceSet;
   strictMode?: boolean;  // If true, warnings become errors
+  presignal_context?: string;  // Operator-provided presignal (min 20 chars to be valid)
 }
 
 // =============================================================================
@@ -251,7 +440,7 @@ export function validateCopy(
   text: string,
   options: CopyValidationOptions
 ): CopyValidationResult {
-  const { mode, side, evidence, strictMode = false } = options;
+  const { mode, side, evidence, strictMode = false, presignal_context } = options;
   const errors: string[] = [];
   const warnings: string[] = [];
   const structuralIssues: string[] = [];
@@ -260,6 +449,47 @@ export function validateCopy(
   // Get vocabulary profile from mode contract
   const contract = getModeContract(mode);
   const vocabularyProfile = contract.contracts.safeVocabularyProfile;
+
+  // ==========================================================================
+  // PRESIGNAL HARD GATE (MANDATORY — executes first)
+  // ==========================================================================
+  // IF hasPresignal === false AND intro contains activity/timing language
+  // THEN validation = BLOCKED with PRESIGNAL_REQUIRED error
+  // This gate must execute BEFORE any intro is marked validated, queued, or sent.
+  // ==========================================================================
+  const presignalStatus = getPresignalStatus(presignal_context);
+  const activityCheck = containsActivityTimingLanguage(text);
+
+  if (presignalStatus === 'missing' && activityCheck.found) {
+    const activityWords = activityCheck.words.join(', ');
+    const msg = `Activity or timing claims require a presignal`;
+    errors.push(msg);
+    failures.push({
+      code: COPY_ERROR_CODES.PRESIGNAL_REQUIRED,
+      message: msg,
+      explanation: `Your intro contains timing/activity language ("${activityWords}") but no presignal was provided. Presignals explain "why now" — without operator-provided timing data, the system cannot make timing claims.`,
+      howToFix: `Either provide a presignal (min 20 chars) explaining the timing trigger, or rewrite the intro using only neutral language: "relevant", "exploring", "worth a conversation", "could be useful", "open to an intro".`,
+      meta: {
+        found: activityCheck.words,
+        vocabularyProfile,
+        side,
+      },
+    });
+
+    // HARD BLOCK — return immediately, do not continue validation
+    return {
+      valid: false,
+      errors,
+      warnings,
+      failures,
+      forbiddenWordsFound: [],
+      ungatableClaimsFound: [],
+      structuralIssues: [],
+      mode,
+      side,
+      registryVersion: MODE_REGISTRY_VERSION,
+    };
+  }
 
   // 1. Structural validation
   const trimmed = text.trim();
