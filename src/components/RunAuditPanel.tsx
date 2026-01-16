@@ -40,6 +40,13 @@ import type { CopyValidationResult } from '../services/CopyValidator';
 // TYPES
 // =============================================================================
 
+// Intro Source Metadata — Phase 1 (transparent fallback)
+export interface IntroSourceStats {
+  aiCount: number;
+  fallbackCount: number;
+  fallbackReasons: Record<string, number>; // e.g., { VALIDATION_FAILED: 3, AI_ERROR: 1 }
+}
+
 export interface RunAuditData {
   // Mode info
   mode: ConnectorMode;
@@ -50,6 +57,9 @@ export interface RunAuditData {
   supplyCount: number;
   enrichedCount: number;
   matchedCount: number;
+
+  // Intro Sources — Phase 1 (transparent fallback)
+  introSources?: IntroSourceStats;
 
   // Validation
   demandValidationFailures: ValidationFailure[];
@@ -273,6 +283,55 @@ function FailureList({
           <span className="text-white/30 shrink-0">×{safeRender(count)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// =============================================================================
+// INTRO SOURCE CHIP — Phase 1 (transparent fallback)
+// =============================================================================
+
+/**
+ * IntroSourceChip — Shows intro generation source (ai/fallback) with top reason.
+ * Non-blocking, informational only.
+ *
+ * Displays:
+ * - "Copy: ai" (emerald) if all intros came from AI
+ * - "Copy: fallback (reason)" (amber) if any fallbacks were used
+ */
+function IntroSourceChip({ stats }: { stats: IntroSourceStats }) {
+  const { aiCount, fallbackCount, fallbackReasons } = stats;
+  const total = aiCount + fallbackCount;
+
+  if (total === 0) return null;
+
+  // All AI — show emerald chip
+  if (fallbackCount === 0) {
+    return (
+      <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/[0.08] border border-emerald-500/20">
+        <span className="text-[10px] text-white/40">Copy:</span>
+        <span className="text-[10px] text-emerald-400 font-medium">ai</span>
+        <span className="text-[10px] text-white/30">({aiCount})</span>
+      </div>
+    );
+  }
+
+  // Some fallbacks — show amber chip with top reason
+  const topReason = Object.entries(fallbackReasons)
+    .sort((a, b) => b[1] - a[1])[0];
+
+  const reasonLabel = topReason
+    ? topReason[0].toLowerCase().replace(/_/g, ' ')
+    : 'unknown';
+
+  return (
+    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/[0.08] border border-amber-500/20">
+      <span className="text-[10px] text-white/40">Copy:</span>
+      <span className="text-[10px] text-amber-400 font-medium">fallback</span>
+      <span className="text-[10px] text-white/30">({reasonLabel})</span>
+      {aiCount > 0 && (
+        <span className="text-[10px] text-white/20">+{aiCount} ai</span>
+      )}
     </div>
   );
 }
@@ -624,6 +683,10 @@ Duration: ${duration ? `${duration}s` : 'in progress'}
               {data.sentCount}
             </span>
           </div>
+          {/* Intro Source Chip — Phase 1 (transparent fallback) */}
+          {data.introSources && (data.introSources.aiCount > 0 || data.introSources.fallbackCount > 0) && (
+            <IntroSourceChip stats={data.introSources} />
+          )}
         </div>
       </div>
 

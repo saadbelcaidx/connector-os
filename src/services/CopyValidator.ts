@@ -82,16 +82,25 @@ const MIN_PRESIGNAL_LENGTH = 20;
 
 /**
  * Check if presignal exists and is valid
+ *
+ * PHILEMON: Presignal removed. Always returns true to unblock routing.
+ * @deprecated Presignal system removed — this function is a no-op
  */
-export function hasPresignal(presignalContext: string | undefined | null): boolean {
-  return typeof presignalContext === 'string' && presignalContext.trim().length >= MIN_PRESIGNAL_LENGTH;
+export function hasPresignal(_presignalContext: string | undefined | null): boolean {
+  return true;  // PHILEMON: Presignal removed — always pass
 }
 
 /**
  * Check if text contains activity or timing language
+ *
+ * PHILEMON: Presignal removed. Always returns not found.
+ * @deprecated Presignal system removed — this function is a no-op
  */
-export function containsActivityTimingLanguage(text: string): { found: boolean; words: string[] } {
-  const textLower = text.toLowerCase();
+export function containsActivityTimingLanguage(_text: string): { found: boolean; words: string[] } {
+  return { found: false, words: [] };  // PHILEMON: Presignal removed — never block
+
+  // DEAD CODE below — kept for reference
+  const textLower = _text.toLowerCase();
   const found: string[] = [];
 
   for (const word of ACTIVITY_TIMING_WORDS) {

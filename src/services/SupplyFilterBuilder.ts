@@ -277,11 +277,12 @@ export function getModeLabel(mode: ConnectorMode): string {
 
 // Backwards compatibility export (updated labels)
 export const MODE_LABELS = {
-  recruiting: { label: 'IT Recruitment', description: 'Companies hiring → Recruiters/Staffing agencies' },
-  biotech_licensing: { label: 'Biotech', description: 'Biotech companies → Pharma partners' },
-  wealth_management: { label: 'Wealth Management', description: 'Wealth advisory clients and providers' },
-  real_estate_capital: { label: 'Real Estate', description: 'RE projects → Capital partners' },
-  enterprise_partnerships: { label: 'B2B (Broad)', description: 'General B2B partnerships' },
-  crypto: { label: 'Crypto', description: 'Crypto companies and Web3 protocols' },
-  custom: { label: 'Custom', description: 'Operator-defined mode' },
+  recruiting: { label: 'Recruiting', description: 'Companies hiring → Recruiters' },
+  biotech_licensing: { label: 'Biotech/Pharma', description: 'Biotech → Pharma partners' },
+  wealth_management: { label: 'Wealth', description: 'Wealthy People → Advisors' },
+  real_estate_capital: { label: 'Real Estate', description: 'Deals → Capital' },
+  enterprise_partnerships: { label: 'General B2B', description: 'Any market → Any partners' },
+  logistics: { label: 'Logistics', description: 'Supply Chain → Partners' },
+  crypto: { label: 'Crypto/Web3', description: 'Crypto → Partners' },
+  custom: { label: 'Custom', description: 'You define the rules' },
 };

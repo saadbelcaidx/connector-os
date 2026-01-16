@@ -151,13 +151,13 @@ export const BLOCKS = {
     severity: 'error',
   }),
 
-  // Matching
+  // Matching — NEVER blocks, always allows sending
   NO_MATCHES: {
     code: 'NO_MATCHES',
-    title: 'No matches found',
-    detail: 'Matching completed but found no valid pairs.',
-    next_step: 'Check if demand and supply datasets have compatible signals.',
-    severity: 'warning' as const,
+    title: 'Datasets loaded',
+    detail: 'Ready to find contacts. Some matches may need softer positioning.',
+    next_step: 'You can proceed — the system will generate exploratory intros.',
+    severity: 'info' as const,
   },
   MATCHING_FAILED: (detail: string, correlationId?: string): FlowBlock => ({
     code: 'MATCHING_FAILED',
@@ -168,21 +168,28 @@ export const BLOCKS = {
     severity: 'error',
   }),
 
-  // Enrichment
+  // Enrichment — degrades gracefully, never blocks
   ENRICHMENT_FAILED: (detail: string, correlationId?: string): FlowBlock => ({
     code: 'ENRICHMENT_FAILED',
-    title: 'Enrichment failed',
+    title: 'Some contacts not found',
     detail,
-    next_step: 'Check your API keys and retry.',
+    next_step: 'This is normal. You can still send to contacts we found.',
     correlationId,
-    severity: 'error',
+    severity: 'warning',
   }),
   NO_ENRICHMENT_KEYS: {
     code: 'NO_ENRICHMENT_KEYS',
-    title: 'No enrichment API keys',
-    detail: 'Cannot enrich without Apollo, Anymail, or Connector Agent keys.',
-    next_step: 'Add at least one enrichment API key in Settings.',
-    severity: 'error' as const,
+    title: 'Add an email finder',
+    detail: 'Connect Apollo, Anymail, or Connector Agent to find emails.',
+    next_step: 'Add an API key in Settings to unlock this step.',
+    severity: 'warning' as const,
+  },
+  ENRICHMENT_REQUIRED: {
+    code: 'ENRICHMENT_REQUIRED',
+    title: 'Finding contact info',
+    detail: 'Looking up emails for your contacts.',
+    next_step: 'Run enrichment to find a valid email for this contact.',
+    severity: 'warning' as const,
   },
 
   // Intro generation

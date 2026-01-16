@@ -444,7 +444,7 @@ export default function FlowEngine() {
       const match = enrichedMatches[i];
       const matchIndex = currentMatches.findIndex(m => m.demand.id === match.demand.id);
 
-      const intro = await generateIntro(
+      const introResult = await generateIntro(
         {
           type: 'demand',
           signalDetail: match.demand.signalSummary,
@@ -456,12 +456,12 @@ export default function FlowEngine() {
         aiConfig
       );
 
-      if (intro) {
+      if (introResult.intro) {
         introCount++;
         setState(prev => ({
           ...prev,
           matches: prev.matches.map((m, idx) =>
-            idx === matchIndex ? { ...m, demand: { ...m.demand, intro } } : m
+            idx === matchIndex ? { ...m, demand: { ...m.demand, intro: introResult.intro } } : m
           ),
         }));
       }

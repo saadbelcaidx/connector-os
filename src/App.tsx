@@ -29,7 +29,10 @@ import PasswordSetupGate from './PasswordSetupGate';
 import OnboardingWizard from './OnboardingWizard';
 import ConnectorHub from './ConnectorHub';
 import ConnectorAgent from './connector-agent/ConnectorAgent';
+import Privacy from './Privacy';
+import Terms from './Terms';
 import ComingSoon from './components/ComingSoon';
+import VslWatch from './VslWatch';
 import { FEATURES } from './config/features';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -103,6 +106,11 @@ function AppRoutes() {
 
       {/* Library/Playbook is public */}
       <Route path="/library" element={<div className="page-fade"><Library /></div>} />
+
+      {/* Compliance pages - public */}
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/vsl/watch" element={<VslWatch />} />
 
       {/* Debug page for reply brain testing */}
       <Route path="/debug/reply-brain" element={<div className="page-fade"><DebugReplyBrain /></div>} />

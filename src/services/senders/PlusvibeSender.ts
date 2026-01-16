@@ -13,13 +13,13 @@ export const PlusvibeSender: SenderAdapter = {
 
   validateConfig(config: SenderConfig): string | null {
     if (!config.apiKey) {
-      return 'Plusvibe API key required';
+      return 'PlusVibe API key required. Configure in Settings → Outreach.';
     }
     if (!config.workspaceId) {
-      return 'Plusvibe workspace ID required';
+      return 'PlusVibe workspace ID required. Configure in Settings → Outreach.';
     }
     if (!config.demandCampaignId && !config.supplyCampaignId) {
-      return 'At least one campaign ID required';
+      return 'PlusVibe campaign IDs are required to route leads. Configure in Settings → Outreach.';
     }
     return null;
   },

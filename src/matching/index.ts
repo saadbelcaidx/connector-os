@@ -52,6 +52,32 @@ function logNonStringOnce(fieldName: string, value: unknown): void {
 // =============================================================================
 
 /**
+ * Confidence tier for match quality display.
+ * TikTok-style: Show confidence, never block.
+ */
+export type ConfidenceTier = 'strong' | 'good' | 'open';
+
+/**
+ * Need profile extracted from demand signals.
+ */
+export interface NeedProfile {
+  category: 'engineering' | 'sales' | 'marketing' | 'recruiting' | 'finance' | 'operations' | 'growth' | 'general';
+  specifics: string[];     // e.g., ["ML", "backend", "senior"]
+  confidence: number;      // 0-1
+  source: string;          // What data it came from
+}
+
+/**
+ * Capability profile extracted from supply data.
+ */
+export interface CapabilityProfile {
+  category: 'engineering' | 'sales' | 'marketing' | 'recruiting' | 'finance' | 'operations' | 'growth' | 'general';
+  specifics: string[];     // e.g., ["tech recruiting", "startups"]
+  confidence: number;      // 0-1
+  source: string;          // What data it came from
+}
+
+/**
  * Neutral narrative for "why this match"
  * Used for match context without timing claims.
  */
@@ -69,6 +95,12 @@ export interface Match {
   reasons: string[];
   narrative?: MatchNarrative;  // PHASE-1 FIX: Optional neutral "why this match"
   buyerSellerValid?: boolean;  // Supply Truth Constraint: buyer-seller overlap validated
+
+  // NEW: TikTok-style confidence
+  tier: ConfidenceTier;
+  tierReason: string;           // Human-readable: "Hiring engineers → Tech recruiter"
+  needProfile?: NeedProfile;
+  capabilityProfile?: CapabilityProfile;
 }
 
 export interface SupplyAggregate {
@@ -126,7 +158,10 @@ export async function matchRecords(
   // Score every demand-supply pair with yielding
   for (const d of demand) {
     for (const s of supply) {
-      const { score, reasons, narrative, buyerSellerValid } = scoreMatch(d, s, mode);
+      const {
+        score, reasons, narrative, buyerSellerValid,
+        tier, tierReason, needProfile, capabilityProfile
+      } = scoreMatch(d, s, mode);
 
       // SUPPLY TRUTH CONSTRAINT: If buyer-seller mismatch, skip this pair
       if (buyerSellerValid === false) {
@@ -137,7 +172,18 @@ export async function matchRecords(
       }
 
       if (score > 0) {
-        allMatches.push({ demand: d, supply: s, score, reasons, narrative, buyerSellerValid });
+        allMatches.push({
+          demand: d,
+          supply: s,
+          score,
+          reasons,
+          narrative,
+          buyerSellerValid,
+          tier,
+          tierReason,
+          needProfile,
+          capabilityProfile,
+        });
       }
 
       comparisonCount++;
@@ -199,7 +245,10 @@ export function matchRecordsSync(
   // Score every demand-supply pair
   for (const d of demand) {
     for (const s of supply) {
-      const { score, reasons, narrative, buyerSellerValid } = scoreMatch(d, s, mode);
+      const {
+        score, reasons, narrative, buyerSellerValid,
+        tier, tierReason, needProfile, capabilityProfile
+      } = scoreMatch(d, s, mode);
 
       // SUPPLY TRUTH CONSTRAINT: If buyer-seller mismatch, skip
       if (buyerSellerValid === false) {
@@ -208,7 +257,18 @@ export function matchRecordsSync(
       }
 
       if (score > 0) {
-        allMatches.push({ demand: d, supply: s, score, reasons, narrative, buyerSellerValid });
+        allMatches.push({
+          demand: d,
+          supply: s,
+          score,
+          reasons,
+          narrative,
+          buyerSellerValid,
+          tier,
+          tierReason,
+          needProfile,
+          capabilityProfile,
+        });
       }
     }
   }
@@ -242,6 +302,344 @@ export function matchRecordsSync(
       avgScore,
     },
   };
+}
+
+// =============================================================================
+// NEED & CAPABILITY EXTRACTION (TikTok-style algorithm foundation)
+// =============================================================================
+
+type CategoryType = NeedProfile['category'];
+
+/**
+ * Extract NEED from demand signals.
+ * What does this company actually need?
+ *
+ * Sources (in priority order):
+ * 1. Job title/signal (strongest - explicit need)
+ * 2. Funding signal (general growth need)
+ * 3. Company description (inferred need)
+ */
+function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
+  const signal = toStringSafe(demand.signal).toLowerCase();
+  const title = toStringSafe(demand.title).toLowerCase();
+  const description = toStringSafe(demand.companyDescription).toLowerCase();
+  const funding = toStringSafe(demand.companyFunding).toLowerCase();
+
+  // Check job title/signal first (strongest signal)
+  const combined = `${signal} ${title}`;
+
+  // Engineering need
+  if (/engineer|developer|software|tech|cto|devops|backend|frontend|fullstack|ml|ai\b|data scientist/.test(combined)) {
+    const specifics: string[] = [];
+    if (/senior|staff|lead|principal/.test(combined)) specifics.push('senior');
+    if (/ml|machine learning|ai\b/.test(combined)) specifics.push('ML/AI');
+    if (/backend|server/.test(combined)) specifics.push('backend');
+    if (/frontend|react|ui/.test(combined)) specifics.push('frontend');
+    if (/fullstack|full-stack/.test(combined)) specifics.push('fullstack');
+    if (/devops|infra|platform/.test(combined)) specifics.push('infrastructure');
+
+    return {
+      category: 'engineering',
+      specifics,
+      confidence: 0.9,
+      source: 'job_signal'
+    };
+  }
+
+  // Sales need
+  if (/sales|account executive|ae\b|sdr|bdr|revenue|business development|closer/.test(combined)) {
+    const specifics: string[] = [];
+    if (/vp|head|director/.test(combined)) specifics.push('leadership');
+    if (/enterprise/.test(combined)) specifics.push('enterprise');
+    if (/smb|small/.test(combined)) specifics.push('SMB');
+
+    return {
+      category: 'sales',
+      specifics,
+      confidence: 0.9,
+      source: 'job_signal'
+    };
+  }
+
+  // Marketing need
+  if (/marketing|growth|brand|content|seo|paid|demand gen|cmg|gtm/.test(combined)) {
+    const specifics: string[] = [];
+    if (/head|vp|director/.test(combined)) specifics.push('leadership');
+    if (/content/.test(combined)) specifics.push('content');
+    if (/paid|performance/.test(combined)) specifics.push('paid');
+    if (/brand/.test(combined)) specifics.push('brand');
+
+    return {
+      category: 'marketing',
+      specifics,
+      confidence: 0.9,
+      source: 'job_signal'
+    };
+  }
+
+  // Finance need
+  if (/finance|cfo|accounting|controller|fp&a|bookkeep/.test(combined)) {
+    return {
+      category: 'finance',
+      specifics: [],
+      confidence: 0.9,
+      source: 'job_signal'
+    };
+  }
+
+  // Operations need
+  if (/operations|ops|coo|chief operating|supply chain|logistics/.test(combined)) {
+    return {
+      category: 'operations',
+      specifics: [],
+      confidence: 0.9,
+      source: 'job_signal'
+    };
+  }
+
+  // Recruiting/HR need
+  if (/recruiter|talent|hr\b|human resources|people ops/.test(combined)) {
+    return {
+      category: 'recruiting',
+      specifics: [],
+      confidence: 0.9,
+      source: 'job_signal'
+    };
+  }
+
+  // Funding signal = general growth need (matches many capabilities)
+  if (funding || /raised|funding|series|seed|round/.test(combined + ' ' + description)) {
+    return {
+      category: 'growth',
+      specifics: ['post-funding', 'scaling'],
+      confidence: 0.7,
+      source: 'funding_signal'
+    };
+  }
+
+  // No clear signal - general/exploratory
+  return {
+    category: 'general',
+    specifics: [],
+    confidence: 0.3,
+    source: 'none'
+  };
+}
+
+/**
+ * Extract CAPABILITY from supply data.
+ * What does this provider actually do?
+ *
+ * Sources (in priority order):
+ * 1. Company description (strongest)
+ * 2. Job title of contact
+ * 3. Company name
+ * 4. Industry field
+ */
+function extractCapabilityFromSupply(supply: NormalizedRecord): CapabilityProfile {
+  const description = toStringSafe(supply.companyDescription).toLowerCase();
+  const title = toStringSafe(supply.title).toLowerCase();
+  const company = toStringSafe(supply.company).toLowerCase();
+  const industry = toStringSafe(
+    Array.isArray(supply.industry) ? supply.industry[0] : supply.industry
+  ).toLowerCase();
+
+  const combined = `${description} ${title} ${company} ${industry}`;
+
+  // Recruiting capability
+  if (/recruit|staffing|talent|headhunt|placement|hiring/.test(combined)) {
+    const specifics: string[] = [];
+    if (/tech|engineer|software/.test(combined)) specifics.push('tech');
+    if (/executive|c-suite|leadership/.test(combined)) specifics.push('executive');
+    if (/sales/.test(combined)) specifics.push('sales');
+    if (/marketing/.test(combined)) specifics.push('marketing');
+    if (/finance/.test(combined)) specifics.push('finance');
+
+    const confidence = description.includes('recruit') ? 0.95 :
+      title.includes('recruit') ? 0.85 : 0.7;
+
+    return {
+      category: 'recruiting',
+      specifics,
+      confidence,
+      source: description.includes('recruit') ? 'description' :
+        title.includes('recruit') ? 'title' : 'company_name'
+    };
+  }
+
+  // Marketing capability
+  if (/marketing|agency|growth|brand|advertising|pr\b|communications|creative|media|seo|paid/.test(combined)) {
+    const specifics: string[] = [];
+    if (/startup|series|venture/.test(combined)) specifics.push('startups');
+    if (/enterprise|b2b/.test(combined)) specifics.push('enterprise');
+    if (/content/.test(combined)) specifics.push('content');
+    if (/paid|performance/.test(combined)) specifics.push('performance');
+    if (/brand/.test(combined)) specifics.push('brand');
+
+    const confidence = description.includes('marketing') || description.includes('agency') ? 0.9 :
+      company.includes('marketing') ? 0.8 : 0.6;
+
+    return {
+      category: 'marketing',
+      specifics,
+      confidence,
+      source: description ? 'description' : 'company_name'
+    };
+  }
+
+  // Engineering/Dev capability
+  if (/software|development|engineering|dev shop|tech|app|web|mobile|saas/.test(combined) &&
+    !/recruit/.test(combined)) {
+    const specifics: string[] = [];
+    if (/startup/.test(combined)) specifics.push('startups');
+    if (/enterprise/.test(combined)) specifics.push('enterprise');
+    if (/mobile|ios|android/.test(combined)) specifics.push('mobile');
+    if (/web|frontend/.test(combined)) specifics.push('web');
+
+    return {
+      category: 'engineering',
+      specifics,
+      confidence: 0.7,
+      source: 'description'
+    };
+  }
+
+  // Sales capability
+  if (/sales training|sales enablement|revenue|business development|lead gen/.test(combined)) {
+    return {
+      category: 'sales',
+      specifics: [],
+      confidence: 0.7,
+      source: 'description'
+    };
+  }
+
+  // Finance capability
+  if (/cfo|fractional|accounting|bookkeep|finance/.test(combined) && !/recruit/.test(combined)) {
+    return {
+      category: 'finance',
+      specifics: [],
+      confidence: 0.7,
+      source: 'description'
+    };
+  }
+
+  // Operations capability
+  if (/operations|consulting|strategy|advisory/.test(combined)) {
+    return {
+      category: 'operations',
+      specifics: [],
+      confidence: 0.5,
+      source: 'description'
+    };
+  }
+
+  // Growth - general consultants/agencies
+  if (/consultant|advisor|partner|agency/.test(combined)) {
+    return {
+      category: 'growth',
+      specifics: [],
+      confidence: 0.4,
+      source: 'title'
+    };
+  }
+
+  // Unknown capability
+  return {
+    category: 'general',
+    specifics: [],
+    confidence: 0.2,
+    source: 'none'
+  };
+}
+
+/**
+ * Calculate alignment score between need and capability.
+ * Returns 0-50 points based on how well they match.
+ */
+function scoreAlignment(need: NeedProfile, capability: CapabilityProfile): number {
+  // Direct category match = strong alignment
+  if (need.category === capability.category) {
+    return 50;
+  }
+
+  // Growth need matches most capabilities (funding = needs everything)
+  if (need.category === 'growth') {
+    // Better match for marketing/recruiting (common post-funding needs)
+    if (capability.category === 'marketing' || capability.category === 'recruiting') {
+      return 40;
+    }
+    // Still decent match for others
+    if (capability.category !== 'general') {
+      return 30;
+    }
+    return 20;
+  }
+
+  // Recruiting capability can serve many needs (they find the people)
+  if (capability.category === 'recruiting') {
+    if (['engineering', 'sales', 'marketing', 'finance', 'operations'].includes(need.category)) {
+      return 35;
+    }
+  }
+
+  // Cross-functional matches
+  const crossMatches: Record<string, string[]> = {
+    'engineering': ['recruiting', 'operations'],
+    'sales': ['marketing', 'recruiting'],
+    'marketing': ['sales', 'growth'],
+    'finance': ['operations', 'recruiting'],
+  };
+
+  if (crossMatches[need.category]?.includes(capability.category)) {
+    return 25;
+  }
+
+  // General matches general
+  if (need.category === 'general' || capability.category === 'general') {
+    return 15;
+  }
+
+  // Poor alignment
+  return 10;
+}
+
+/**
+ * Determine confidence tier based on score and profiles.
+ */
+function determineTier(
+  score: number,
+  need: NeedProfile,
+  capability: CapabilityProfile
+): { tier: ConfidenceTier; tierReason: string } {
+  // Build human-readable reason
+  const needLabel = need.category === 'growth' ? 'Raised funding' :
+    need.category === 'general' ? 'Active company' :
+      `Hiring ${need.category}`;
+
+  const capLabel = capability.category === 'general' ? 'Provider' :
+    capability.category === 'recruiting' ? 'Recruiter' :
+      capability.category === 'marketing' ? 'Marketing agency' :
+        capability.category === 'engineering' ? 'Dev shop' :
+          capability.category === 'sales' ? 'Sales consultant' :
+            capability.category === 'finance' ? 'Finance consultant' :
+              capability.category === 'growth' ? 'Growth partner' :
+                'Consultant';
+
+  const tierReason = `${needLabel} → ${capLabel}`;
+
+  // Determine tier based on score and confidence
+  const combinedConfidence = (need.confidence + capability.confidence) / 2;
+
+  if (score >= 70 && combinedConfidence >= 0.7) {
+    return { tier: 'strong', tierReason };
+  }
+
+  if (score >= 45 || (score >= 30 && combinedConfidence >= 0.5)) {
+    return { tier: 'good', tierReason };
+  }
+
+  return { tier: 'open', tierReason };
 }
 
 // =============================================================================
@@ -291,55 +689,142 @@ function buildNarrative(
 
 
 /**
+ * Score breakdown - logged for future learning replacement.
+ * Each component can be weighted/replaced by ML model.
+ */
+export interface ScoreBreakdown {
+  // Heuristic scores (Option A)
+  industryScore: number;
+  signalScore: number;
+  sizeScore: number;
+  alignmentScore: number;
+  baseScore: number;
+
+  // Profiles for future learning (Option B)
+  needProfile: NeedProfile;
+  capabilityProfile: CapabilityProfile;
+
+  // Final
+  totalScore: number;
+  tier: ConfidenceTier;
+  tierReason: string;
+}
+
+// Log scores for future analysis (Option B preparation)
+const SCORE_LOG_ENABLED = true;
+const scoreLog: ScoreBreakdown[] = [];
+
+/**
+ * Get score log for analysis (future learning)
+ */
+export function getScoreLog(): ScoreBreakdown[] {
+  return scoreLog;
+}
+
+/**
+ * Clear score log (call between runs)
+ */
+export function clearScoreLog(): void {
+  scoreLog.length = 0;
+}
+
+/**
  * Score a demand-supply pair.
  *
+ * ARCHITECTURE FOR LEARNING:
+ * - Every score component is logged separately
+ * - Profiles are extracted and stored
+ * - Future: Replace heuristic weights with learned weights
+ *
  * Factors:
- * - Industry match
- * - Signal relevance
- * - Size compatibility
- * - Buyer-seller overlap (SUPPLY TRUTH CONSTRAINT)
- * - (Future: historical success patterns)
+ * - Industry match (heuristic)
+ * - Signal relevance (heuristic)
+ * - Size compatibility (heuristic)
+ * - Need-Capability alignment (NEW - the core intelligence)
+ * - Buyer-seller overlap (mode-specific validation)
  */
 function scoreMatch(
   demand: NormalizedRecord,
   supply: NormalizedRecord,
   mode?: ConnectorMode
-): { score: number; reasons: string[]; narrative?: MatchNarrative; buyerSellerValid?: boolean } {
+): {
+  score: number;
+  reasons: string[];
+  narrative?: MatchNarrative;
+  buyerSellerValid?: boolean;
+  tier: ConfidenceTier;
+  tierReason: string;
+  needProfile: NeedProfile;
+  capabilityProfile: CapabilityProfile;
+} {
 
-  let score = 0;
   const reasons: string[] = [];
 
-  // Industry match (30 points)
+  // ==========================================================================
+  // STEP 1: Extract profiles (foundation for learning)
+  // ==========================================================================
+  const needProfile = extractNeedFromDemand(demand);
+  const capabilityProfile = extractCapabilityFromSupply(supply);
+
+  // ==========================================================================
+  // STEP 2: Heuristic scoring (replaceable by learning)
+  // ==========================================================================
+
+  // Industry match (0-30 points)
   const industryScore = scoreIndustry(demand.industry, supply.industry);
-  score += industryScore;
   if (industryScore > 20) {
     reasons.push('Industry match');
   }
 
-  // Signal relevance (40 points)
+  // Signal relevance (0-40 points) - LEGACY, being replaced by alignment
   const signalScore = scoreSignal(demand.signal, supply.title, supply.industry);
-  score += signalScore;
   if (signalScore > 25) {
     reasons.push('Signal alignment');
   }
 
-  // Size compatibility (20 points)
+  // Size compatibility (0-20 points)
   const sizeScore = scoreSize(demand.size, supply.size);
-  score += sizeScore;
   if (sizeScore > 10) {
     reasons.push('Size fit');
   }
 
-  // Base relevance (10 points if any match)
-  if (score > 0) {
-    score += 10;
-    reasons.push('Base relevance');
+  // ==========================================================================
+  // STEP 3: Need-Capability alignment (THE CORE INTELLIGENCE)
+  // This is what TikTok-style learning will optimize
+  // ==========================================================================
+  const alignmentScore = scoreAlignment(needProfile, capabilityProfile);
+  if (alignmentScore >= 40) {
+    reasons.push(`${needProfile.category} need → ${capabilityProfile.category} capability`);
+  } else if (alignmentScore >= 25) {
+    reasons.push('Cross-functional fit');
   }
 
   // ==========================================================================
-  // SUPPLY TRUTH CONSTRAINT: Buyer-seller overlap validation
-  // If mode is provided, validate that supply's buyers overlap with demand type
-  // If invalid → score = 0, no narrative, buyerSellerValid = false
+  // STEP 4: Calculate total score
+  // WEIGHTS: Can be replaced by learned weights in Option B
+  // ==========================================================================
+  const WEIGHTS = {
+    industry: 0.15,      // 15% - less important than alignment
+    signal: 0.15,        // 15% - legacy, will reduce
+    size: 0.10,          // 10% - minor factor
+    alignment: 0.50,     // 50% - THE MAIN FACTOR
+    base: 0.10,          // 10% - everyone gets some score
+  };
+
+  const baseScore = 10; // Everyone gets 10 points base
+
+  let totalScore =
+    (industryScore * WEIGHTS.industry) +
+    (signalScore * WEIGHTS.signal) +
+    (sizeScore * WEIGHTS.size) +
+    (alignmentScore * WEIGHTS.alignment) +
+    (baseScore * WEIGHTS.base);
+
+  // Normalize to 0-100
+  totalScore = Math.round(totalScore);
+
+  // ==========================================================================
+  // STEP 5: Buyer-seller validation (mode-specific, tags don't kill)
   // ==========================================================================
   let buyerSellerValid: boolean | undefined;
 
@@ -360,22 +845,60 @@ function scoreMatch(
 
     buyerSellerValid = validation.valid;
 
+    // TAG, DON'T KILL — mismatch becomes soft warning, not blocker
     if (!validation.valid) {
-      // SUPPLY TRUTH CONSTRAINT: Mismatch detected
-      // Return score 0, no narrative, mark as invalid
-      return {
-        score: 0,
-        reasons: [validation.reason || 'BUYER_SELLER_MISMATCH'],
-        narrative: undefined,
-        buyerSellerValid: false,
-      };
+      reasons.push('Soft match — may need positioning');
     }
   }
 
-  // Build neutral narrative for intro context
-  const narrative = score > 0 ? buildNarrative(demand, supply, reasons) : undefined;
+  // ==========================================================================
+  // STEP 6: Determine confidence tier
+  // ==========================================================================
+  const { tier, tierReason } = determineTier(totalScore, needProfile, capabilityProfile);
 
-  return { score: Math.min(score, 100), reasons, narrative, buyerSellerValid };
+  // Ensure minimum score of 1 (never zero - graceful degradation)
+  if (totalScore === 0) {
+    totalScore = 1;
+    reasons.push('Exploratory match');
+  }
+
+  // Build narrative
+  const narrative = buildNarrative(demand, supply, reasons);
+
+  // ==========================================================================
+  // STEP 7: Log for future learning (Option B preparation)
+  // ==========================================================================
+  if (SCORE_LOG_ENABLED) {
+    const breakdown: ScoreBreakdown = {
+      industryScore,
+      signalScore,
+      sizeScore,
+      alignmentScore,
+      baseScore,
+      needProfile,
+      capabilityProfile,
+      totalScore,
+      tier,
+      tierReason,
+    };
+
+    // Keep log bounded (last 10000 scores)
+    if (scoreLog.length > 10000) {
+      scoreLog.shift();
+    }
+    scoreLog.push(breakdown);
+  }
+
+  return {
+    score: Math.min(totalScore, 100),
+    reasons,
+    narrative,
+    buyerSellerValid,
+    tier,
+    tierReason,
+    needProfile,
+    capabilityProfile,
+  };
 }
 
 /**

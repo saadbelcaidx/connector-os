@@ -71,6 +71,371 @@ export function hasCsvData(type: 'demand' | 'supply'): boolean {
 }
 
 // =============================================================================
+// CRUNCHBASE DETECTION & EXTRACTION (ISOLATED PATH)
+// =============================================================================
+
+/**
+ * STRICT Crunchbase record detection.
+ *
+ * Returns true ONLY if:
+ * 1. record.link is a string containing 'crunchbase.com/organization/'
+ * 2. record has org-level structure (name exists, no job/contact fields)
+ * 3. record has at least one Crunchbase-unique funding field (POSITIVE identifier)
+ *
+ * HARDENED: Detects by POSITIVE identifiers, not "missing fields".
+ * - Tolerates empty job_title (null or '') — Crunchbase may have this key
+ * - Requires funding fields to prevent false positives from future scrapers
+ */
+export function isCrunchbaseRecord(record: any): boolean {
+  if (!record || typeof record !== 'object') return false;
+
+  // STRICT fingerprint #1: Link must be Crunchbase organization permalink
+  const hasOrgLink =
+    typeof record.link === 'string' &&
+    record.link.includes('crunchbase.com/organization/');
+
+  if (!hasOrgLink) return false;
+
+  // STRICT fingerprint #2: Must have org-level structure
+  // Tolerate empty job_title (null or '') — Crunchbase may include this key
+  const hasOrgStructure =
+    typeof record.name === 'string' &&
+    record.name.length > 0 &&
+    (record.job_title == null || record.job_title === '') &&  // Allow null/empty
+    !record.job_id &&         // Wellfound has job_id
+    !record.first_name;       // B2B contacts have first_name
+
+  if (!hasOrgStructure) return false;
+
+  // STRICT fingerprint #3: Must have Crunchbase-unique funding fields (POSITIVE identifier)
+  // This prevents future scrapers with link+name from being misclassified
+  const hasCrunchFunding =
+    !!record.last_funding_at ||
+    !!record.last_equity_funding_type ||
+    !!record.last_equity_funding_total ||
+    !!record.last_funding_type ||
+    !!record.last_funding_total;
+
+  return hasCrunchFunding;
+}
+
+/**
+ * Extract Crunchbase org fields into the SAME shape as extractJobLikeFields().
+ *
+ * This is PURE INGESTION — no signals created here.
+ * Flow.tsx will create FUNDING_RECENT signals downstream.
+ *
+ * Returns object with identical keys to extractJobLikeFields() output:
+ * - companyName, companyUrl, title, locationText, industry, description, techStack, existingContact, raw
+ * Plus: schemaId for downstream routing
+ */
+export function extractCrunchbaseSignals(record: any): {
+  companyName: string;
+  companyUrl: string;
+  domain: string;  // Hostname extracted from companyUrl (e.g., 'acme.com')
+  title: string;
+  locationText: string;
+  industry: string;
+  description: string;
+  techStack: string[];
+  existingContact?: {
+    email?: string;
+    name?: string;
+    title?: string;
+    linkedin?: string;
+  };
+  raw: any;
+  // Crunchbase-specific: schemaId for downstream detection
+  schemaId: 'crunchbase-orgs';
+  // Crunchbase-specific: funding metadata (passed through to Flow.tsx)
+  fundingDate: string | null;
+  fundingType: string | null;
+  fundingAmount: number | null;
+} {
+  // Company name — direct field
+  const companyName = safeText(record.name) || 'Unknown Company';
+
+  // Company URL — nested under website.value
+  const companyUrl = safeText(record.website?.value || record.website || '');
+
+  // Domain — extract hostname from URL (e.g., 'https://acme.com/about' → 'acme.com')
+  let domain = '';
+  if (companyUrl) {
+    try {
+      // Remove protocol and extract hostname
+      domain = companyUrl
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .split('/')[0]
+        .split('?')[0]
+        .toLowerCase()
+        .trim();
+    } catch {
+      domain = '';
+    }
+  }
+
+  // Title — empty for org-level records (no job title)
+  const title = '';
+
+  // Location — from location_identifiers[].value array
+  const locations = record.location_identifiers || [];
+  const locationText = Array.isArray(locations)
+    ? locations.map((loc: any) => safeText(loc?.value || loc)).filter(Boolean).join(', ')
+    : '';
+
+  // Industry — from categories[].value or category_groups[].value
+  const categories = record.categories || record.category_groups || [];
+  const industry = Array.isArray(categories)
+    ? categories.map((cat: any) => safeText(cat?.value || cat)).filter(Boolean).join(', ')
+    : '';
+
+  // Description — short_description field
+  const description = safeText(record.short_description || '');
+
+  // Tech stack — not available in Crunchbase org data
+  const techStack: string[] = [];
+
+  // Existing contact — Crunchbase orgs don't have contacts (needs enrichment)
+  const existingContact = undefined;
+
+  // Funding metadata — passed through for Flow.tsx signal creation
+  const fundingDate = safeText(record.last_funding_at) || null;
+  const fundingType = safeText(record.last_equity_funding_type || record.last_funding_type) || null;
+  const fundingAmount = record.last_equity_funding_total?.value_usd
+    || record.last_funding_total?.value_usd
+    || null;
+
+  return {
+    companyName,
+    companyUrl,
+    domain,
+    title,
+    locationText,
+    industry,
+    description,
+    techStack,
+    existingContact,
+    raw: record,
+    // Crunchbase-specific
+    schemaId: 'crunchbase-orgs',
+    fundingDate,
+    fundingType,
+    fundingAmount,
+  };
+}
+
+// =============================================================================
+// CRUNCHBASE PEOPLE DETECTION & EXTRACTION (SUPPLY-INTENT, ISOLATED PATH)
+// =============================================================================
+
+/**
+ * STRICT Crunchbase People record detection.
+ *
+ * Returns true ONLY if:
+ * 1. record.link is a string containing 'crunchbase.com/person/'
+ * 2. record has person-specific fields (primary_job_title, primary_organization)
+ * 3. record does NOT have an email (supply-intent, requires enrichment)
+ *
+ * DOCTRINE: Crunchbase People is supply-INTENT, not actual supply.
+ * It becomes real supply only after successful enrichment.
+ */
+export function isCrunchbasePeopleRecord(record: any): boolean {
+  if (!record || typeof record !== 'object') return false;
+
+  // MANDATED: Detection based on Crunchbase-native structure, NOT record.link
+  // Do NOT require: record.link, fabricated URLs, enrichment, email
+  return (
+    record.type === 'person' &&
+    record.identifier?.entity_def_id === 'person' &&
+    typeof record.name === 'string' &&
+    record.name.length > 0
+  );
+}
+
+/**
+ * Extract Crunchbase People fields into the SAME shape as extractJobLikeFields().
+ *
+ * CRITICAL: Does NOT fabricate email. Supply-intent only.
+ * Flow guards will block routing until enrichment provides email.
+ *
+ * Returns object with:
+ * - fullName, title (primary_job_title), companyName (primary_organization.value)
+ * - companyUrl (derived if possible), locationText
+ * - schemaId: 'crunchbase-people'
+ * - metadata.requiresEnrichment: true
+ */
+export function extractCrunchbasePeopleSignals(record: any): {
+  companyName: string;
+  companyUrl: string;
+  domain: string;
+  title: string;
+  locationText: string;
+  industry: string;
+  description: string;
+  techStack: string[];
+  existingContact?: {
+    email?: string;
+    name?: string;
+    title?: string;
+    linkedin?: string;
+  };
+  raw: any;
+  schemaId: 'crunchbase-people';
+  fullName: string;
+  metadata: {
+    requiresEnrichment: true;
+    crunchbasePermalink: string;
+  };
+} {
+  // Full name — from first_name + last_name or name field
+  const firstName = safeText(record.first_name || '');
+  const lastName = safeText(record.last_name || '');
+  const fullName = firstName && lastName
+    ? `${firstName} ${lastName}`
+    : safeText(record.name || 'Unknown Person');
+
+  // Title — from primary_job_title
+  const title = safeText(record.primary_job_title || '');
+
+  // Company name — from primary_organization.value
+  const companyName = safeText(
+    record.primary_organization?.value ||
+    record.primary_organization?.name ||
+    record.primary_organization ||
+    ''
+  );
+
+  // Company URL — derive from primary_organization if available
+  const orgPermalink = safeText(record.primary_organization?.permalink || '');
+  const companyUrl = orgPermalink
+    ? `https://www.crunchbase.com/organization/${orgPermalink}`
+    : '';
+
+  // Domain — cannot derive without company URL, leave empty for enrichment
+  const domain = '';
+
+  // Location — from location_identifiers or location fields
+  const locations = record.location_identifiers || [];
+  const locationText = Array.isArray(locations)
+    ? locations.map((loc: any) => safeText(loc?.value || loc)).filter(Boolean).join(', ')
+    : safeText(record.location || '');
+
+  // Industry — not available at person level
+  const industry = '';
+
+  // Description — not available at person level
+  const description = '';
+
+  // Tech stack — not available
+  const techStack: string[] = [];
+
+  // Existing contact — NO EMAIL (this is the doctrine)
+  // Supply-intent requires enrichment before becoming real supply
+  const existingContact = {
+    name: fullName,
+    title: title,
+    // email: undefined — DO NOT FABRICATE
+  };
+
+  // Crunchbase permalink — derive from identifier.permalink if record.link is missing
+  const crunchbasePermalink =
+    record.link ??
+    (record.identifier?.permalink
+      ? `https://www.crunchbase.com/person/${record.identifier.permalink}`
+      : '');
+
+  return {
+    companyName,
+    companyUrl,
+    domain,
+    title,
+    locationText,
+    industry,
+    description,
+    techStack,
+    existingContact,
+    raw: record,
+    schemaId: 'crunchbase-people',
+    fullName,
+    metadata: {
+      requiresEnrichment: true,
+      crunchbasePermalink,
+    },
+  };
+}
+
+// =============================================================================
+// CRUNCHBASE INGESTION TEST (INLINE HARNESS)
+// =============================================================================
+
+/**
+ * Inline test harness for Crunchbase ingestion.
+ * Run with: import { runCrunchbaseIngestionTest } from './SignalsClient'; runCrunchbaseIngestionTest();
+ */
+export function runCrunchbaseIngestionTest(): void {
+  console.log('\n=== CRUNCHBASE INGESTION TEST ===\n');
+
+  // Test record: Crunchbase org
+  const crunchbaseRecord = {
+    name: 'Acme AI',
+    link: 'https://www.crunchbase.com/organization/acme-ai',
+    website: { value: 'https://acme-ai.com' },
+    last_funding_at: '2024-12-01',
+    last_equity_funding_type: 'Series A',
+    last_equity_funding_total: { value_usd: 10000000 },
+    categories: [{ value: 'Artificial Intelligence' }, { value: 'Machine Learning' }],
+    location_identifiers: [{ value: 'San Francisco' }, { value: 'California' }, { value: 'United States' }],
+    short_description: 'AI-powered automation platform',
+  };
+
+  // Test record: Wellfound job (should NOT match)
+  const wellfoundRecord = {
+    job_id: '12345',
+    job_title: 'Senior Engineer',
+    company: { name: 'TechCorp', url: 'https://techcorp.com' },
+    job_url: 'https://wellfound.com/jobs/12345',
+  };
+
+  // Test record: LeadsFinder contact (should NOT match)
+  const leadsFinderRecord = {
+    first_name: 'John',
+    last_name: 'Doe',
+    email: 'john@company.com',
+    company_name: 'Company Inc',
+    company_domain: 'company.com',
+    job_title: 'CEO',
+  };
+
+  // Test 1: Crunchbase detection
+  const isCrunchbase = isCrunchbaseRecord(crunchbaseRecord);
+  console.log(`✓ isCrunchbaseRecord(crunchbaseRecord): ${isCrunchbase === true ? 'PASS' : 'FAIL'} (expected: true, got: ${isCrunchbase})`);
+
+  // Test 2: Wellfound should NOT be detected as Crunchbase
+  const isWellfoundCrunchbase = isCrunchbaseRecord(wellfoundRecord);
+  console.log(`✓ isCrunchbaseRecord(wellfoundRecord): ${isWellfoundCrunchbase === false ? 'PASS' : 'FAIL'} (expected: false, got: ${isWellfoundCrunchbase})`);
+
+  // Test 3: LeadsFinder should NOT be detected as Crunchbase
+  const isLeadsFinderCrunchbase = isCrunchbaseRecord(leadsFinderRecord);
+  console.log(`✓ isCrunchbaseRecord(leadsFinderRecord): ${isLeadsFinderCrunchbase === false ? 'PASS' : 'FAIL'} (expected: false, got: ${isLeadsFinderCrunchbase})`);
+
+  // Test 4: Crunchbase extraction
+  const extracted = extractCrunchbaseSignals(crunchbaseRecord);
+  console.log(`✓ schemaId: ${extracted.schemaId === 'crunchbase-orgs' ? 'PASS' : 'FAIL'} (expected: 'crunchbase-orgs', got: '${extracted.schemaId}')`);
+  console.log(`✓ companyName: ${extracted.companyName === 'Acme AI' ? 'PASS' : 'FAIL'} (expected: 'Acme AI', got: '${extracted.companyName}')`);
+  console.log(`✓ companyUrl: ${extracted.companyUrl === 'https://acme-ai.com' ? 'PASS' : 'FAIL'} (expected: 'https://acme-ai.com', got: '${extracted.companyUrl}')`);
+  console.log(`✓ fundingDate: ${extracted.fundingDate === '2024-12-01' ? 'PASS' : 'FAIL'} (expected: '2024-12-01', got: '${extracted.fundingDate}')`);
+  console.log(`✓ fundingType: ${extracted.fundingType === 'Series A' ? 'PASS' : 'FAIL'} (expected: 'Series A', got: '${extracted.fundingType}')`);
+  console.log(`✓ industry includes AI: ${extracted.industry.includes('Artificial Intelligence') ? 'PASS' : 'FAIL'}`);
+  console.log(`✓ locationText includes SF: ${extracted.locationText.includes('San Francisco') ? 'PASS' : 'FAIL'}`);
+
+  // Test 5: Title is empty (org-level, no job)
+  console.log(`✓ title is empty: ${extracted.title === '' ? 'PASS' : 'FAIL'} (expected: '', got: '${extracted.title}')`);
+
+  console.log('\n=== CRUNCHBASE INGESTION TEST COMPLETE ===\n');
+}
+
+// =============================================================================
 // UNIVERSAL APIFY PAYLOAD NORMALIZERS
 // =============================================================================
 
@@ -794,8 +1159,37 @@ export async function fetchJobSignals(
       };
     }
 
-    // Extract job fields from each item
-    const jobs = items.map(item => extractJobLikeFields(item));
+    // Extract fields from each item — BRANCH BY SCHEMA
+    // Priority order: Crunchbase People → Crunchbase Orgs → Job/Contact
+    const jobs = items.map(item => {
+      // Check Crunchbase People FIRST (person permalink + no email)
+      if (isCrunchbasePeopleRecord(item)) {
+        // Crunchbase person — supply-intent, requires enrichment
+        return extractCrunchbasePeopleSignals(item);
+      }
+      // Check Crunchbase Orgs (org permalink + funding)
+      if (isCrunchbaseRecord(item)) {
+        // Crunchbase org record — use isolated extraction path
+        return extractCrunchbaseSignals(item);
+      }
+      // Job/contact record — use existing extraction (unchanged)
+      return extractJobLikeFields(item);
+    });
+
+    // Log schema distribution (detects misclassification, protects against future scrapers)
+    const countCrunchbaseOrgs = jobs.filter((j: any) => j.schemaId === 'crunchbase-orgs').length;
+    const countCrunchbasePeople = jobs.filter((j: any) => j.schemaId === 'crunchbase-people').length;
+    const countContacts = jobs.filter((j: any) => !j.schemaId && j.existingContact?.email).length;
+    const countJobs = jobs.length - countCrunchbaseOrgs - countCrunchbasePeople - countContacts;
+    console.info('[Ingestion]', {
+      ingestionSummary: {
+        crunchbaseOrgs: countCrunchbaseOrgs,
+        crunchbasePeople: countCrunchbasePeople,
+        jobs: countJobs,
+        contacts: countContacts,
+        total: jobs.length,
+      }
+    });
 
     // Apply filters if configured
     let filteredJobs = jobs;
@@ -828,7 +1222,8 @@ export async function fetchJobSignals(
 
     // Transform to format MatchingEngineV3 expects
     // IMPORTANT: Include existingContact, industry, description, techStack - these save API calls
-    const normalizedJobs = filteredJobs.map(job => ({
+    // Crunchbase records also include: schemaId, fundingDate, fundingType, fundingAmount
+    const normalizedJobs = filteredJobs.map((job: any) => ({
       company: { name: job.companyName, url: job.companyUrl },
       company_name: job.companyName,
       employer_name: job.companyName,
@@ -841,6 +1236,11 @@ export async function fetchJobSignals(
       // Pre-extracted contact from dataset - skip enrichment if available
       existingContact: job.existingContact,
       raw: job.raw,
+      // Crunchbase-specific fields (only present for schemaId === 'crunchbase-orgs')
+      ...(job.schemaId && { schemaId: job.schemaId }),
+      ...(job.fundingDate && { fundingDate: job.fundingDate }),
+      ...(job.fundingType && { fundingType: job.fundingType }),
+      ...(job.fundingAmount && { fundingAmount: job.fundingAmount }),
     }));
 
     return {

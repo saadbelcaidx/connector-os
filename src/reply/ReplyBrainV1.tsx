@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Copy, Check, Loader2, AlertCircle, Plus, Trash2, MessageSquare,
+  ArrowLeft, Copy, Check, Loader2, AlertCircle, Plus, Trash2, MessageSquare, Mail,
   Bug, X, ChevronDown, Send, Calendar, Zap, Sparkles, ChevronRight,
   Brain, Target, Activity, Clock, Shield, TrendingUp, BarChart3, Lock, ExternalLink
 } from 'lucide-react';
@@ -726,10 +726,10 @@ export default function ReplyBrainV1() {
 
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 border border-violet-500/20 flex items-center justify-center">
-                  <span className="text-lg font-serif text-violet-400">Ψ</span>
+                  <Mail size={18} className="text-violet-400" />
                 </div>
                 <div>
-                  <h1 className="text-[15px] font-semibold text-white/90 tracking-[-0.01em]">Psyche</h1>
+                  <h1 className="text-[15px] font-semibold text-white/90 tracking-[-0.01em]">Msg Simulator</h1>
                   <p className="text-[11px] text-white/40">The seven minds</p>
                 </div>
               </div>
@@ -757,7 +757,7 @@ export default function ReplyBrainV1() {
 
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 border border-violet-500/20">
                 <div className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400 animate-pulse" />
-                <span className="text-[11px] font-medium text-violet-300">Ψ</span>
+                <Mail size={12} className="text-violet-300" />
               </div>
 
               <div className="h-4 w-px bg-white/[0.08]" />

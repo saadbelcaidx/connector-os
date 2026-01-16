@@ -15,32 +15,30 @@ import { supabase } from '../lib/supabase';
 export interface CachedContact {
   domain: string;
   email: string;
-  name?: string;
+  first_name?: string;
+  last_name?: string;
   title?: string;
-  linkedin?: string;
-  company_name?: string;
-  source: 'apollo' | 'anymailfinder' | 'apify';
+  source: 'apollo' | 'anymail' | 'existing';
   enriched_at: string;
-  last_verified_at?: string;
-  verification_status: 'verified' | 'risky' | 'invalid' | 'unverified';
+  verified: boolean;
 }
 
 // 30 days in milliseconds
 const STALE_THRESHOLD_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Check if a contact's verification is stale (>30 days old)
+ * Check if a contact's enrichment is stale (>30 days old)
  */
 export function isVerificationStale(contact: CachedContact): boolean {
-  if (!contact.last_verified_at) return true;
-  const verifiedAt = new Date(contact.last_verified_at).getTime();
-  const age = Date.now() - verifiedAt;
+  if (!contact.enriched_at) return true;
+  const enrichedAt = new Date(contact.enriched_at).getTime();
+  const age = Date.now() - enrichedAt;
   return age > STALE_THRESHOLD_MS;
 }
 
 /**
  * Check if we have a cached contact for this domain
- * Returns the best contact (verified > risky > unverified, newest first)
+ * Returns the best contact (verified first, newest first)
  * Also indicates if re-verification is needed (stale > 30 days)
  */
 export async function getCachedContact(domain: string): Promise<CachedContact | null> {
@@ -51,7 +49,7 @@ export async function getCachedContact(domain: string): Promise<CachedContact | 
       .from('enriched_contacts')
       .select('*')
       .eq('domain', cleanDomain)
-      .order('verification_status', { ascending: true }) // verified first
+      .order('verified', { ascending: false }) // verified=true first
       .order('enriched_at', { ascending: false }) // newest first
       .limit(1);
 
@@ -66,7 +64,7 @@ export async function getCachedContact(domain: string): Promise<CachedContact | 
     if (stale) {
       console.log(`[ContactCache] ✓ HIT (STALE) for ${domain}: ${contact.email} - needs re-verification`);
     } else {
-      console.log(`[ContactCache] ✓ HIT for ${domain}: ${contact.email} (${contact.verification_status})`);
+      console.log(`[ContactCache] ✓ HIT for ${domain}: ${contact.email} (verified: ${contact.verified})`);
     }
 
     return contact;
@@ -93,20 +91,34 @@ export async function saveToCache(contact: {
   try {
     const cleanDomain = contact.domain.toLowerCase().replace(/^www\./, '');
 
+    // Parse name into first/last (table schema uses separate columns)
+    let firstName: string | undefined;
+    let lastName: string | undefined;
+    if (contact.name) {
+      const parts = contact.name.trim().split(/\s+/);
+      firstName = parts[0];
+      lastName = parts.length > 1 ? parts.slice(1).join(' ') : undefined;
+    }
+
+    // Map source to table's allowed values ('apollo', 'anymail', 'existing')
+    const sourceMap: Record<string, string> = {
+      'apollo': 'apollo',
+      'anymailfinder': 'anymail',
+      'apify': 'existing',
+    };
+
     const { error } = await supabase
       .from('enriched_contacts')
       .upsert({
         domain: cleanDomain,
         email: contact.email.toLowerCase(),
-        name: contact.name,
+        first_name: firstName,
+        last_name: lastName,
         title: contact.title,
-        linkedin: contact.linkedin,
-        company_name: contact.companyName,
-        source: contact.source,
-        verification_status: contact.verificationStatus || 'unverified',
-        last_verified_at: contact.verificationStatus === 'verified' ? new Date().toISOString() : null,
+        source: sourceMap[contact.source] || 'apollo',
+        verified: contact.verificationStatus === 'verified',
       }, {
-        onConflict: 'domain,email',
+        onConflict: 'domain',
       });
 
     if (error) {
@@ -133,8 +145,7 @@ export async function updateVerificationStatus(
     await supabase
       .from('enriched_contacts')
       .update({
-        verification_status: status,
-        last_verified_at: new Date().toISOString(),
+        verified: status === 'verified',
       })
       .eq('domain', cleanDomain)
       .eq('email', email.toLowerCase());

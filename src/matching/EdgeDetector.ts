@@ -17,6 +17,7 @@ import type { Edge } from '../schemas/Edge';
 
 const EDGE_PRIORITY = [
   'SCALING',
+  'FUNDING_RECENT',  // Crunchbase: recent funding event (within 90 days)
   'GROWTH',
   'EXPANSION',
   'LEADERSHIP_GAP',
@@ -25,6 +26,37 @@ const EDGE_PRIORITY = [
 ] as const;
 
 type EdgeType = typeof EDGE_PRIORITY[number];
+
+// =============================================================================
+// EDGE CLASSIFICATION — PRIMARY vs CONTEXTUAL
+// =============================================================================
+
+/**
+ * PRIMARY EDGES: Route-eligible. Can trigger COMPOSE on their own.
+ * These represent actionable demand with clear intent.
+ */
+const PRIMARY_EDGES: EdgeType[] = [
+  'SCALING',
+  'GROWTH',
+  'EXPANSION',
+  'LEADERSHIP_GAP',
+  'HIRING_PRESSURE',
+  'SUCCESSION',
+];
+
+/**
+ * CONTEXTUAL EDGES: Never route alone. Amplify primary edges.
+ * These represent context (funding, stage) not intent.
+ *
+ * DOCTRINE: Funding ≠ actionable demand. Funding is context, not intent.
+ * Routing on funding alone produces weak intros and kills trust.
+ */
+const CONTEXTUAL_EDGES: EdgeType[] = [
+  'FUNDING_RECENT',
+];
+
+// Crunchbase funding window (days)
+const FUNDING_WINDOW_DAYS = 90;
 
 // =============================================================================
 // CONFIDENCE VALUES
@@ -68,6 +100,64 @@ function detectScaling(demand: DemandRecord): DetectedEdge | null {
   }
 
   return null;
+}
+
+/**
+ * Check for FUNDING_RECENT edge.
+ * Condition: Crunchbase provenance + funding date within WINDOW_DAYS (90).
+ *
+ * DOCTRINE: Only fire for Crunchbase data with verified funding event.
+ * Evidence MUST be exact and factual (date + type if available).
+ */
+function detectFundingRecent(demand: DemandRecord): DetectedEdge | null {
+  // ONLY fire for Crunchbase provenance
+  if (!demand.metadata.crunchbaseProvenance) {
+    return null;
+  }
+
+  // Check for FUNDING_RECENT signal from Crunchbase
+  const fundingSignal = demand.signals.find(
+    s => s.type === 'FUNDING_RECENT' && s.source === 'crunchbase'
+  );
+
+  const fundingDate = fundingSignal?.value || demand.metadata.fundingDate;
+  const fundingType = demand.metadata.fundingType;
+
+  if (!fundingDate) {
+    return null;
+  }
+
+  // Parse and validate funding date
+  const fundingDateParsed = new Date(fundingDate);
+  if (isNaN(fundingDateParsed.getTime())) {
+    return null;  // Invalid date → NO_EDGE
+  }
+
+  // Check if within window
+  const now = new Date();
+  const daysSinceFunding = Math.floor(
+    (now.getTime() - fundingDateParsed.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  if (daysSinceFunding > FUNDING_WINDOW_DAYS) {
+    return null;  // Too old → NO_EDGE
+  }
+
+  // Build factual evidence string
+  const dateStr = fundingDateParsed.toISOString().split('T')[0];  // YYYY-MM-DD
+  let evidence: string;
+
+  if (fundingType) {
+    evidence = `raised ${fundingType} funding on ${dateStr}`;
+  } else {
+    evidence = `raised funding on ${dateStr}`;
+  }
+
+  return {
+    type: 'FUNDING_RECENT',
+    evidence,
+    confidence: CONFIDENCE.HIGH,
+  };
 }
 
 /**
@@ -208,13 +298,17 @@ function detectSuccession(demand: DemandRecord): DetectedEdge | null {
 /**
  * Detect the highest-priority edge from a demand record.
  *
+ * DOCTRINE: Contextual edges (FUNDING_RECENT) cannot route alone.
+ * They amplify primary edges but never initiate routing.
+ *
  * @param demand - DemandRecord to analyze
- * @returns Edge if verifiable signal exists, null otherwise
+ * @returns Edge if verifiable PRIMARY signal exists, null otherwise
  */
 export function detectEdge(demand: DemandRecord): Edge | null {
   // Run all detectors
   const detectors = [
     detectScaling,
+    detectFundingRecent,  // Crunchbase: recent funding event
     detectGrowth,
     detectExpansion,
     detectLeadershipGap,
@@ -235,15 +329,36 @@ export function detectEdge(demand: DemandRecord): Edge | null {
     return null;
   }
 
-  // Sort by priority (EDGE_PRIORITY order)
-  detected.sort((a, b) => {
+  // ==========================================================================
+  // CONTEXTUAL EDGE GATE
+  // ==========================================================================
+  // Separate primary edges from contextual edges
+  const primaryEdges = detected.filter(e => PRIMARY_EDGES.includes(e.type));
+  const contextualEdges = detected.filter(e => CONTEXTUAL_EDGES.includes(e.type));
+
+  // If ONLY contextual edges exist, return null (NO_EDGE)
+  // Contextual edges (funding) cannot trigger routing alone
+  if (primaryEdges.length === 0) {
+    return null;
+  }
+
+  // ==========================================================================
+  // RETURN HIGHEST PRIORITY PRIMARY EDGE
+  // ==========================================================================
+  // Sort primary edges by priority (EDGE_PRIORITY order)
+  primaryEdges.sort((a, b) => {
     const aIndex = EDGE_PRIORITY.indexOf(a.type);
     const bIndex = EDGE_PRIORITY.indexOf(b.type);
     return aIndex - bIndex;
   });
 
-  // Return highest priority edge
-  const best = detected[0];
+  // Return highest priority primary edge
+  // NOTE: Contextual edges (FUNDING_RECENT) can still be used for:
+  // - Evidence copy ("Given your recent Series B raise...")
+  // - Confidence modifiers
+  // - Intro personalization
+  // These are accessed via demand.metadata.fundingType, demand.metadata.fundingDate
+  const best = primaryEdges[0];
   return {
     type: best.type,
     evidence: best.evidence,

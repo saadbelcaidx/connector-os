@@ -141,6 +141,98 @@ const jobPostingVP: DemandRecord = {
   },
 };
 
+// =============================================================================
+// CRUNCHBASE TEST DATA
+// =============================================================================
+
+// Helper: Get date string X days ago
+function daysAgo(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString().split('T')[0];
+}
+
+// Demand: Crunchbase org with recent funding (within 90 days) - SHOULD trigger FUNDING_RECENT
+const crunchbaseRecentFunding: DemandRecord = {
+  domain: 'acme-ai.com',
+  company: 'Acme AI',
+  contact: '',  // Crunchbase has no contacts
+  email: '',
+  title: '',
+  industry: 'Artificial Intelligence',
+  signals: [
+    { type: 'FUNDING_RECENT', source: 'crunchbase', value: daysAgo(30) },
+    { type: 'FUNDING_EVENT', source: 'crunchbase', value: 'Series A' },
+  ],
+  metadata: {
+    crunchbaseProvenance: true,
+    fundingDate: daysAgo(30),
+    fundingType: 'Series A',
+    fundingUsd: 10000000,
+  },
+};
+
+// Demand: Crunchbase org with OLD funding (> 90 days) - should NOT trigger FUNDING_RECENT
+const crunchbaseOldFunding: DemandRecord = {
+  domain: 'oldstartup.com',
+  company: 'Old Startup Inc',
+  contact: '',
+  email: '',
+  title: '',
+  industry: 'Software',
+  signals: [
+    { type: 'FUNDING_RECENT', source: 'crunchbase', value: daysAgo(120) },  // 120 days ago
+  ],
+  metadata: {
+    crunchbaseProvenance: true,
+    fundingDate: daysAgo(120),
+    fundingType: 'Seed',
+  },
+};
+
+// Demand: Crunchbase org with NO funding date - should NOT trigger FUNDING_RECENT
+const crunchbaseNoFunding: DemandRecord = {
+  domain: 'unfunded.com',
+  company: 'Unfunded Corp',
+  contact: '',
+  email: '',
+  title: '',
+  industry: 'Consulting',
+  signals: [],  // No funding signals
+  metadata: {
+    crunchbaseProvenance: true,
+    // No fundingDate
+  },
+};
+
+// =============================================================================
+// CONTEXTUAL EDGE TEST DATA (FUNDING_RECENT + PRIMARY EDGE)
+// =============================================================================
+
+// Demand: Crunchbase org with recent funding + LEADERSHIP_GAP (primary edge)
+// SHOULD trigger LEADERSHIP_GAP (primary), not FUNDING_RECENT (contextual)
+const crunchbaseFundingPlusLeadership: DemandRecord = {
+  domain: 'funded-hiring.com',
+  company: 'Funded & Hiring Inc',
+  contact: '',
+  email: 'ceo@funded-hiring.com',
+  title: '',
+  industry: 'Technology',
+  signals: [
+    { type: 'FUNDING_RECENT', source: 'crunchbase', value: daysAgo(30) },
+    { type: 'FUNDING_EVENT', source: 'crunchbase', value: 'Series B' },
+    { type: 'VP_OPEN', source: 'job_posting' },  // Primary edge signal
+  ],
+  metadata: {
+    crunchbaseProvenance: true,
+    fundingDate: daysAgo(30),
+    fundingType: 'Series B',
+    fundingUsd: 25000000,
+    jobPostingProvenance: true,
+    vpOpen: true,
+  },
+};
+
 // Supply: Unrelated industry (low score)
 const unrelatedSupply: SupplyRecord = {
   domain: 'pizzashop.com',
@@ -289,6 +381,53 @@ test('B2B Contact Director title does NOT produce LEADERSHIP_GAP', () => {
 test('Job Posting VP title DOES produce LEADERSHIP_GAP', () => {
   const edge = detectEdge(jobPostingVP);
   // Edge should be LEADERSHIP_GAP because VP_OPEN signal has source: 'job_posting'
+  return edge !== null && edge.type === 'LEADERSHIP_GAP';
+});
+
+// =============================================================================
+// CRUNCHBASE FUNDING_RECENT TESTS (CRITICAL)
+// =============================================================================
+
+// Test 14: Crunchbase with recent funding ONLY returns null (contextual edge)
+// DOCTRINE: FUNDING_RECENT is contextual only — cannot route alone
+test('Crunchbase recent funding (30 days) alone returns null (contextual only)', () => {
+  const edge = detectEdge(crunchbaseRecentFunding);
+  // Edge should be null because FUNDING_RECENT is contextual, cannot route alone
+  return edge === null;
+});
+
+// Test 15: Crunchbase with OLD funding should NOT trigger FUNDING_RECENT
+test('Crunchbase old funding (120 days) does NOT produce edge', () => {
+  const edge = detectEdge(crunchbaseOldFunding);
+  // Edge should be null because funding is older than 90 days
+  const hasFundingRecent = edge !== null && edge.type === 'FUNDING_RECENT';
+  return hasFundingRecent === false;
+});
+
+// Test 16: Crunchbase with NO funding date should NOT trigger edge
+test('Crunchbase without funding date does NOT produce edge', () => {
+  const edge = detectEdge(crunchbaseNoFunding);
+  // Should be null - no funding date means no edge
+  return edge === null;
+});
+
+// =============================================================================
+// CONTEXTUAL EDGE DOCTRINE TESTS (CRITICAL)
+// =============================================================================
+
+// Test 17: FUNDING_RECENT only → DROP (contextual cannot route alone)
+// DOCTRINE: Funding ≠ actionable demand. Funding is context, not intent.
+test('FUNDING_RECENT only produces DROP (contextual cannot route alone)', () => {
+  const result = runMatchingPipeline(crunchbaseRecentFunding, [hightowerSupply]);
+  // Should DROP with NO_EDGE because FUNDING_RECENT alone cannot trigger routing
+  return result.dropped === true && result.reason === 'NO_EDGE';
+});
+
+// Test 18: FUNDING_RECENT + LEADERSHIP_GAP → returns primary edge (LEADERSHIP_GAP)
+// DOCTRINE: Contextual edges amplify primary edges, never initiate routing
+test('FUNDING_RECENT + LEADERSHIP_GAP returns primary edge (LEADERSHIP_GAP)', () => {
+  const edge = detectEdge(crunchbaseFundingPlusLeadership);
+  // Should return LEADERSHIP_GAP (primary edge), not FUNDING_RECENT (contextual)
   return edge !== null && edge.type === 'LEADERSHIP_GAP';
 });
 

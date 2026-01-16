@@ -64,6 +64,188 @@ function cleanCompanyName(name: string): string {
 }
 
 /**
+ * Extract capability from company name when no explicit capability exists.
+ * "All Star Incentive Marketing" → "marketing"
+ * "Colab" → "" (no signal)
+ */
+function extractCapabilityFromCompanyName(companyName: string): string {
+  const lower = (companyName || '').toLowerCase();
+
+  if (/marketing|growth|brand|creative|media|advertising|pr\b|communications/.test(lower)) {
+    return 'marketing';
+  }
+  if (/recruit|talent|staffing|hiring|headhunt|hr\b|people/.test(lower)) {
+    return 'recruiting';
+  }
+  if (/tech|software|dev|engineering|labs|digital|app|web|cloud|data|ai\b|ml\b/.test(lower)) {
+    return 'engineering';
+  }
+  if (/sales|revenue|consulting|advisory|partners|capital|ventures|invest/.test(lower)) {
+    return 'sales';
+  }
+  if (/finance|accounting|cfo|bookkeep|tax/.test(lower)) {
+    return 'finance';
+  }
+  if (/design|ux|ui|creative|studio/.test(lower)) {
+    return 'design';
+  }
+  if (/legal|law|compliance|counsel/.test(lower)) {
+    return 'legal';
+  }
+
+  return '';
+}
+
+/**
+ * Detect what the supplier does from their capability string.
+ */
+function detectSupplyCategory(capability: string): string {
+  const lower = (capability || '').toLowerCase();
+
+  if (/marketing|growth|gtm|demand gen|brand|content|seo|paid|advertising/i.test(lower)) {
+    return 'marketing';
+  }
+  if (/recruit|talent|hiring|staffing|headhunt/i.test(lower)) {
+    return 'recruiting';
+  }
+  if (/engineer|dev|software|tech|product|app|web|mobile/i.test(lower)) {
+    return 'engineering';
+  }
+  if (/sales|revenue|bd|business development|account/i.test(lower)) {
+    return 'sales';
+  }
+  if (/finance|cfo|accounting|bookkeeping|fractional/i.test(lower)) {
+    return 'finance';
+  }
+  if (/hr|people|culture|org design/i.test(lower)) {
+    return 'hr';
+  }
+  if (/design|creative|ux|ui|brand/i.test(lower)) {
+    return 'design';
+  }
+  if (/legal|compliance|counsel/i.test(lower)) {
+    return 'legal';
+  }
+  if (/ops|operations|strategy|consulting/i.test(lower)) {
+    return 'operations';
+  }
+
+  return 'general';
+}
+
+/**
+ * Build a bridge phrase that connects demand evidence to supply capability.
+ *
+ * PATTERN: Signal → Immediate Pressure → (implicit supply relevance)
+ *
+ * The bridge explains WHY the signal matters NOW, not just what happened.
+ * This is what separates a connector from a spammer.
+ */
+function buildBridge(evidence: string, capability: string): string {
+  const evLower = evidence.toLowerCase();
+  const supplyCategory = detectSupplyCategory(capability);
+
+  // =========================================================================
+  // FUNDING SIGNAL — Post-raise pressure is real and urgent
+  // =========================================================================
+  if (evLower.includes('funding') || evLower.includes('raised') || evLower.includes('series')) {
+    switch (supplyCategory) {
+      case 'marketing': return 'teams at this stage usually move fast on GTM experiments';
+      case 'recruiting': return 'leadership is often pressure-testing external partners early';
+      case 'engineering': return 'post-raise timelines usually compress — shipping speed matters';
+      case 'sales': return 'boards expect pipeline acceleration after a raise';
+      case 'finance': return 'investors usually want tighter financial ops post-close';
+      case 'hr': return 'scaling headcount post-raise usually strains people ops';
+      case 'design': return 'post-raise companies often rebrand or redesign fast';
+      case 'legal': return 'new capital usually triggers compliance reviews';
+      case 'operations': return 'post-raise growth usually exposes ops gaps quickly';
+      default: return 'teams at this stage usually move fast on partners';
+    }
+  }
+
+  // =========================================================================
+  // HIRING ENGINEERS — Internal bandwidth is tight
+  // =========================================================================
+  if ((evLower.includes('hiring') || evLower.includes('engineer') || evLower.includes('developer')) &&
+      (evLower.includes('engineer') || evLower.includes('developer') || evLower.includes('software') || evLower.includes('tech'))) {
+    switch (supplyCategory) {
+      case 'recruiting': return 'usually a sign internal bandwidth is tight';
+      case 'engineering': return 'teams hiring devs often need extra capacity while ramping';
+      case 'marketing': return 'eng hiring usually means product is ahead of GTM';
+      case 'sales': return 'tech hiring often signals product-market fit — sales follows';
+      default: return 'usually a sign internal bandwidth is tight';
+    }
+  }
+
+  // =========================================================================
+  // HIRING SALES — Pipeline needs to scale
+  // =========================================================================
+  if ((evLower.includes('hiring') || evLower.includes('sales') || evLower.includes('account')) &&
+      (evLower.includes('sales') || evLower.includes('account executive') || evLower.includes('revenue') || evLower.includes('bdr'))) {
+    switch (supplyCategory) {
+      case 'recruiting': return 'often means pipeline needs to scale quickly';
+      case 'sales': return 'sales hiring usually signals quota pressure';
+      case 'marketing': return 'sales expansion usually needs marketing air cover';
+      default: return 'often means pipeline needs to scale quickly';
+    }
+  }
+
+  // =========================================================================
+  // HIRING MARKETING — GTM is becoming priority
+  // =========================================================================
+  if ((evLower.includes('hiring') || evLower.includes('marketing') || evLower.includes('growth')) &&
+      (evLower.includes('marketing') || evLower.includes('growth') || evLower.includes('brand') || evLower.includes('content'))) {
+    switch (supplyCategory) {
+      case 'marketing': return 'usually means demand gen is becoming a priority';
+      case 'recruiting': return 'marketing hiring often precedes broader team expansion';
+      default: return 'usually means brand or demand gen is becoming a priority';
+    }
+  }
+
+  // =========================================================================
+  // GENERAL HIRING SIGNAL — Scaling pain
+  // =========================================================================
+  if (evLower.includes('hiring') || evLower.includes('open roles') || evLower.includes('job')) {
+    switch (supplyCategory) {
+      case 'marketing': return 'hiring surges often mean GTM needs to catch up';
+      case 'recruiting': return 'hiring at this pace usually strains internal recruiting';
+      case 'engineering': return 'hiring pushes often mean product timelines are tight';
+      case 'sales': return 'team growth usually signals revenue targets are climbing';
+      case 'finance': return 'headcount growth usually complicates financial ops';
+      case 'hr': return 'hiring velocity like this usually strains people ops';
+      case 'operations': return 'rapid hiring usually exposes process gaps';
+      default: return 'teams hiring this fast usually need outside help';
+    }
+  }
+
+  // =========================================================================
+  // INDUSTRY/SCALING SIGNAL — Competitive pressure
+  // =========================================================================
+  if (evLower.includes('scaling') || evLower.includes('growing in') || evLower.includes('expanding')) {
+    switch (supplyCategory) {
+      case 'marketing': return 'competitive markets tend to reward speed here';
+      case 'recruiting': return 'growth at this pace usually requires specialist recruiters';
+      case 'engineering': return 'scaling in competitive markets usually requires extra dev firepower';
+      case 'sales': return 'market expansion usually requires sales infrastructure fast';
+      default: return 'competitive markets tend to reward speed here';
+    }
+  }
+
+  // =========================================================================
+  // SOFT SIGNALS — Generic but still consequence-focused
+  // =========================================================================
+  switch (supplyCategory) {
+    case 'marketing': return 'companies showing this momentum often explore GTM partners';
+    case 'recruiting': return 'companies at this stage often explore outside recruiting help';
+    case 'engineering': return 'companies showing activity often explore dev partnerships';
+    case 'sales': return 'companies with this momentum often explore sales acceleration';
+    case 'finance': return 'companies at this stage often bring in finance specialists';
+    case 'hr': return 'companies scaling often bring in people ops help';
+    default: return 'companies showing this momentum often explore outside partners';
+  }
+}
+
+/**
  * Extract first name from full name.
  * Falls back to full contact name if no space found.
  */
@@ -157,15 +339,31 @@ function cleanDoubledPrepositions(text: string): string {
 /**
  * Check if text looks like a raw persona label (not a capability).
  * Personas describe WHO they target, not WHAT they do.
+ * Also catches job titles like "President of Company Name".
  */
 function isPersonaLabel(text: string): boolean {
   const lower = text.toLowerCase();
+
+  // Direct job title patterns
   const personaPatterns = [
-    'owner', 'founder', 'founding partner', 'ceo', 'cfo', 'cto',
-    'partner', 'principal', 'director', 'vp ', 'vice president',
-    'executive', 'c-level', 'c-suite', 'decision maker'
+    'owner', 'founder', 'founding partner', 'ceo', 'cfo', 'cto', 'coo', 'cmo',
+    'partner', 'principal', 'director', 'vp ', 'vice president', 'president',
+    'executive', 'c-level', 'c-suite', 'decision maker', 'managing director',
+    'head of', 'chief', 'chairman', 'board member'
   ];
-  return personaPatterns.some(p => lower.includes(p));
+
+  // Check direct patterns
+  if (personaPatterns.some(p => lower.includes(p))) {
+    return true;
+  }
+
+  // Catch "Title of Company" pattern (e.g., "President of All Star Incentive Marketing")
+  // This is a job title, not a capability
+  if (/^[a-z\s]+ of [a-z\s]+$/i.test(text.trim()) && text.length > 20) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -173,27 +371,33 @@ function isPersonaLabel(text: string): boolean {
  * Only uses actual capability from SupplyRecord, no invented claims.
  *
  * RULE: Do not output raw persona labels as capabilities.
- * If capability is a persona (who they target), use neutral fallback.
+ * If capability is a persona (who they target), try company name extraction first.
+ *
+ * FALLBACK CHAIN:
+ * 1. supplyRecord.capability (if not persona label)
+ * 2. extractCapabilityFromCompanyName(company) (if capability is persona or empty)
+ * 3. Neutral fallback: "They work with firms like yours."
  */
 function generateWhatTheyDo(supplyRecord: SupplyRecord): string {
   const capability = supplyRecord.capability || '';
 
-  // If empty, no line
-  if (!capability.trim()) {
-    return '';
+  // If capability exists and is NOT a persona label, use it
+  if (capability.trim() && !isPersonaLabel(capability)) {
+    const formatted = formatCapability(capability);
+    if (formatted) {
+      return `They help with ${formatted}.`;
+    }
   }
 
-  // If it's a persona label, use neutral fallback
-  if (isPersonaLabel(capability)) {
-    return 'They work with firms like yours.';
+  // Fallback: try extracting from company name
+  // "All Star Incentive Marketing" → "marketing"
+  const companyCapability = extractCapabilityFromCompanyName(supplyRecord.company || '');
+  if (companyCapability) {
+    return `They help with ${companyCapability}.`;
   }
 
-  const formatted = formatCapability(capability);
-  if (!formatted) {
-    return '';
-  }
-
-  return `They help with ${formatted}.`;
+  // Final fallback: neutral line
+  return 'They work with firms like yours.';
 }
 
 // =============================================================================
@@ -254,7 +458,12 @@ export function composeIntros(
     demandLines.push(whatTheyDo);
   }
 
-  demandLines.push(`${demandCompany} ${edge.evidence}.`);
+  // Bridge: demand evidence + supply capability = specific "why"
+  // Priority: capability → company name keywords → generic (NEVER use title - it's job title, not company capability)
+  const supplyCapability = supplyRecord.capability
+    || extractCapabilityFromCompanyName(supplyRecord.company)
+    || '';
+  demandLines.push(`${demandCompany} ${edge.evidence} — ${buildBridge(edge.evidence, supplyCapability)}.`);
   demandLines.push('');
   demandLines.push('Worth an intro?');
 
@@ -284,13 +493,20 @@ export function composeIntros(
   // Check if we have actual capability (not persona)
   const capability = supplyRecord.capability || '';
 
-  if (!capability.trim() || isPersonaLabel(capability)) {
-    // No real capability or it's a persona — use neutral fit line
-    fitReasonLine = 'Looks like a fit based on what you do.';
-  } else {
+  if (capability.trim() && !isPersonaLabel(capability)) {
     // Real capability — frame as why they fit
     const formatted = formatCapability(capability);
     fitReasonLine = `This aligns with your work in ${formatted}.`;
+  } else {
+    // Fallback: try extracting from company name
+    // "All Star Incentive Marketing" → "marketing"
+    const companyCapability = extractCapabilityFromCompanyName(supplyRecord.company || '');
+    if (companyCapability) {
+      fitReasonLine = `This fits your focus on ${companyCapability}.`;
+    } else {
+      // Final fallback: neutral fit line
+      fitReasonLine = 'Looks like a fit based on what you do.';
+    }
   }
 
   const supplyLines = [
