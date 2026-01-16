@@ -2799,6 +2799,28 @@ export default function Flow() {
                 const sendableCount = Math.min(demandEnriched, supplyEnriched);
 
                 // =============================================================
+                // EMAIL AVAILABILITY STATE (per directive)
+                // INVARIANT: If at least ONE email exists, CSV export MUST be available.
+                // Intro feasibility must NEVER gate email export.
+                // =============================================================
+                const demandEmailState: 'ALL' | 'PARTIAL' | 'NONE' =
+                  demandEnriched === 0 ? 'NONE' :
+                  demandEnriched === demandMatches.length ? 'ALL' : 'PARTIAL';
+                const demandWithoutEmail = demandMatches.length - demandEnriched;
+
+                // Matches WITH email (for CSV export)
+                const demandWithEmail = demandMatches.filter(m => {
+                  const e = state.enrichedDemand.get(m.demand.domain);
+                  return e && isSuccessfulEnrichment(e) && e.email;
+                });
+
+                // Matches WITHOUT email (for LinkedIn export)
+                const demandWithoutEmailList = demandMatches.filter(m => {
+                  const e = state.enrichedDemand.get(m.demand.domain);
+                  return !e || !isSuccessfulEnrichment(e) || !e.email;
+                });
+
+                // =============================================================
                 // ENRICHMENT STATUS HELPER — Maps outcome to simple label
                 // =============================================================
                 const getEnrichmentStatusLabel = (result: EnrichmentResult | undefined): { label: string; color: string } => {
@@ -2872,10 +2894,10 @@ export default function Flow() {
                       className="text-center mb-4"
                     >
                       <p className="text-[18px] font-light text-white/80">{matchCount} matches found</p>
-                      {enrichmentFailed ? (
-                        <p className="text-[12px] text-amber-400/70 mt-2">0 ready to send</p>
-                      ) : enrichmentPartial ? (
-                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} of {matchCount} ready to send</p>
+                      {demandEmailState === 'NONE' ? (
+                        <p className="text-[12px] text-white/40 mt-2">No public emails found</p>
+                      ) : demandEmailState === 'PARTIAL' ? (
+                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} emails · {demandWithoutEmail} need LinkedIn</p>
                       ) : (
                         <p className="text-[12px] text-white/40 mt-2">{demandEnriched} ready to send</p>
                       )}
@@ -2907,185 +2929,105 @@ export default function Flow() {
                       </motion.div>
                     )}
 
-                    {/* PHILEMON: Truth-Surfacing Cause Card */}
-                    {/* Show when matches exist but 0 sendable — explains WHY */}
-                    {(() => {
-                      const sendableCount = Math.min(demandEnriched, supplyEnriched);
-
-                      // Only show if: matches exist AND 0 sendable
-                      if (!(matchCount > 0 && sendableCount === 0)) {
-                        return null;
-                      }
-
-                      // Analyze causes from OUTCOME + INPUTS (no inference, no guessing)
-                      // Per user.txt: UI must render directly from outcome + inputs present
-
-                      // Group by outcome type
-                      const outcomesByType: Record<string, number> = {};
-                      const allResults = [
-                        ...Array.from(state.enrichedDemand.values()),
-                        ...Array.from(state.enrichedSupply.values()),
-                      ].filter((e): e is EnrichmentResult => !!e);
-
-                      for (const result of allResults) {
-                        if (!isSuccessfulEnrichment(result)) {
-                          outcomesByType[result.outcome] = (outcomesByType[result.outcome] || 0) + 1;
-                        }
-                      }
-
-                      // Count by cause (from outcome, not heuristics)
-                      const missingInputCount = outcomesByType['MISSING_INPUT'] || 0;
-                      const noCandidatesCount = outcomesByType['NO_CANDIDATES'] || 0;
-                      const noProvidersCount = outcomesByType['NO_PROVIDERS'] || 0;
-                      const errorCount = (outcomesByType['ERROR'] || 0) + (outcomesByType['AUTH_ERROR'] || 0) + (outcomesByType['RATE_LIMITED'] || 0);
-
-                      const hasMissingInput = missingInputCount > 0;
-                      const hasNoCandidates = noCandidatesCount > 0;
-                      const hasNoProviders = noProvidersCount > 0;
-                      const hasError = errorCount > 0;
-
-                      // If no identifiable cause, don't show card
-                      if (!hasMissingInput && !hasNoCandidates && !hasNoProviders && !hasError) {
-                        return null;
-                      }
-
-                      return (
-                        <motion.div
-                          initial={{ opacity: 0, y: 5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.25 }}
-                          className="mb-6 p-4 rounded-xl bg-amber-500/[0.04] border border-amber-500/[0.12] max-w-md"
-                        >
-                          {/* Header with Info icon — neutral amber tone */}
-                          <div className="flex items-center gap-2 mb-3">
-                            <Info className="w-4 h-4 text-amber-400/60" />
-                            <p className="text-[13px] text-white/80 font-medium">0 ready to send</p>
-                          </div>
-
-                          {/* Body — 2nd grade reading level */}
-                          <div className="space-y-2 text-[12px] text-white/60 mb-4">
-                            <p>These matches are real — but there's missing information.</p>
-                            <p>Connector OS can only send when there's a real person to contact.</p>
-                          </div>
-
-                          {/* Cause breakdown — from OUTCOME (no guessing) */}
-                          <div className="space-y-1.5 mb-4">
-                            {hasNoCandidates && (
-                              <div className="flex items-center gap-2 text-[11px] text-white/50">
-                                <span className="w-1 h-1 rounded-full bg-white/30" />
-                                <span>No public email exists ({noCandidatesCount})</span>
-                              </div>
-                            )}
-                            {hasMissingInput && (
-                              <div className="flex items-center gap-2 text-[11px] text-white/50">
-                                <span className="w-1 h-1 rounded-full bg-white/30" />
-                                <span>No website or company name found ({missingInputCount})</span>
-                              </div>
-                            )}
-                            {hasNoProviders && (
-                              <div className="flex items-center gap-2 text-[11px] text-white/50">
-                                <span className="w-1 h-1 rounded-full bg-white/30" />
-                                <span>No search providers configured ({noProvidersCount})</span>
-                              </div>
-                            )}
-                            {hasError && (
-                              <div className="flex items-center gap-2 text-[11px] text-white/50">
-                                <span className="w-1 h-1 rounded-full bg-white/30" />
-                                <span>Provider temporarily unavailable ({errorCount})</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Fix instructions — no tool names */}
-                          <div className="pt-3 border-t border-white/[0.06]">
-                            <p className="text-[11px] text-white/50 mb-2">To fix this:</p>
-                            <ul className="space-y-1 text-[11px] text-white/40">
-                              <li className="flex items-start gap-2">
-                                <span className="mt-1">•</span>
-                                <span>Make sure your dataset includes people (founder, CEO, head of X)</span>
-                              </li>
-                              <li className="flex items-start gap-2">
-                                <span className="mt-1">•</span>
-                                <span>Or include a company website so we can find the right person</span>
-                              </li>
-                            </ul>
-                          </div>
-
-                          {/* Optional actions — non-blocking */}
-                          <div className="flex gap-2 mt-4">
-                            <button
-                              onClick={() => window.open('/settings', '_blank')}
-                              className="px-3 py-1.5 text-[10px] text-white/50 hover:text-white/70
-                                bg-white/[0.04] hover:bg-white/[0.06] rounded-lg transition-colors"
-                            >
-                              Check dataset
-                            </button>
-                          </div>
-                        </motion.div>
-                      );
-                    })()}
-
-                    {/* Buttons — conditional on enrichment state */}
-                    {enrichmentFailed ? (
+                    {/* Info Card — Only shows when some matches don't have emails */}
+                    {demandWithoutEmail > 0 && demandEmailState === 'PARTIAL' && (
                       <motion.div
-                        initial={{ opacity: 0, y: 10 }}
+                        initial={{ opacity: 0, y: 5 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.3 }}
-                        className="flex flex-col items-center gap-3"
+                        transition={{ delay: 0.25 }}
+                        className="mb-6 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] max-w-sm"
                       >
+                        <p className="text-[12px] text-white/50 text-center">
+                          {demandWithoutEmail} {demandWithoutEmail === 1 ? 'match doesn\'t' : 'matches don\'t'} list public emails.
+                        </p>
+                      </motion.div>
+                    )}
+
+                    {/* Buttons — based on EMAIL AVAILABILITY STATE */}
+                    {/* INVARIANT: If at least ONE email exists, CSV export MUST be available */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.3 }}
+                      className="flex flex-col items-center gap-3"
+                    >
+                      {/* CSV Export — shows when ANY emails exist (STATE A or B) */}
+                      {demandEmailState !== 'NONE' && (
                         <button
                           onClick={() => {
-                            // Reset enrichment state and go back to enriching
-                            setState(prev => ({
-                              ...prev,
-                              step: 'enriching',
-                              enrichedDemand: new Map(),
-                              enrichedSupply: new Map(),
-                            }));
+                            const csvContent = [
+                              ['Company', 'Domain', 'Person', 'Title', 'Email'].join(','),
+                              ...demandWithEmail.map(m => {
+                                const e = state.enrichedDemand.get(m.demand.domain);
+                                return [
+                                  m.demand.companyName || '',
+                                  m.demand.domain || '',
+                                  e?.name || m.demand.existingContact?.name || '',
+                                  e?.title || m.demand.existingContact?.title || '',
+                                  e?.email || ''
+                                ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+                              })
+                            ].join('\n');
+                            const blob = new Blob([csvContent], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `email-outreach-${Date.now()}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
                           }}
                           className="px-6 py-2.5 bg-white text-black rounded-xl font-medium text-[13px]
                             hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
                         >
-                          Retry enrichment
+                          Export CSV ({demandEnriched} emails)
                         </button>
-                        <button
-                          onClick={() => window.open('/settings', '_blank')}
-                          className="px-4 py-2 text-[12px] text-white/40 hover:text-white/60 transition-colors"
-                        >
-                          Manage API keys
-                        </button>
-                      </motion.div>
-                    ) : (
-                      <>
-                        {/* STATE-AWARE button: disabled when no routable contacts */}
-                        <div className="relative group">
-                          <motion.button
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.3 }}
-                            onClick={regenerateIntros}
-                            disabled={sendableCount === 0}
-                            className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
-                              hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
-                              shadow-[0_0_20px_rgba(255,255,255,0.1)]
-                              disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                            whileHover={sendableCount > 0 ? { boxShadow: '0 0 30px rgba(255,255,255,0.15)' } : {}}
-                          >
-                            {sendableCount > 0 ? `Generate intros (${sendableCount})` : 'Generate intros'}
-                          </motion.button>
+                      )}
 
-                          {/* Tooltip — shows when disabled */}
-                          {sendableCount === 0 && (
-                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5
-                              bg-black/90 border border-white/10 rounded-lg text-[11px] text-white/70
-                              opacity-0 group-hover:opacity-100 transition-opacity duration-200
-                              whitespace-nowrap pointer-events-none">
-                              No routable contacts yet. Add people or websites.
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
+                      {/* LinkedIn Export — shows when ANY are missing emails (STATE B or C) */}
+                      {demandWithoutEmail > 0 && (
+                        <button
+                          onClick={() => {
+                            const csvContent = [
+                              ['Company', 'Domain', 'Person', 'Title', 'LinkedIn'].join(','),
+                              ...demandWithoutEmailList.map(m => [
+                                m.demand.companyName || '',
+                                m.demand.domain || '',
+                                m.demand.existingContact?.name || '',
+                                m.demand.existingContact?.title || '',
+                                m.demand.existingContact?.linkedin || ''
+                              ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+                            ].join('\n');
+                            const blob = new Blob([csvContent], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `linkedin-outreach-${Date.now()}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className={`px-6 py-2.5 rounded-xl font-medium text-[13px]
+                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
+                            ${demandEmailState === 'NONE'
+                              ? 'bg-white text-black'
+                              : 'bg-white/[0.08] text-white/80 hover:bg-white/[0.12]'
+                            }`}
+                        >
+                          Export LinkedIn ({demandWithoutEmail})
+                        </button>
+                      )}
+
+                      {/* Generate Intros — only when sendableCount > 0 */}
+                      {sendableCount > 0 && (
+                        <button
+                          onClick={regenerateIntros}
+                          className="px-6 py-2.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30
+                            rounded-xl font-medium text-[13px]
+                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+                        >
+                          Generate intros ({sendableCount})
+                        </button>
+                      )}
+                    </motion.div>
                   </div>
                 );
               })()}
