@@ -9,15 +9,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
 
 // New architecture
-import { validateDataset, normalizeDataset, NormalizedRecord, Schema } from './schemas';
+import { validateDataset, validateSupplyDataset, normalizeDataset, NormalizedRecord, Schema } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
-import { enrichRecord, enrichBatch, EnrichmentConfig, EnrichmentResult, Signals } from './enrichment';
+import {
+  enrichRecord,
+  enrichBatch,
+  EnrichmentConfig,
+  EnrichmentResult,
+  EnrichmentOutcome,
+  isSuccessfulEnrichment,
+  getOutcomeExplanation,
+  getActionExplanation,
+} from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
 // Deterministic Pipeline Components — Edge Preflight + Compose
@@ -56,39 +65,26 @@ import {
   saveGuestAnnotation,
 } from './services/SupplyAnnotationService';
 
-// Connector Mode — Deterministic supply filter builder (FIX 1 + FIX 2)
-import {
-  ConnectorMode,
-  detectConnectorMode,
-  buildSupplyFilters,
-  validateSupplyRecord,
-  getModeLabel,
-  MODE_LABELS,
-  getModesForUI,
-} from './services/SupplyFilterBuilder';
+// Match Events — Behavioral learning infrastructure (Option B)
+import { logMatchSent, MatchEventData } from './services/MatchEventsService';
 
-// Enterprise Validation — Copy validation, evidence gates
+// PHILEMON — Ground Truth UI System (Phase 0-5)
 import {
-  getModeContract,
-  getAvailableModes,
-  MODE_REGISTRY_VERSION,
-  getPresignalExamples,
-  getModeDocsAnchor,
-} from './services/ConnectorModeRegistry';
+  deriveUiState,
+  deriveTruthCounters,
+  logStateSnapshot,
+  buildDeriveInput,
+} from './flow/uiState';
 import {
-  buildEvidenceSet,
-  emptyEvidenceSet,
-  type EvidenceSet,
-} from './services/EvidenceGate';
+  preflightDataset,
+  isRoutable,
+  type DatasetPreflight,
+} from './flow/datasetIntrospection';
 import {
-  validateCopy,
-  canSend,
-  type CopyValidationResult,
-  hasPresignal,
-  containsActivityTimingLanguage,
-  getPresignalStatus,
-  COPY_ERROR_CODES,
-} from './services/CopyValidator';
+  buildEnrichmentPlan,
+  type EnrichmentPlan,
+  type ProviderName,
+} from './flow/enrichmentPlan';
 
 // Observability
 import {
@@ -228,14 +224,56 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
     }
   }
 
-  // Funding from company data
-  if (normalized.companyFunding) {
+  // ==========================================================================
+  // CRUNCHBASE ORGANIZATIONS — Funding signals from Crunchbase data
+  // ==========================================================================
+  const isCrunchbase = normalized.schemaId === 'crunchbase-orgs';
+  const raw = normalized.raw || {};
+
+  if (isCrunchbase) {
+    // Extract funding date and type from raw Crunchbase data
+    const fundingDate = raw.last_funding_at || null;
+    const fundingType = raw.last_funding_type || raw.last_equity_funding_type || null;
+    const fundingUsd = raw.last_funding_total?.value_usd || raw.last_equity_funding_total?.value_usd || null;
+
+    // Mark as Crunchbase provenance for edge detection
+    metadata.crunchbaseProvenance = true;
+    metadata.crunchbaseLink = raw.link || null;
+    metadata.fundingStage = raw.funding_stage || null;
+    metadata.numFundingRounds = raw.num_funding_rounds || null;
+    metadata.employeeEnum = raw.num_employees_enum || null;
+    metadata.revenueRange = raw.revenue_range || null;
+
+    // Extract founder names for enrichment target
+    const founderIdentifiers = raw.founder_identifiers || [];
+    if (Array.isArray(founderIdentifiers) && founderIdentifiers.length > 0) {
+      metadata.founderNames = founderIdentifiers.map((f: any) => f.value || f).filter(Boolean);
+    }
+
+    // Create funding signals with Crunchbase provenance
+    if (fundingDate) {
+      signals.push({ type: 'FUNDING_RECENT', source: 'crunchbase', value: fundingDate });
+      metadata.fundingDate = fundingDate;
+    }
+    if (fundingType) {
+      signals.push({ type: 'FUNDING_EVENT', source: 'crunchbase', value: fundingType });
+      metadata.fundingType = fundingType;
+    }
+    if (fundingUsd) {
+      metadata.fundingUsd = fundingUsd;
+    }
+
+    // NOTE: Do NOT create VP_OPEN / LEADERSHIP_OPEN / C_LEVEL_OPEN for Crunchbase
+    // Crunchbase is company data, not job posting data
+  }
+
+  // Funding from company data (generic - non-Crunchbase)
+  if (!isCrunchbase && normalized.companyFunding) {
     signals.push({ type: 'FUNDING', value: normalized.companyFunding, source: 'company' });
     metadata.hasFunding = true;
   }
 
   // Growth indicators from raw data
-  const raw = normalized.raw || {};
   if (raw.company?.inc_5000 || raw.inc_5000) {
     signals.push({ type: 'INC_5000', value: 'true', source: 'raw' });
     metadata.inc5000 = true;
@@ -426,7 +464,7 @@ function buildDemandExportRows(data: ExportData): (string | null)[][] {
     const enriched = data.enrichedDemand.get(domain);
 
     // Same filter as routing: must have email
-    if (!enriched?.success || !enriched.email) continue;
+    if (!enriched || !isSuccessfulEnrichment(enriched) || !enriched.email) continue;
 
     const intro = data.demandIntros.get(domain) || '';
     if (!intro) continue; // No intro = wouldn't be sent
@@ -441,7 +479,8 @@ function buildDemandExportRows(data: ExportData): (string | null)[][] {
       intro,
       cleanCompanyName(match.supply.company),
       String(match.score),
-      match.reasons.join('; '),
+      match.tierReason || match.reasons.join('; '),  // Use tierReason for human-readable match reason
+      match.tier || 'open',  // Confidence tier
     ]);
   }
 
@@ -462,7 +501,7 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
     const enriched = data.enrichedSupply.get(domain);
 
     // Same filter as routing: must have email
-    if (!enriched?.success || !enriched.email) continue;
+    if (!enriched || !isSuccessfulEnrichment(enriched) || !enriched.email) continue;
 
     const intro = data.supplyIntros.get(domain) || '';
     if (!intro) continue; // No intro = wouldn't be sent
@@ -490,64 +529,44 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
 
 /**
  * Detect common signal category across multiple matches.
- * MODE-AWARE: Uses appropriate language per connector mode.
- * - recruiting: "hiring engineers", "scaling sales"
- * - biotech: "licensing opportunities", "partnership activity"
- * - other: "activity", "momentum"
+ * Analyzes signal text to find the dominant category.
  */
-function detectCommonSignal(signals: string[], mode?: ConnectorMode | null): string {
-  // Mode-specific defaults (avoid "hiring" for non-recruiting modes)
-  const MODE_DEFAULTS: Record<string, string> = {
-    recruiting: 'hiring',
-    biotech_licensing: 'licensing activity',
-    wealth_management: 'growth activity',
-    real_estate_capital: 'deal activity',
-    enterprise_partnerships: 'partnership activity',
-    logistics: 'operational activity',
-    crypto: 'protocol activity',
-    custom: 'activity',
-  };
+function detectCommonSignal(signals: string[]): string {
+  if (signals.length === 0) return 'activity';
 
-  const defaultSignal = MODE_DEFAULTS[mode || ''] || 'activity';
+  const categories: Record<string, number> = {};
 
-  if (signals.length === 0) return defaultSignal;
+  for (const signal of signals) {
+    const lower = (signal || '').toLowerCase();
 
-  // For recruiting mode, use detailed hiring categories
-  if (mode === 'recruiting') {
-    const categories: Record<string, number> = {};
-
-    for (const signal of signals) {
-      const lower = (signal || '').toLowerCase();
-
-      if (lower.includes('engineer') || lower.includes('developer') || lower.includes('software')) {
-        categories['hiring engineers'] = (categories['hiring engineers'] || 0) + 1;
-      } else if (lower.includes('sales') || lower.includes('account executive')) {
-        categories['scaling sales'] = (categories['scaling sales'] || 0) + 1;
-      } else if (lower.includes('marketing') || lower.includes('growth')) {
-        categories['growing marketing'] = (categories['growing marketing'] || 0) + 1;
-      } else if (lower.includes('product') || lower.includes('design')) {
-        categories['building product'] = (categories['building product'] || 0) + 1;
-      } else if (lower.includes('data') || lower.includes('analyst')) {
-        categories['hiring data teams'] = (categories['hiring data teams'] || 0) + 1;
-      } else {
-        categories['hiring'] = (categories['hiring'] || 0) + 1;
-      }
+    if (lower.includes('engineer') || lower.includes('developer') || lower.includes('software')) {
+      categories['hiring engineers'] = (categories['hiring engineers'] || 0) + 1;
+    } else if (lower.includes('sales') || lower.includes('account executive')) {
+      categories['scaling sales'] = (categories['scaling sales'] || 0) + 1;
+    } else if (lower.includes('marketing') || lower.includes('growth')) {
+      categories['growing marketing'] = (categories['growing marketing'] || 0) + 1;
+    } else if (lower.includes('product') || lower.includes('design')) {
+      categories['building product'] = (categories['building product'] || 0) + 1;
+    } else if (lower.includes('data') || lower.includes('analyst')) {
+      categories['hiring data teams'] = (categories['hiring data teams'] || 0) + 1;
+    } else if (lower.includes('licens') || lower.includes('partner')) {
+      categories['partnership activity'] = (categories['partnership activity'] || 0) + 1;
+    } else if (lower.includes('fund') || lower.includes('capital') || lower.includes('invest')) {
+      categories['funding activity'] = (categories['funding activity'] || 0) + 1;
+    } else {
+      categories['activity'] = (categories['activity'] || 0) + 1;
     }
-
-    let maxCategory = 'hiring';
-    let maxCount = 0;
-    for (const [cat, count] of Object.entries(categories)) {
-      if (count > maxCount) {
-        maxCount = count;
-        maxCategory = cat;
-      }
-    }
-    return maxCategory;
   }
 
-  // For non-recruiting modes, use generic activity language
-  // Don't use "hiring" - it's mode-specific to recruiting
-  return defaultSignal;
+  let maxCategory = 'activity';
+  let maxCount = 0;
+  for (const [cat, count] of Object.entries(categories)) {
+    if (count > maxCount) {
+      maxCount = count;
+      maxCategory = cat;
+    }
+  }
+  return maxCategory;
 }
 
 // =============================================================================
@@ -572,17 +591,6 @@ function safeRender(value: unknown): string {
     console.warn('[Flow] safeRender caught object in render path:', value);
     return JSON.stringify(value);
   }
-  return String(value);
-}
-
-/**
- * Normalize presignal/context values to string at state boundaries.
- * After migration to TEXT columns: handles null/undefined, legacy JSONB {}, and strings.
- */
-function normalizeToString(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'object') return ''; // Legacy JSONB default {} → empty
   return String(value);
 }
 
@@ -628,10 +636,6 @@ interface FlowState {
   // Source tracking (for UI labels)
   isHubFlow: boolean;
 
-  // Connector Mode (FIX 1) — determines supply filter + intro language
-  connectorMode: ConnectorMode | null;  // null = not yet selected
-  customModeAcknowledged: boolean;  // Safety interlock for Custom mode
-
   // Datasets
   demandSchema: Schema | null;
   supplySchema: Schema | null;
@@ -670,13 +674,6 @@ interface FlowState {
   copyValidationFailures: CopyValidationResult[];
 }
 
-// Pre-signal context entry (operator-written)
-interface PreSignalContextEntry {
-  text: string;
-  source?: 'linkedin' | 'news' | 'prior_convo' | 'job_post' | 'other';
-  updatedAt: string;
-}
-
 interface Settings {
   apifyToken?: string;
   demandDatasetId?: string;
@@ -693,11 +690,6 @@ interface Settings {
   supplyCampaignId?: string;
   // AI
   aiConfig: AIConfig | null;
-  // FIX 1: Connector mode (persisted per operator)
-  connectorMode?: ConnectorMode | null;
-  // CANONICAL: Per-side presignal (applies to ALL contacts on that side)
-  presignalDemand?: string;   // Text for ALL demand contacts
-  presignalSupply?: string;   // Text for ALL supply contacts
   // Signals toggle — fetch company signals for B2B Contacts (default false)
   fetchSignals?: boolean;
 }
@@ -710,8 +702,6 @@ export default function Flow() {
   const [state, setState] = useState<FlowState>({
     step: 'upload',
     isHubFlow: false,
-    connectorMode: null,  // FIX 1: Will be auto-detected or user-selected
-    customModeAcknowledged: false,  // Safety interlock for Custom mode
     demandSchema: null,
     supplySchema: null,
     demandRecords: [],
@@ -733,11 +723,6 @@ export default function Flow() {
 
   const [settings, setSettings] = useState<Settings | null>(null);
 
-  // CANONICAL: Per-side presignal editing state
-  const [editingPresignalSide, setEditingPresignalSide] = useState<'demand' | 'supply' | null>(null);
-  const [presignalText, setPresignalText] = useState('');
-  const [savingPresignal, setSavingPresignal] = useState(false);
-
   // Signals drawer — read-only overlay, no logic impact
   const [showSignalsDrawer, setShowSignalsDrawer] = useState(false);
 
@@ -749,18 +734,8 @@ export default function Flow() {
   // Supply Annotations — Operator judgment (render-only, no matching impact)
   const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
 
-  // Markets banner (dismissible)
-  const [showMarketsBanner, setShowMarketsBanner] = useState(() => {
-    return !localStorage.getItem('flow_markets_banner_dismissed');
-  });
-  const dismissMarketsBanner = () => {
-    setShowMarketsBanner(false);
-    localStorage.setItem('flow_markets_banner_dismissed', 'true');
-  };
-
   const abortRef = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
-  const presignalRef = useRef<{ demand: string; supply: string }>({ demand: '', supply: '' });
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
 
@@ -875,16 +850,9 @@ export default function Flow() {
             demandCampaignId,
             supplyCampaignId,
             aiConfig,
-            presignalDemand: normalizeToString(data?.presignal_demand),
-            presignalSupply: normalizeToString(data?.presignal_supply),
             fetchSignals: data?.fetch_signals === true, // default false
           });
 
-          // VERIFICATION LOG: Presignal loaded from DB
-          const loadedDemand = normalizeToString(data?.presignal_demand);
-          const loadedSupply = normalizeToString(data?.presignal_supply);
-          console.log(`[Settings] presignalDemand loaded type=${typeof data?.presignal_demand} valueLen=${loadedDemand.length}`);
-          console.log(`[Settings] presignalSupply loaded type=${typeof data?.presignal_supply} valueLen=${loadedSupply.length}`);
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
           return;
         }
@@ -930,16 +898,9 @@ export default function Flow() {
           demandCampaignId,
           supplyCampaignId,
           aiConfig,
-          presignalDemand: normalizeToString(s.presignalDemand),
-          presignalSupply: normalizeToString(s.presignalSupply),
           fetchSignals: s.fetchSignals === true, // default false
         });
 
-        // VERIFICATION LOG: Presignal loaded from localStorage
-        const loadedDemand = normalizeToString(s.presignalDemand);
-        const loadedSupply = normalizeToString(s.presignalSupply);
-        console.log(`[Settings] presignalDemand loaded type=${typeof s.presignalDemand} valueLen=${loadedDemand.length}`);
-        console.log(`[Settings] presignalSupply loaded type=${typeof s.presignalSupply} valueLen=${loadedSupply.length}`);
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
       } catch (e) {
         console.error('[Flow] Settings load error:', e);
@@ -1007,59 +968,6 @@ export default function Flow() {
       saveGuestAnnotation(fingerprint, { excluded: !currentValue });
     }
   }, [supplyAnnotations, isAuthenticated, user?.id]);
-
-  // CANONICAL: Save presignal for a side (demand or supply)
-  const savePresignal = useCallback(async (side: 'demand' | 'supply') => {
-    if (!presignalText.trim()) {
-      setEditingPresignalSide(null);
-      return;
-    }
-
-    setSavingPresignal(true);
-    try {
-      const fieldName = side === 'demand' ? 'presignalDemand' : 'presignalSupply';
-      const text = presignalText.trim();
-
-      // Update local state immediately
-      setSettings(prev => prev ? { ...prev, [fieldName]: text } : prev);
-
-      // Persist based on auth state
-      if (isAuthenticated && user?.id) {
-        await supabase.from('operator_settings').upsert({
-          user_id: user.id,
-          [fieldName === 'presignalDemand' ? 'presignal_demand' : 'presignal_supply']: text,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' });
-        console.log(`[Flow] Saved ${side} presignal to Supabase`);
-      } else {
-        // Guest: update localStorage
-        const stored = localStorage.getItem('guest_settings');
-        const parsed = stored ? JSON.parse(stored) : { settings: {} };
-        const updatedSettings = { ...parsed.settings, [fieldName]: text };
-        localStorage.setItem('guest_settings', JSON.stringify({ settings: updatedSettings }));
-        console.log(`[Flow] Saved ${side} presignal to localStorage`);
-      }
-
-      setEditingPresignalSide(null);
-      setPresignalText('');
-    } catch (e) {
-      console.error('[Flow] Failed to save presignal:', e);
-    }
-    setSavingPresignal(false);
-  }, [presignalText, isAuthenticated, user?.id]);
-
-  // CANONICAL: Start editing presignal for a side
-  const startEditPresignal = useCallback((side: 'demand' | 'supply') => {
-    const existing = side === 'demand' ? settings?.presignalDemand : settings?.presignalSupply;
-    setPresignalText(existing || '');
-    setEditingPresignalSide(side);
-  }, [settings]);
-
-  // CANONICAL: Cancel editing presignal
-  const cancelEditPresignal = useCallback(() => {
-    setEditingPresignalSide(null);
-    setPresignalText('');
-  }, []);
 
   // Auto-start when coming from Connector Hub (ref to avoid dependency issues)
   const hubAutoStartRef = useRef(false);
@@ -1218,7 +1126,7 @@ export default function Flow() {
         console.log('[Flow] Raw supply data sample:', supplyData[0]);
         console.log('[Flow] Raw supply fields:', supplyData[0] ? Object.keys(supplyData[0]) : 'empty');
 
-        const supplyValidation = validateDataset(supplyData);
+        const supplyValidation = validateSupplyDataset(supplyData);
         console.log('[Flow] Supply validation:', { valid: supplyValidation.valid, schema: supplyValidation.schema?.name, error: supplyValidation.error });
         if (supplyValidation.valid && supplyValidation.schema) {
           supplyRecords = normalizeDataset(supplyData, supplyValidation.schema);
@@ -1298,8 +1206,21 @@ export default function Flow() {
     console.log('[MATCH] inputs', { demand: demand.length, supply: supply.length });
 
     // Run matching brain (async with yielding for large datasets)
-    // Pass connectorMode for buyer-seller overlap validation (Supply Truth Constraint)
-    const result = await matchRecords(demand, supply, undefined, state.connectorMode || undefined);
+    const totalComparisons = demand.length * supply.length;
+    const result = await matchRecords(
+      demand,
+      supply,
+      (current, total) => {
+        setState(prev => ({
+          ...prev,
+          progress: {
+            current,
+            total,
+            message: `Matching ${Math.round((current / total) * 100)}%`,
+          },
+        }));
+      }
+    );
 
     console.timeEnd('[MATCH] matchRecords');
     console.log('[MATCH] result', {
@@ -1308,8 +1229,9 @@ export default function Flow() {
       avgScore: result.stats.avgScore,
     });
 
-    // Filter by minimum score
-    const filtered = filterByScore(result, 20);
+    // NO THRESHOLD — all matches pass through
+    // User decides what to send, not the system
+    const filtered = result;
 
     console.log(`[Flow] Matching complete:`);
     console.log(`  - Demand: ${demand.length} records`);
@@ -1326,49 +1248,76 @@ export default function Flow() {
     }
 
     // =======================================================================
-    // PHASE 1: EDGE PREFLIGHT (FREE) — Detect edges BEFORE enrichment
-    // No edge = No enrichment = No credits spent
+    // PHASE 1: EDGE ANNOTATION (INFORMATIONAL ONLY — NEVER BLOCKS)
+    // Edge = confidence label. Match score > 0 = always routable.
     // =======================================================================
-    console.log('[EDGE_PREFLIGHT] Starting edge detection on', filtered.demandMatches.length, 'matched demands');
-    setState(prev => ({ ...prev, progress: { current: 90, total: 100, message: 'Looking for real connection signals...' } }));
+    console.log('[EDGE] Annotating', filtered.demandMatches.length, 'matches with confidence levels');
+    setState(prev => ({ ...prev, progress: { current: 90, total: 100, message: 'Analyzing match quality...' } }));
+
+    // GRACEFUL DEGRADATION: Always build human-readable evidence
+    // Priority: strong signal → soft signal → generic (never empty)
+    const buildWhy = (match: Match): string => {
+      const demand = match.demand;
+
+      // Priority 1: Hiring signal (strong)
+      if (demand.signal && /hiring|recruit|engineer|sales|marketing|developer/i.test(demand.signal)) {
+        return `is hiring ${demand.signal.toLowerCase().slice(0, 30)}`;
+      }
+
+      // Priority 2: Funding signal (strong)
+      if (demand.companyFunding) {
+        return 'recently raised funding';
+      }
+
+      // Priority 3: Industry (medium)
+      if (demand.industry) {
+        const ind = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
+        if (ind) return `is growing in ${String(ind).split(',')[0].trim()}`;
+      }
+
+      // Priority 4: Company description (soft)
+      if (demand.companyDescription) {
+        return 'is scaling';
+      }
+
+      // Priority 5: Generic (escape hatch — always works)
+      return 'may be exploring outside partners';
+    };
 
     const edgePositiveMatches: typeof filtered.demandMatches = [];
     const detectedEdges = new Map<string, Edge>();
-    let edgesFound = 0;
-    let edgesMissing = 0;
+
+    const HIGH_THRESHOLD = 0.7;
+    const MEDIUM_THRESHOLD = 0.4;
 
     for (const match of filtered.demandMatches) {
-      const demandRecord = toDemandRecord(match.demand);
-      const edge = detectEdge(demandRecord);
+      // ALL matches with score > 0 are routable
+      if (match.score > 0) {
+        const demandRecord = toDemandRecord(match.demand);
+        const explicitEdge = detectEdge(demandRecord);
 
-      if (edge) {
+        // Confidence level based on match score + explicit signals
+        const confidence = explicitEdge
+          ? Math.max(explicitEdge.confidence, match.score)
+          : match.score;
+
+        const confidenceLevel = confidence >= HIGH_THRESHOLD ? 'high' :
+                                confidence >= MEDIUM_THRESHOLD ? 'medium' : 'low';
+
+        const edge: Edge = explicitEdge || {
+          type: 'MATCH_QUALITY',
+          evidence: buildWhy(match),
+          confidence,
+        };
+
         edgePositiveMatches.push(match);
         detectedEdges.set(match.demand.domain, edge);
-        edgesFound++;
-        console.log(`[EDGE_PREFLIGHT] ✓ EDGE: ${match.demand.company} → ${edge.type} (${edge.evidence})`);
-      } else {
-        edgesMissing++;
-        console.log(`[EDGE_PREFLIGHT] ✗ NO_EDGE: ${match.demand.company}`);
+        console.log(`[EDGE] ✓ ${match.demand.company} → ${confidenceLevel} (${confidence.toFixed(2)})`);
       }
     }
 
-    console.log(`[EDGE_PREFLIGHT] Complete: ${edgesFound} edges found, ${edgesMissing} dropped`);
-    console.log(`[EDGE_PREFLIGHT] Edge-positive ratio: ${((edgesFound / (edgesFound + edgesMissing)) * 100).toFixed(1)}%`);
-
-    // =======================================================================
-    // EDGE GATE: If zero edges, abort flow — no enrichment, no credits spent
-    // =======================================================================
-    if (edgePositiveMatches.length === 0) {
-      console.log('[EDGE_PREFLIGHT] ABORT: Zero edges detected — showing no_matches UI');
-      console.log('[EDGE_PREFLIGHT] NO CREDITS SPENT — edge preflight is FREE');
-      setState(prev => ({
-        ...prev,
-        step: 'no_matches',
-        matchingResult: filtered, // Keep original for UI display
-        progress: { current: 100, total: 100, message: 'No matches found' },
-      }));
-      return;
-    }
+    console.log(`[EDGE] Complete: ${edgePositiveMatches.length} matches ready for enrichment`);
+    // Edge NEVER blocks — if matches exist, proceed
 
     // Update filtered with only edge-positive matches for enrichment
     const edgeFiltered: MatchingResult = {
@@ -1377,8 +1326,7 @@ export default function Flow() {
     };
 
     // Store detected edges in state for later use in composition
-    console.log('[EDGE_PREFLIGHT] Matches found:', edgePositiveMatches.length, 'edge-positive');
-    console.log('[EDGE_PREFLIGHT] CREDITS SAVED:', edgesMissing, 'records skipped (no edge)');
+    console.log('[EDGE] Matches ready:', edgePositiveMatches.length);
 
     // =======================================================================
     // UI PAUSE: Show "Matches found" panel, wait for user action
@@ -1399,7 +1347,26 @@ export default function Flow() {
     }));
 
     // Don't auto-proceed to enrichment — wait for user action
-    console.log('[EDGE_PREFLIGHT] Paused at matches_found — waiting for user to click "Find the right people"');
+    console.log('[MATCH] Paused — waiting for user to proceed');
+
+    // PHILEMON: STATE_SNAPSHOT after edge preflight
+    const philemonInput = buildDeriveInput(
+      demandSchema,
+      supplySchema,
+      demand,
+      supply,
+      edgeFiltered,
+      detectedEdges,
+      new Map(), // enrichedDemand (empty at this stage)
+      new Map(), // enrichedSupply (empty at this stage)
+      false, // enrichmentStarted
+      false, // enrichmentFinished
+      !!(settings?.apolloApiKey || settings?.anymailApiKey || settings?.connectorAgentApiKey),
+      0 // introsGenerated
+    );
+    const philemonCounters = deriveTruthCounters(philemonInput);
+    const philemonState = deriveUiState(philemonInput);
+    logStateSnapshot('MATCH_COMPLETE', 'matches_found', philemonCounters, philemonState);
   };
 
   // =============================================================================
@@ -1453,8 +1420,10 @@ export default function Flow() {
     });
 
     // Enrich demand side with bounded concurrency
-    const demandRecords = matching.demandMatches.map(m => m.demand);
-    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5)`);
+    // TEST_LIMIT: Remove this line after testing
+    const TEST_LIMIT = 10; // Set to 0 or remove to enrich all
+    const demandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT || undefined);
+    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5)${TEST_LIMIT ? ` [TEST MODE: ${TEST_LIMIT}]` : ''}`);
 
     const enrichedDemand = await enrichBatch(
       demandRecords,
@@ -1493,18 +1462,8 @@ export default function Flow() {
 
       const record = agg.supply;
 
-      // Supply from B2B Contacts usually has email
-      if (record.email) {
-        enrichedSupply.set(record.domain, {
-          success: true,
-          email: record.email,
-          firstName: record.firstName,
-          lastName: record.lastName,
-          title: record.title,
-          verified: true,
-          source: 'existing',
-        });
-      } else if (supplySchema) {
+      // Supply from B2B Contacts usually has email — will be VERIFIED by router
+      if (supplySchema) {
         const sanitizedDomain = record.domain?.replace(/[^a-z0-9.-]/gi, '') || 'unknown';
         const correlationId = `${runId}-supply-${sanitizedDomain}`;
         try {
@@ -1512,27 +1471,61 @@ export default function Flow() {
           enrichedSupply.set(record.domain, result);
         } catch (err) {
           console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain}`);
+          // Construct error result with new format
           enrichedSupply.set(record.domain, {
-            success: false,
-            email: null,
+            action: record.email ? 'VERIFY' : 'FIND_COMPANY_CONTACT',
+            outcome: 'ERROR',
+            email: record.email || null,
             firstName: record.firstName || '',
             lastName: record.lastName || '',
             title: record.title || '',
             verified: false,
-            source: 'timeout',
+            source: 'none',
+            inputsPresent: {
+              email: !!record.email,
+              domain: !!record.domain,
+              person_name: !!(record.firstName || record.lastName),
+              company: !!record.company,
+            },
+            providersAttempted: [],
+            providerResults: {
+              connectorAgent: { attempted: false },
+              anymail: { attempted: false },
+              apollo: { attempted: false },
+            },
+            durationMs: 0,
           });
         }
       }
     }
 
     // Summary
-    const demandSuccessCount = Array.from(enrichedDemand.values()).filter(r => r.success && r.email).length;
-    const supplySuccessCount = Array.from(enrichedSupply.values()).filter(r => r.success && r.email).length;
+    const demandSuccessCount = Array.from(enrichedDemand.values()).filter(r => isSuccessfulEnrichment(r) && r.email).length;
+    const supplySuccessCount = Array.from(enrichedSupply.values()).filter(r => isSuccessfulEnrichment(r) && r.email).length;
     const demandTimeoutCount = Array.from(enrichedDemand.values()).filter(r => r.source === 'timeout').length;
     const supplyTimeoutCount = Array.from(enrichedSupply.values()).filter(r => r.source === 'timeout').length;
     console.log(`[Flow] Enrichment complete (runId=${runId}):`);
     console.log(`  - Demand: ${demandSuccessCount}/${enrichedDemand.size} with email, ${demandTimeoutCount} timeouts`);
     console.log(`  - Supply: ${supplySuccessCount}/${enrichedSupply.size} with email, ${supplyTimeoutCount} timeouts`);
+
+    // PHILEMON: STATE_SNAPSHOT after enrichment
+    const philemonEnrichInput = buildDeriveInput(
+      demandSchema,
+      supplySchema,
+      matching.demandMatches.map(m => m.demand),
+      matching.supplyAggregates.map(a => a.supply),
+      matching,
+      state.detectedEdges,
+      enrichedDemand,
+      enrichedSupply,
+      true, // enrichmentStarted
+      true, // enrichmentFinished
+      !!(settings?.apolloApiKey || settings?.anymailApiKey || settings?.connectorAgentApiKey),
+      0 // introsGenerated (not yet)
+    );
+    const philemonEnrichCounters = deriveTruthCounters(philemonEnrichInput);
+    const philemonEnrichState = deriveUiState(philemonEnrichInput);
+    logStateSnapshot('ENRICHMENT_COMPLETE', 'route_context', philemonEnrichCounters, philemonEnrichState);
 
     // ATOMIC STATE UPDATE: Set enrichment results AND step change together
     // This prevents race conditions where route_context renders before enrichment data is available
@@ -1542,7 +1535,7 @@ export default function Flow() {
       enrichedSupply,
       step: 'route_context',
     }));
-    console.log('[Flow] Enrichment complete — waiting for route context before generating intros');
+    console.log('[Flow] Enrichment complete — ready for intro generation');
   };
 
   // =============================================================================
@@ -1574,7 +1567,7 @@ export default function Flow() {
 
     const total = matching.demandMatches.filter(m => {
       const e = enrichedDemand.get(m.demand.domain);
-      return e?.success && e.email;
+      return e && isSuccessfulEnrichment(e) && e.email;
     }).length;
 
     // Process each demand match using pre-detected edges
@@ -1591,7 +1584,7 @@ export default function Flow() {
 
       // GATE 2: Check demand enrichment
       const demandEnriched = enrichedDemand.get(match.demand.domain);
-      if (!demandEnriched?.success || !demandEnriched.email) {
+      if (!demandEnriched || !isSuccessfulEnrichment(demandEnriched) || !demandEnriched.email) {
         console.log(`[COMPOSE] DROP: ${match.demand.company} - demand not enriched`);
         dropped++;
         continue;
@@ -1599,7 +1592,7 @@ export default function Flow() {
 
       // GATE 3: Check supply enrichment
       const supplyEnriched = enrichedSupply.get(match.supply.domain);
-      if (!supplyEnriched?.success || !supplyEnriched.email) {
+      if (!supplyEnriched || !isSuccessfulEnrichment(supplyEnriched) || !supplyEnriched.email) {
         console.log(`[COMPOSE] DROP: ${match.demand.company} - supply not enriched`);
         dropped++;
         continue;
@@ -1718,32 +1711,20 @@ export default function Flow() {
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
+  // INTRO REGENERATION HANDLER
   // =============================================================================
-  // PRESIGNAL → INTRO GENERATION HANDLER (replaces dual useEffect)
-  // =============================================================================
-  // FIX: Single handler for generating intros after presignal is set
-  // Called from route_context step OR when regenerating in ready step
 
-  const generateIntrosWithPresignal = useCallback(async () => {
+  const regenerateIntros = useCallback(async () => {
     if (!state.matchingResult) {
       console.error('[Flow] Cannot generate intros: no matching result');
       return;
     }
 
-    // VERIFICATION LOG: Log presignal values before intro generation
-    const demandPresignal = settings?.presignalDemand || '';
-    const supplyPresignal = settings?.presignalSupply || '';
-    console.log(`[Flow] presignalDemand source=ui valueLen=${demandPresignal.length}`);
-    console.log(`[Flow] presignalSupply source=ui valueLen=${supplyPresignal.length}`);
-
-    // Update ref to current values (single update point, no race condition)
-    presignalRef.current = { demand: demandPresignal, supply: supplyPresignal };
-
     // Generate intros
     setState(prev => ({ ...prev, step: 'generating' }));
     await runIntroGeneration(state.matchingResult, state.enrichedDemand, state.enrichedSupply);
     setState(prev => ({ ...prev, step: 'ready' }));
-  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, settings?.presignalDemand, settings?.presignalSupply]);
+  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply]);
 
   // =============================================================================
   // CSV EXPORT HANDLER — Pure extraction from in-memory state
@@ -1760,12 +1741,12 @@ export default function Flow() {
 
     // UNIFIED CSV (Option A) — Single file with side column
     // Headers: side, email, first_name, last_name, company_name, website, personalization,
-    //          matched_supply_company, match_score, match_reasons (demand-specific),
+    //          matched_supply_company, match_score, match_reason, confidence_tier (demand-specific),
     //          matched_demand_count, avg_match_score (supply-specific)
     const headers = [
       'side', 'email', 'first_name', 'last_name', 'company_name',
       'website', 'personalization',
-      'matched_supply_company', 'match_score', 'match_reasons',
+      'matched_supply_company', 'match_score', 'match_reason', 'confidence_tier',
       'matched_demand_count', 'avg_match_score'
     ];
 
@@ -1774,7 +1755,7 @@ export default function Flow() {
     const demandRows = rawDemandRows.map(row => [
       'demand',           // side (lowercase per spec)
       row[1], row[2], row[3], row[4], row[5], row[6],  // email through personalization
-      row[7], row[8], row[9],  // matched_supply_company, match_score, match_reasons
+      row[7], row[8], row[9], row[10],  // matched_supply_company, match_score, match_reason, confidence_tier
       '', ''  // matched_demand_count, avg_match_score (empty for demand)
     ]);
 
@@ -1783,7 +1764,7 @@ export default function Flow() {
     const supplyRows = rawSupplyRows.map(row => [
       'supply',           // side (lowercase per spec)
       row[1], row[2], row[3], row[4], row[5], row[6],  // email through personalization
-      '', '', '',  // matched_supply_company, match_score, match_reasons (empty for supply)
+      '', '', '', '',  // matched_supply_company, match_score, match_reason, confidence_tier (empty for supply)
       row[7], row[8]  // matched_demand_count, avg_match_score
     ]);
 
@@ -1844,7 +1825,7 @@ export default function Flow() {
     if (senderConfig.demandCampaignId) {
       const demandToSend = matchingResult.demandMatches.filter(m => {
         const enriched = enrichedDemand.get(m.demand.domain);
-        return enriched?.success && enriched.email;
+        return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
 
       setState(prev => ({
@@ -1864,37 +1845,7 @@ export default function Flow() {
           ...match.demand,
           firstName: enriched.firstName || match.demand.firstName,
           email: enriched.email,
-          connectorMode: state.connectorMode || undefined,
-          preSignalContext: settings?.presignalDemand,
         });
-
-        // ENTERPRISE: Validate copy before send (if mode is set)
-        if (state.connectorMode && intro) {
-          const evidence = buildEvidenceSet({
-            jobPostingUrl: match.demand.job_posting_url,
-            jobTitle: match.demand.job_title,
-            openRolesCount: match.demand.open_roles_count,
-            funding: match.demand.funding,
-            fundingRound: match.demand.funding_round,
-          });
-
-          const validation = canSend(intro, {
-            mode: state.connectorMode,
-            side: 'demand',
-            evidence,
-            presignal_context: settings?.presignalDemand,
-          });
-
-          if (!validation.canSend) {
-            console.warn(`[Flow] Copy validation blocked: ${match.demand.domain}`, validation.blockReason);
-            // Track the failure but continue with next
-            setState(prev => ({
-              ...prev,
-              progress: { current: i + 1, total: demandToSend.length, message: `Demand ${i + 1}/${demandToSend.length} (skipped)` },
-            }));
-            continue; // Skip this send
-          }
-        }
 
         try {
           const result = await sender.sendLead(senderConfig, {
@@ -1908,7 +1859,26 @@ export default function Flow() {
             introText: intro,
             contactTitle: enriched.title,
           });
-          if (result.success) sentDemand++;
+          if (result.success) {
+            sentDemand++;
+            // Fire-and-forget: Log match event for behavioral learning (Option B)
+            if (user?.id && match.tier && match.needProfile && match.capabilityProfile) {
+              logMatchSent({
+                operatorId: user.id,
+                demandDomain: match.demand.domain,
+                supplyDomain: match.supply.domain,
+                demandCompany: match.demand.company,
+                supplyCompany: match.supply.company,
+                score: match.score,
+                tier: match.tier,
+                tierReason: match.tierReason || '',
+                needProfile: match.needProfile,
+                capabilityProfile: match.capabilityProfile,
+                scoreBreakdown: match.scoreBreakdown,
+                campaignId: senderConfig.demandCampaignId!,
+              }).catch(() => {}); // Silent fire-and-forget
+            }
+          }
         } catch (err) {
           console.error('[Flow] Send failed:', match.demand.domain, err);
         }
@@ -1924,7 +1894,7 @@ export default function Flow() {
     if (senderConfig.supplyCampaignId) {
       const supplyToSend = matchingResult.supplyAggregates.filter(a => {
         const enriched = enrichedSupply.get(a.supply.domain);
-        return enriched?.success && enriched.email;
+        return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
 
       setState(prev => ({
@@ -1945,33 +1915,9 @@ export default function Flow() {
             ...agg.supply,
             firstName: enriched.firstName || agg.supply.firstName,
             email: enriched.email,
-            connectorMode: state.connectorMode || undefined,
-            preSignalContext: settings?.presignalSupply,
           },
           agg.bestMatch.demand
         );
-
-        // ENTERPRISE: Validate copy before send (if mode is set)
-        if (state.connectorMode && intro) {
-          // Supply side doesn't have job signals in the same way - use empty evidence for now
-          const evidence = emptyEvidenceSet();
-
-          const validation = canSend(intro, {
-            mode: state.connectorMode,
-            side: 'supply',
-            evidence,
-            presignal_context: settings?.presignalSupply,
-          });
-
-          if (!validation.canSend) {
-            console.warn(`[Flow] Copy validation blocked supply: ${agg.supply.domain}`, validation.blockReason);
-            setState(prev => ({
-              ...prev,
-              progress: { current: i + 1, total: supplyToSend.length, message: `Supply ${i + 1}/${supplyToSend.length} (skipped)` },
-            }));
-            continue; // Skip this send
-          }
-        }
 
         try {
           const result = await sender.sendLead(senderConfig, {
@@ -1985,7 +1931,28 @@ export default function Flow() {
             introText: intro,
             contactTitle: enriched.title,
           });
-          if (result.success) sentSupply++;
+          if (result.success) {
+            sentSupply++;
+            // Fire-and-forget: Log match event for behavioral learning (Option B)
+            // Supply sends use bestMatch for the demand-supply pairing data
+            const bestMatch = agg.bestMatch;
+            if (user?.id && bestMatch.tier && bestMatch.needProfile && bestMatch.capabilityProfile) {
+              logMatchSent({
+                operatorId: user.id,
+                demandDomain: bestMatch.demand.domain,
+                supplyDomain: agg.supply.domain,
+                demandCompany: bestMatch.demand.company,
+                supplyCompany: agg.supply.company,
+                score: bestMatch.score,
+                tier: bestMatch.tier,
+                tierReason: bestMatch.tierReason || '',
+                needProfile: bestMatch.needProfile,
+                capabilityProfile: bestMatch.capabilityProfile,
+                scoreBreakdown: bestMatch.scoreBreakdown,
+                campaignId: senderConfig.supplyCampaignId!,
+              }).catch(() => {}); // Silent fire-and-forget
+            }
+          }
         } catch (err) {
           console.error('[Flow] Send failed:', agg.supply.domain, err);
         }
@@ -2022,8 +1989,6 @@ export default function Flow() {
     setState({
       step: 'upload',
       isHubFlow: false,
-      connectorMode: null,  // Reset mode for new flow
-      customModeAcknowledged: false,
       demandSchema: null,
       supplySchema: null,
       demandRecords: [],
@@ -2059,65 +2024,6 @@ export default function Flow() {
         </button>
       </div>
 
-      {/* Markets Banner - Platinum */}
-      <AnimatePresence>
-        {showMarketsBanner && (
-          <motion.div
-            initial={{ opacity: 0, y: -12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            className="px-8 pt-4"
-          >
-            <div className="max-w-[520px] mx-auto">
-              <div className="relative bg-gradient-to-r from-zinc-400/[0.06] via-slate-300/[0.04] to-zinc-400/[0.06] rounded-xl border border-zinc-400/10 px-4 py-2.5 overflow-hidden">
-                {/* Shimmer effect */}
-                <motion.div
-                  className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.04] to-transparent -skew-x-12"
-                  initial={{ x: '-100%' }}
-                  animate={{ x: '200%' }}
-                  transition={{ duration: 2, ease: 'easeInOut', delay: 0.5, repeat: Infinity, repeatDelay: 4 }}
-                />
-                <div className="relative flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <motion.div
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ duration: 0.3, delay: 0.2 }}
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-400/15"
-                    >
-                      <span className="text-[10px] text-zinc-300">◆</span>
-                      <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">New</span>
-                    </motion.div>
-                    <p className="text-[12px] text-white/60">
-                      <span className="font-medium text-zinc-200">Pick your market</span>
-                      <span className="mx-1.5 text-white/20">—</span>
-                      <span className="text-white/50">7 modes or go custom</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => navigate('/library?page=modes')}
-                      className="group flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-400/15 hover:bg-zinc-400/25 text-zinc-300 text-[11px] font-medium transition-all"
-                    >
-                      Learn more
-                      <ArrowRight size={10} className="group-hover:translate-x-0.5 transition-transform" />
-                    </button>
-                    <button
-                      onClick={dismissMarketsBanner}
-                      className="p-1 text-white/20 hover:text-white/50 transition-colors"
-                      aria-label="Dismiss"
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Main content */}
       <div className="flex-1 flex items-center justify-center pb-24">
         <div className="w-full max-w-[520px] px-6">
@@ -2139,7 +2045,7 @@ export default function Flow() {
               </div>
 
               <h1 className="text-[17px] font-medium text-white/90 mb-2">Flow</h1>
-              <p className="text-[13px] text-white/40 mb-6">Match · Enrich · Route</p>
+              <p className="text-[13px] text-white/40 mb-6">Match · Enrich · Send</p>
 
               {/* FlowBlock Banner — Zero Silent Failures (structured errors) */}
               {state.flowBlock && (
@@ -2209,9 +2115,7 @@ export default function Flow() {
                   ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
                   : { type: 'UNKNOWN_ERROR', message: errorStr };
 
-                const explanation = explain(errorBlock, {
-                  mode: state.connectorMode || undefined,
-                });
+                const explanation = explain(errorBlock, {});
 
                 return (
                   <div ref={errorRef} className="mb-8 max-w-lg mx-auto">
@@ -2222,7 +2126,7 @@ export default function Flow() {
                           navigate('/settings');
                         } else if (action.kind === 'copy_to_clipboard') {
                           navigator.clipboard.writeText(
-                            `Flow Error: ${errorStr}\n\nDataset: ${settings?.demandDatasetId || 'not set'}\nMode: ${state.connectorMode || 'not set'}`
+                            `Flow Error: ${errorStr}\n\nDataset: ${settings?.demandDatasetId || 'not set'}`
                           );
                         } else if (action.kind === 'retry') {
                           setState(prev => ({ ...prev, error: null }));
@@ -2241,7 +2145,6 @@ export default function Flow() {
                           <p>supplyDatasetId: {settings.supplyDatasetId || '(not set)'}</p>
                           <p>apifyToken: {settings.apifyToken ? '✓ set' : '✗ missing'}</p>
                           <p>aiConfig: {settings.aiConfig?.provider || 'none'}</p>
-                          <p>connectorMode: {state.connectorMode || '(not selected)'}</p>
                         </div>
                       </details>
                     )}
@@ -2249,74 +2152,12 @@ export default function Flow() {
                 );
               })()}
 
-              {/* Connector Mode Selector — All modes from registry with tooltips */}
-              <div className="mb-6">
-                <div className="flex items-center justify-center gap-2 mb-3">
-                  <span className="text-[12px] text-white/40">Mode</span>
-                </div>
-                <div className="grid grid-cols-4 gap-2 max-w-2xl mx-auto">
-                  {getModesForUI().map((mode) => {
-                    const isCustom = mode.id === 'custom';
-
-                    return (
-                      <button
-                        key={mode.id}
-                        onClick={() => setState(prev => ({
-                          ...prev,
-                          connectorMode: mode.id,
-                          customModeAcknowledged: mode.id === 'custom' ? false : prev.customModeAcknowledged,
-                        }))}
-                        className={`px-3 py-2.5 text-[12px] rounded-lg border transition-all text-left ${
-                          state.connectorMode === mode.id
-                            ? 'bg-white/10 border-white/20 text-white/90'
-                            : 'border-white/[0.08] text-white/40 hover:border-white/20 hover:text-white/60'
-                        }`}
-                      >
-                        <span className="font-medium block">{mode.label}</span>
-                        <span className="block text-[10px] text-white/30 mt-0.5 truncate">
-                          {isCustom ? 'You define' : mode.description.split('→')[0].trim()}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Custom mode safety interlock */}
-                {state.connectorMode === 'custom' && (
-                  <div className="mt-4 max-w-sm mx-auto">
-                    <div className="p-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/20">
-                      <p className="text-[11px] text-amber-400/90 font-medium mb-2">Custom Mode Warning</p>
-                      <ul className="text-[10px] text-white/50 space-y-1 mb-3">
-                        <li>• Custom does not auto-filter industries</li>
-                        <li>• You must choose correct datasets</li>
-                        <li>• Claims like hiring/funding/partnership are blocked without evidence</li>
-                      </ul>
-                      <label className="flex items-start gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={state.customModeAcknowledged}
-                          onChange={(e) => setState(prev => ({ ...prev, customModeAcknowledged: e.target.checked }))}
-                          className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/5 text-emerald-500 focus:ring-emerald-500/30"
-                        />
-                        <span className="text-[10px] text-white/60 leading-tight">
-                          I understand custom mode requires correct datasets
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                )}
-              </div>
-
               <button
                 onClick={startFlow}
-                disabled={
-                  !settings?.demandDatasetId ||
-                  !state.connectorMode ||
-                  (state.connectorMode === 'custom' && !state.customModeAcknowledged)
-                }
-                className="px-4 py-2 text-[13px] font-medium rounded-md bg-white text-black hover:bg-white/90 active:scale-[0.98] disabled:opacity-30 transition-all"
+                disabled={!settings?.demandDatasetId}
+                className="px-5 py-2.5 text-[13px] font-medium rounded-xl bg-white text-black hover:bg-white/90 active:scale-[0.98] disabled:opacity-30 transition-all"
               >
-                {state.error ? 'Retry' : 'Start'}
+                {state.error ? 'Retry' : 'Begin Matching'}
               </button>
 
             </motion.div>
@@ -2340,7 +2181,7 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* MATCHING — Stripe-style: brief transition, no numbers */}
+          {/* MATCHING — Linear/Stripe-style progress */}
           {state.step === 'matching' && (
             <motion.div
               key="matching"
@@ -2349,14 +2190,22 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center"
             >
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ repeat: Infinity, duration: 1.2, ease: "linear" }}
-                className="w-8 h-8 mx-auto mb-6 rounded-full border-2 border-white/10 border-t-white/50"
-              />
-              <p className="text-[14px] text-white/50 font-medium">
-                Looking for real connection signals…
+              <p className="text-[14px] text-white/50 font-medium mb-2">Finding matches</p>
+              <p className="text-[11px] text-white/30 mb-6">Analyzing your datasets…</p>
+              <p className="text-[28px] font-light text-white/80 mb-6 tabular-nums">
+                {Math.round((state.progress.current / Math.max(state.progress.total, 1)) * 100)}
+                <span className="text-white/30 text-[18px]">%</span>
               </p>
+              <div className="w-56 mx-auto">
+                <div className="h-[3px] bg-white/[0.08] rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-violet-400/60 rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                    transition={{ duration: 0.15, ease: "easeOut" }}
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -2364,10 +2213,10 @@ export default function Flow() {
           {state.step === 'matches_found' && (
             <motion.div
               key="matches_found"
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="text-center max-w-sm mx-auto"
+              className="w-full max-w-2xl mx-auto"
             >
               {(() => {
                 const matches = state.matchingResult?.demandMatches || [];
@@ -2378,159 +2227,455 @@ export default function Flow() {
                 const previewMatches = matches.slice(0, 3);
                 const moreCount = Math.max(0, matches.length - 3);
 
-                // Translate edge evidence to 2nd grade language
-                const simplifyEvidence = (edge: Edge | undefined): string => {
-                  if (!edge) return 'Good fit';
-                  const evidence = edge.evidence.toLowerCase();
-                  if (evidence.includes('vp') || evidence.includes('c-level') || evidence.includes('leadership')) {
-                    return 'Needs a leader';
+                // PHILEMON: Runtime preflight — derive routability from actual data, not schema assumptions
+                const demandPreflight = preflightDataset(
+                  'Demand',
+                  state.demandRecords,
+                  state.demandSchema?.id
+                );
+                const supplyPreflight = preflightDataset(
+                  'Supply',
+                  state.supplyRecords,
+                  state.supplySchema?.id
+                );
+
+                // Routability check — both datasets must be routable for enrichment
+                const demandRoutable = isRoutable(demandPreflight);
+                const supplyRoutable = isRoutable(supplyPreflight);
+                const canEnrich = demandRoutable && supplyRoutable;
+
+                // Block reason if either dataset is incomplete
+                const blockReason = !demandRoutable
+                  ? demandPreflight.blockReason
+                  : !supplyRoutable
+                  ? supplyPreflight.blockReason
+                  : undefined;
+
+                // =============================================================
+                // 3-LINE SIGNATURE HELPERS — Entity-specific, not generic
+                // Line 1: Entity name
+                // Line 2: Signal (what changed)
+                // Line 3: Context (entity-specific)
+                // =============================================================
+                const getDemandSignature = (match: typeof matches[0], edge: Edge | undefined) => {
+                  const company = match.demand.company;
+                  // Line 2: Signal - use actual job title or edge type
+                  const signal = match.demand.signal
+                    ? `Hiring ${match.demand.signal}`
+                    : edge?.type === 'FUNDING_RECENT' ? 'Just raised funding'
+                    : edge?.type === 'SCALING' ? 'Scaling team'
+                    : edge?.type === 'GROWTH' ? 'Growing fast'
+                    : 'Active hiring signal';
+                  // Line 3: Context - industry with dots (limit to 3 for readability)
+                  // Handle string, array, or missing industry
+                  let context = 'Timing signal detected';
+                  if (match.demand.industry) {
+                    let industries: string[] = [];
+                    if (typeof match.demand.industry === 'string') {
+                      industries = match.demand.industry.split(/[,\/]/).map(s => s.trim()).filter(Boolean);
+                    } else if (Array.isArray(match.demand.industry)) {
+                      industries = match.demand.industry.filter(Boolean);
+                    }
+                    // Limit to 3 industries max for clean UI
+                    const displayIndustries = industries.slice(0, 3);
+                    context = displayIndustries.join(' · ');
                   }
-                  if (evidence.includes('funding') || evidence.includes('raised')) {
-                    return 'Just raised money';
-                  }
-                  if (evidence.includes('growth') || evidence.includes('growing')) {
-                    return 'Growing fast';
-                  }
-                  if (evidence.includes('hiring') || evidence.includes('roles')) {
-                    return 'Hiring';
-                  }
-                  return 'Good timing';
+                  return { company, signal, context };
                 };
 
-                // Simplify supply capability to 2nd grade
-                const simplifyCapability = (supply: NormalizedRecord, edge: Edge | undefined): string => {
-                  if (!edge) return 'Can help';
-                  const evidence = edge.evidence.toLowerCase();
-                  if (evidence.includes('vp') || evidence.includes('c-level') || evidence.includes('leadership')) {
-                    return 'Finds leaders';
-                  }
-                  if (evidence.includes('funding') || evidence.includes('growth')) {
-                    return 'Helps growth';
-                  }
-                  if (evidence.includes('hiring') || evidence.includes('roles')) {
-                    return 'Finds talent';
-                  }
-                  return 'Can help';
+                // Rotating fit phrases to avoid robotic feel
+                const FIT_PHRASES = [
+                  'Has done this role before',
+                  'Scaled teams at this level',
+                  'Worked in similar companies',
+                ];
+
+                const getSupplySignature = (match: typeof matches[0], index: number) => {
+                  const entity = match.supply.company;
+                  // Line 2: What they do - use title if available
+                  const capability = match.supply.title
+                    ? match.supply.title
+                    : 'Industry operator';
+                  // Line 3: Why them - rotate phrases based on index
+                  const fit = match.supply.industry
+                    ? `Works in ${match.supply.industry}`
+                    : FIT_PHRASES[index % FIT_PHRASES.length];
+                  return { entity, capability, fit };
+                };
+
+                // Entity-specific tooltip
+                const getDemandTooltip = (match: typeof matches[0], edge: Edge | undefined) => {
+                  const action = edge?.type === 'LEADERSHIP_GAP' ? 'opened a senior role'
+                    : edge?.type === 'FUNDING_RECENT' ? 'raised funding recently'
+                    : edge?.type === 'SCALING' ? 'is scaling up'
+                    : 'has an active signal';
+                  return `${match.demand.company} ${action}`;
+                };
+
+                const getSupplyTooltip = (match: typeof matches[0]) => {
+                  return match.supply.title
+                    ? `${match.supply.company} — ${match.supply.title}`
+                    : `${match.supply.company} can help`;
                 };
 
                 return (
                   <>
-                    {/* Primary heading */}
-                    <motion.h2
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="text-[36px] font-light text-white/90 mb-2"
-                    >
-                      Found {edgeCount} matches
-                    </motion.h2>
-
-                    {/* Filter explanation - reframe as quality */}
+                    {/* ============================================= */}
+                    {/* DATASET AWARENESS CARDS — Always render, derived from actual data */}
+                    {/* ============================================= */}
                     <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.1 }}
-                      className="text-[11px] text-white/40 mb-6"
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4 }}
+                      className="grid grid-cols-2 gap-4 mb-8"
                     >
-                      <p>{totalScanned} scanned · {totalScanned - edgeCount} filtered out</p>
-                      <p className="text-white/25 mt-1">Only showing companies with real timing signals</p>
+                      {/* Demand Dataset Card */}
+                      <motion.div
+                        className={`group p-4 rounded-xl transition-all duration-300
+                          ${demandRoutable
+                            ? 'bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.03]'
+                            : 'bg-amber-500/[0.05] border border-amber-500/20'
+                          }`}
+                        whileHover={{ y: -2 }}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-[11px] text-white/50 font-medium tracking-wide">DEMAND</p>
+                          {!demandRoutable && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                              INCOMPLETE
+                            </span>
+                          )}
+                          {demandPreflight.state === 'ROUTABLE_DERIVED' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/40">
+                              {demandPreflight.derivedNote}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[13px] text-white/80 font-medium">
+                          {demandPreflight.card.title}
+                        </p>
+                        <div className="overflow-hidden transition-all duration-300 max-h-0 group-hover:max-h-20 group-hover:mt-2">
+                          <p className="text-[10px] text-white/40">
+                            Contains: {demandPreflight.card.contains}
+                          </p>
+                          <p className="text-[10px] text-white/30 mt-0.5">
+                            Missing: {demandPreflight.card.missing}
+                          </p>
+                        </div>
+                      </motion.div>
+
+                      {/* Supply Dataset Card */}
+                      <motion.div
+                        className={`group p-4 rounded-xl transition-all duration-300
+                          ${supplyRoutable
+                            ? 'bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.03]'
+                            : 'bg-amber-500/[0.05] border border-amber-500/20'
+                          }`}
+                        whileHover={{ y: -2 }}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-[11px] text-white/50 font-medium tracking-wide">SUPPLY</p>
+                          {!supplyRoutable && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                              INCOMPLETE
+                            </span>
+                          )}
+                          {supplyPreflight.state === 'ROUTABLE_DERIVED' && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/40">
+                              {supplyPreflight.derivedNote}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[13px] text-white/80 font-medium">
+                          {supplyPreflight.card.title}
+                        </p>
+                        <div className="overflow-hidden transition-all duration-300 max-h-0 group-hover:max-h-20 group-hover:mt-2">
+                          <p className="text-[10px] text-white/40">
+                            Contains: {supplyPreflight.card.contains}
+                          </p>
+                          <p className="text-[10px] text-white/30 mt-0.5">
+                            Missing: {supplyPreflight.card.missing}
+                          </p>
+                        </div>
+                      </motion.div>
                     </motion.div>
 
-                    {/* Column labels - maps to card layout */}
+                    {/* ============================================= */}
+                    {/* HEADING + STATS */}
+                    {/* ============================================= */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.1 }}
+                      className="text-center mb-8"
+                    >
+                      <h2 className="text-[32px] font-light text-white/90 mb-2">
+                        {edgeCount > 0 ? `${edgeCount} companies ready` : 'Datasets loaded'}
+                      </h2>
+                      <p className="text-[12px] text-white/40">
+                        {edgeCount > 0
+                          ? `${totalScanned} scanned · ready to find contacts`
+                          : `${totalScanned} companies loaded · you can send to any of them`
+                        }
+                      </p>
+
+                      {/* Confidence Tier Legend */}
+                      <div className="flex items-center justify-center gap-4 mt-4 text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-violet-400">🟣</span>
+                          <span className="text-white/50">Strong fit</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-blue-400">🔵</span>
+                          <span className="text-white/50">Good fit</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-white/40">⚪</span>
+                          <span className="text-white/50">Exploratory</span>
+                        </div>
+                      </div>
+                    </motion.div>
+
+                    {/* ============================================= */}
+                    {/* COLUMN HEADERS — Strong, with underline */}
+                    {/* ============================================= */}
                     <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       transition={{ delay: 0.15 }}
-                      className="flex items-center justify-between text-[10px] text-white/30 mb-3 px-4"
+                      className="grid grid-cols-[1fr_40px_1fr] gap-0 mb-4"
                     >
-                      <span>Companies that need help</span>
-                      <span>People who can help</span>
+                      <div className="border-b border-white/[0.15] pb-2">
+                        <span className="text-[12px] font-medium text-white/60 tracking-wide">
+                          Companies that need help
+                        </span>
+                      </div>
+                      <div /> {/* Spacer for connector */}
+                      <div className="border-b border-white/[0.15] pb-2 text-right">
+                        <span className="text-[12px] font-medium text-white/60 tracking-wide">
+                          People with relevant experience
+                        </span>
+                      </div>
                     </motion.div>
 
-                    {/* Preview cards - animated stagger */}
-                    <div className="space-y-2.5 mb-6">
+                    {/* ============================================= */}
+                    {/* MATCH CARDS — 3-line signature, equal columns */}
+                    {/* ============================================= */}
+                    <div className="space-y-3">
                       {previewMatches.map((match, i) => {
                         const edge = state.detectedEdges.get(match.demand.domain);
-                        const demandNeed = simplifyEvidence(edge);
-                        const supplyHelp = simplifyCapability(match.supply, edge);
+                        const demandSig = getDemandSignature(match, edge);
+                        const supplySig = getSupplySignature(match, i);
+                        const isLast = i === previewMatches.length - 1;
 
                         return (
                           <motion.div
                             key={match.demand.domain}
-                            initial={{ opacity: 0, y: 15, scale: 0.95 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            transition={{ delay: 0.2 + (i * 0.1), duration: 0.3 }}
-                            className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]
-                              hover:bg-white/[0.05] hover:border-white/[0.1] transition-all duration-200"
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.2 + (i * 0.02), duration: 0.3 }}
+                            className="group"
                           >
-                            <div className="flex items-center justify-between text-[13px]">
-                              <span className="text-white/70 font-medium truncate max-w-[140px]">
-                                {match.demand.company}
-                              </span>
-                              <span className="text-white/30 mx-2">→</span>
-                              <span className="text-white/50 truncate max-w-[120px]">
-                                {match.supply.company}
-                              </span>
+                            <div className="grid grid-cols-[1fr_40px_1fr] gap-0 items-center">
+                              {/* DEMAND CARD — Left */}
+                              <motion.div
+                                className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]
+                                  group-hover:bg-white/[0.05] group-hover:border-white/[0.1]
+                                  transition-all duration-200 overflow-hidden min-w-0"
+                                whileHover={{ y: -2 }}
+                                title={getDemandTooltip(match, edge)}
+                              >
+                                {/* Line 1: Entity + Tier Badge */}
+                                <div className="flex items-center gap-2">
+                                  <p className="text-[14px] font-medium text-white/80 truncate flex-1">
+                                    {demandSig.company}
+                                  </p>
+                                  {/* Confidence Tier Badge */}
+                                  <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                                    match.tier === 'strong'
+                                      ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                      : match.tier === 'good'
+                                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                        : 'bg-white/10 text-white/50 border border-white/20'
+                                  }`}>
+                                    {match.tier === 'strong' ? '🟣' : match.tier === 'good' ? '🔵' : '⚪'}
+                                  </span>
+                                </div>
+                                {/* Line 2: Signal */}
+                                <p className="text-[12px] text-white/50 mt-1 truncate">
+                                  {demandSig.signal}
+                                </p>
+                                {/* Line 3: Tier Reason (replaces generic context) */}
+                                <p className="text-[11px] text-white/40 mt-0.5 truncate">
+                                  {match.tierReason || demandSig.context}
+                                </p>
+                              </motion.div>
+
+                              {/* CONNECTOR RAIL — Animated on hover */}
+                              <div className="relative flex items-center justify-center h-full">
+                                <div className="absolute w-full h-[1px] bg-white/[0.1] group-hover:bg-white/[0.2] transition-colors" />
+                                <motion.div
+                                  className="absolute left-0 w-2 h-2 rounded-full bg-white/30 group-hover:bg-white/50"
+                                  initial={{ x: 0 }}
+                                  whileHover={{ x: 24 }}
+                                  transition={{ duration: 0.3 }}
+                                />
+                                <div className="absolute right-0 w-0 h-0 border-t-[4px] border-t-transparent
+                                  border-b-[4px] border-b-transparent border-l-[6px] border-l-white/30
+                                  group-hover:border-l-white/50 transition-colors" />
+                              </div>
+
+                              {/* SUPPLY CARD — Right */}
+                              <motion.div
+                                className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]
+                                  group-hover:bg-white/[0.05] group-hover:border-white/[0.1]
+                                  transition-all duration-200 overflow-hidden min-w-0"
+                                whileHover={{ y: -2 }}
+                                title={getSupplyTooltip(match)}
+                              >
+                                {/* Line 1: Entity */}
+                                <p className="text-[14px] font-medium text-white/70 truncate">
+                                  {supplySig.entity}
+                                </p>
+                                {/* Line 2: Capability */}
+                                <p className="text-[12px] text-white/50 mt-1 truncate">
+                                  {supplySig.capability}
+                                </p>
+                                {/* Line 3: Fit */}
+                                <p className="text-[11px] text-white/30 mt-0.5 truncate">
+                                  {supplySig.fit}
+                                </p>
+                              </motion.div>
                             </div>
-                            <div className="flex items-center justify-between text-[11px] mt-1.5 text-white/30">
-                              <span>{demandNeed}</span>
-                              <span>{supplyHelp}</span>
-                            </div>
+
+                            {/* +X MORE — Attached to last card */}
+                            {isLast && moreCount > 0 && (
+                              <motion.div
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 0.6, y: 0 }}
+                                transition={{ delay: 0.5 }}
+                                className="text-center mt-3"
+                              >
+                                <span className="text-[11px] text-white/40">
+                                  +{moreCount} more matches
+                                </span>
+                              </motion.div>
+                            )}
                           </motion.div>
                         );
                       })}
                     </div>
 
-                    {/* More count */}
-                    {moreCount > 0 && (
-                      <motion.p
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.5 }}
-                        className="text-[12px] text-white/25 mb-8"
-                      >
-                        +{moreCount} more
-                      </motion.p>
-                    )}
+                    {/* ============================================= */}
+                    {/* CTA SECTION — Anchored under cards */}
+                    {/* ============================================= */}
+                    {(() => {
+                      // PHILEMON: Build enrichment plan to show provider status
+                      const enrichmentPlan = buildEnrichmentPlan(
+                        matches.map(m => ({
+                          domain: m.demand.domain,
+                          company: m.demand.company,
+                          email: m.demand.existingContact?.email,
+                          existingContact: m.demand.existingContact,
+                        })),
+                        {
+                          apolloApiKey: settings?.apolloApiKey,
+                          anymailApiKey: settings?.anymailApiKey,
+                          connectorAgentApiKey: settings?.connectorAgentApiKey,
+                        }
+                      );
 
-                    {/* CTA Button */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.55 }}
-                      className="relative group inline-block"
-                    >
-                      <motion.button
-                        onClick={proceedToEnrichment}
-                        className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
-                          hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
-                          shadow-[0_0_20px_rgba(255,255,255,0.1)]"
-                        whileHover={{ boxShadow: '0 0 30px rgba(255,255,255,0.15)' }}
-                      >
-                        Find the right people
-                      </motion.button>
-                    </motion.div>
+                      const { summary } = enrichmentPlan;
 
-                    {/* Matches low? Educational note */}
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: 0.7 }}
-                      className="mt-10 pt-6 border-t border-white/[0.06]"
-                    >
-                      <p className="text-[11px] text-white/50 mb-1">
-                        Matches low? Improve your dataset.
-                      </p>
-                      <p className="text-[10px] text-white/40 max-w-[280px] mx-auto">
-                        We only show companies when there's a real match. We can't lie to you.
-                      </p>
-                    </motion.div>
+                      // PHILEMON: Combine provider status with dataset routability
+                      const canProceed = canEnrich && summary.enabledProviders.length > 0;
+
+                      return (
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.4 }}
+                          className="mt-8 pt-6 border-t border-white/[0.06] text-center"
+                        >
+                          {/* PHILEMON: Block message when dataset is incomplete */}
+                          {!canEnrich && blockReason && (
+                            <div className="mb-6 p-4 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+                              <p className="text-[12px] text-amber-400 font-medium">
+                                Dataset incomplete
+                              </p>
+                              <p className="text-[11px] text-amber-400/70 mt-1">
+                                {blockReason}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Pre-enrichment explanation (only when routable) */}
+                          {canEnrich && (
+                            <p className="text-[11px] text-white/40 mb-4">
+                              We will try to find emails. Some companies don't have public emails. That's normal.
+                            </p>
+                          )}
+
+                          {/* Provider status (only when routable) */}
+                          {canEnrich && (
+                            <div className="flex items-center justify-center gap-4 mb-5">
+                              {enrichmentPlan.providers.map(p => (
+                                <div key={p.provider} className="flex items-center gap-1.5">
+                                  <span className={`w-1.5 h-1.5 rounded-full ${p.enabled ? 'bg-emerald-400' : 'bg-white/20'}`} />
+                                  <span className={`text-[10px] ${p.enabled ? 'text-white/50' : 'text-white/30'}`}>
+                                    {p.provider === 'apollo' ? 'Apollo' : p.provider === 'anymail' ? 'Anymail' : 'Connector Agent'}
+                                  </span>
+                                  {!p.enabled && (
+                                    <span className="text-[9px] text-white/20">(not connected)</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Summary stats (only when routable) */}
+                          {canEnrich && (summary.recordsWithEmail > 0 || summary.recordsMissingDomain > 0) && (
+                            <p className="text-[10px] text-white/30 mb-4">
+                              {summary.recordsWithEmail > 0 && `${summary.recordsWithEmail} already have emails. `}
+                              {summary.recordsMissingDomain > 0 && `${summary.recordsMissingDomain} missing website.`}
+                            </p>
+                          )}
+
+                          <motion.button
+                            onClick={proceedToEnrichment}
+                            disabled={!canProceed}
+                            className={`px-8 py-3 rounded-xl font-medium text-[14px]
+                              transition-all duration-200 shadow-[0_0_20px_rgba(255,255,255,0.1)]
+                              ${canProceed
+                                ? 'bg-white text-black hover:scale-[1.02] active:scale-[0.98]'
+                                : 'bg-white/10 text-white/40 cursor-not-allowed'
+                              }`}
+                            whileHover={canProceed ? { boxShadow: '0 0 30px rgba(255,255,255,0.15)' } : {}}
+                          >
+                            {!canEnrich
+                              ? 'Re-run scrape with required fields'
+                              : summary.enabledProviders.length > 0
+                              ? `Find emails for ${summary.recordsNeedingEnrichment} companies`
+                              : 'Connect an email tool in Settings'
+                            }
+                          </motion.button>
+
+                          {/* Credits info — only when routable AND providers enabled */}
+                          {canProceed && (
+                            <p className="text-[10px] text-white/30 mt-3">
+                              Uses credits for {summary.recordsNeedingEnrichment} lookups
+                            </p>
+                          )}
+                        </motion.div>
+                      );
+                    })()}
                   </>
                 );
               })()}
             </motion.div>
           )}
 
-          {/* NO MATCHES — Clean, friendly, no blame */}
+          {/* ESCAPE HATCH — Always allow sending */}
           {state.step === 'no_matches' && (
             <motion.div
               key="no_matches"
@@ -2539,27 +2684,36 @@ export default function Flow() {
               exit={{ opacity: 0 }}
               className="text-center max-w-md mx-auto"
             >
-              {/* Primary heading */}
+              {/* Primary heading — encouraging, not blocking */}
               <h2 className="text-[32px] font-light text-white/90 mb-3">
-                No matches found
+                Datasets loaded
               </h2>
 
-              {/* Secondary text */}
+              {/* Secondary text — action-oriented */}
               <p className="text-[14px] text-white/40 mb-8">
-                These datasets don't line up right now.
+                We found companies you can reach out to.
               </p>
 
-              {/* Helper copy */}
+              {/* Helper copy — encouraging */}
               <div className="space-y-1.5 mb-10 text-[13px] text-white/30">
-                <p>This usually means:</p>
-                <p className="pl-4">• No clear need on one side</p>
-                <p className="pl-4">• Or no fit on the other</p>
+                <p>These are exploratory matches.</p>
+                <p>Some may need softer positioning.</p>
+                <p>You can always refine later.</p>
               </div>
 
-              {/* CTA Button */}
+              {/* PRIMARY CTA — Send anyway (escape hatch) */}
+              <button
+                onClick={proceedToEnrichment}
+                className="px-8 py-3 bg-white text-black rounded-xl text-[14px] font-medium
+                  hover:scale-[1.02] active:scale-[0.98]
+                  transition-all duration-200 shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+              >
+                Find contacts anyway
+              </button>
+
+              {/* SECONDARY — Try different datasets */}
               <button
                 onClick={() => {
-                  // Reset to upload step to try different datasets
                   setState(prev => ({
                     ...prev,
                     step: 'upload',
@@ -2572,23 +2726,16 @@ export default function Flow() {
                     progress: { current: 0, total: 0, message: '' },
                   }));
                 }}
-                className="px-6 py-2.5 bg-white/[0.06] border border-white/[0.08] text-white/70 rounded-xl text-[14px]
-                  hover:bg-white/[0.08] hover:border-white/[0.12] hover:text-white/90
+                className="mt-4 px-6 py-2.5 bg-transparent border border-white/[0.08] text-white/50 rounded-xl text-[13px]
+                  hover:border-white/[0.12] hover:text-white/70
                   transition-all duration-200"
               >
-                Try different datasets
+                Or try different datasets
               </button>
 
-              {/* Optional help link */}
-              <p className="mt-6 text-[11px] text-white/20">
-                <a href="/library?page=matching" className="hover:text-white/40 underline underline-offset-2">
-                  How to improve matches
-                </a>
-              </p>
-
-              {/* No credits message */}
-              <p className="mt-8 text-[11px] text-emerald-500/60">
-                No credits spent.
+              {/* Reassurance */}
+              <p className="mt-6 text-[11px] text-white/30">
+                You can always refine your approach later.
               </p>
             </motion.div>
           )}
@@ -2621,7 +2768,7 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* ROUTE CONTEXT — FIX: Shows BEFORE intro generation */}
+          {/* ENRICHMENT COMPLETE — Ready for intro generation */}
           {state.step === 'route_context' && (
             <motion.div
               key="route_context"
@@ -2639,18 +2786,55 @@ export default function Flow() {
                 // Enrichment results (can be 0 if BUDGET_EXCEEDED)
                 const demandEnriched = demandMatches.filter(m => {
                   const e = state.enrichedDemand.get(m.demand.domain);
-                  return e?.success && e?.email;
+                  return e && isSuccessfulEnrichment(e) && e.email;
                 }).length;
                 const supplyEnriched = supplyAggregates.filter(a => {
                   const e = state.enrichedSupply.get(a.supply.domain);
-                  return e?.success && e?.email;
+                  return e && isSuccessfulEnrichment(e) && e.email;
                 }).length;
                 const totalEnriched = demandEnriched + supplyEnriched;
                 const enrichmentFailed = matchCount > 0 && totalEnriched === 0;
                 const enrichmentPartial = matchCount > 0 && totalEnriched > 0 && totalEnriched < matchCount;
 
-                const isEditingContext = editingPresignalSide !== null;
-                const currentContext = settings?.presignalDemand || settings?.presignalSupply || '';
+                // SENDABLE COUNT — requires both sides enriched (routable contacts)
+                // Per user.txt: "intro routing requires stricter constraints"
+                const sendableCount = Math.min(demandEnriched, supplyEnriched);
+
+                // =============================================================
+                // ENRICHMENT STATUS HELPER — Maps outcome to simple label
+                // =============================================================
+                const getEnrichmentStatusLabel = (result: EnrichmentResult | undefined): { label: string; color: string } => {
+                  if (!result) {
+                    return { label: 'Not searched', color: 'text-white/30' };
+                  }
+                  // Use outcome (never collapse to boolean)
+                  if (isSuccessfulEnrichment(result) && result.email) {
+                    return { label: 'Email found', color: 'text-emerald-400/80' };
+                  }
+                  if (result.outcome === 'ERROR' || result.outcome === 'RATE_LIMITED') {
+                    return { label: 'Credits used up', color: 'text-amber-400/70' };
+                  }
+                  // Use human-readable explanation from outcome
+                  return { label: getOutcomeExplanation(result), color: 'text-white/40' };
+                };
+
+                // Build per-company status list
+                const enrichmentStatusList = demandMatches.map(m => {
+                  const result = state.enrichedDemand.get(m.demand.domain);
+                  const status = getEnrichmentStatusLabel(result);
+                  return {
+                    company: m.demand.company,
+                    domain: m.demand.domain,
+                    ...status,
+                  };
+                });
+
+                // Count by status for summary
+                const statusCounts = {
+                  found: enrichmentStatusList.filter(s => s.label === 'Email found').length,
+                  notFound: enrichmentStatusList.filter(s => s.label === 'No public email').length,
+                  creditsUsed: enrichmentStatusList.filter(s => s.label === 'Credits used up').length,
+                };
 
                 return (
                   <div className="flex flex-col items-center">
@@ -2687,114 +2871,161 @@ export default function Flow() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.15 }}
-                      className="text-center mb-6"
+                      className="text-center mb-4"
                     >
                       <p className="text-[18px] font-light text-white/80">{matchCount} matches found</p>
                       {enrichmentFailed ? (
-                        <>
-                          <p className="text-[12px] text-amber-400/70 mt-2">0 ready to route (emails unavailable)</p>
-                          <p className="text-[11px] text-white/30 mt-2 max-w-xs">
-                            We found real matches, but couldn't retrieve contact emails yet.
-                            This usually happens when enrichment limits are reached.
-                          </p>
-                        </>
+                        <p className="text-[12px] text-amber-400/70 mt-2">0 ready to send</p>
                       ) : enrichmentPartial ? (
-                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} of {matchCount} ready to route</p>
+                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} of {matchCount} ready to send</p>
                       ) : (
-                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} ready to route</p>
+                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} ready to send</p>
                       )}
                     </motion.div>
 
-                    {/* Route Context Input */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.2 }}
-                      className="w-full max-w-sm mb-8"
-                    >
-                      {isEditingContext ? (
-                        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.08]">
-                          <p className="text-[11px] text-white/40 mb-3 text-center">Route Context</p>
-                          <textarea
-                            value={presignalText}
-                            onChange={(e) => setPresignalText(e.target.value)}
-                            placeholder="e.g., I've been speaking with a few founders who recently raised..."
-                            className="w-full h-20 bg-transparent text-[13px] text-white/70 resize-none outline-none placeholder:text-white/20 leading-relaxed"
-                            autoFocus
-                          />
-                          <div className="flex justify-end gap-2 mt-3">
-                            <button
-                              onClick={cancelEditPresignal}
-                              className="px-3 py-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              onClick={async () => {
-                                await savePresignal('demand');
-                                if (presignalText.trim()) {
-                                  setSettings(prev => prev ? { ...prev, presignalSupply: presignalText.trim() } : prev);
-                                  if (user?.id) {
-                                    await supabase.from('operator_settings').update({ presignal_supply: presignalText.trim() }).eq('user_id', user.id);
-                                  }
-                                }
-                              }}
-                              disabled={savingPresignal}
-                              className="px-4 py-1.5 text-[11px] bg-white/10 hover:bg-white/15 text-white/80 rounded-lg transition-all disabled:opacity-50"
-                            >
-                              {savingPresignal ? 'Saving...' : 'Save'}
-                            </button>
-                          </div>
+                    {/* Enrichment Status Summary — Simple labels, no raw codes */}
+                    {(enrichmentFailed || enrichmentPartial) && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        className="mb-6 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] max-w-xs"
+                      >
+                        <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2 text-center">What happened</p>
+                        <div className="flex justify-center gap-4 text-[11px]">
+                          {statusCounts.found > 0 && (
+                            <span className="text-emerald-400/80">{statusCounts.found} email found</span>
+                          )}
+                          {statusCounts.notFound > 0 && (
+                            <span className="text-white/40">{statusCounts.notFound} no public email</span>
+                          )}
+                          {statusCounts.creditsUsed > 0 && (
+                            <span className="text-amber-400/70">{statusCounts.creditsUsed} credits used up</span>
+                          )}
                         </div>
-                      ) : currentContext ? (
-                        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-                          <div className="flex items-center justify-between mb-3">
-                            <span className="text-[10px] text-white/30 uppercase tracking-wider">Route Context</span>
-                            <div className="flex items-center gap-3">
-                              <button
-                                onClick={() => startEditPresignal('demand')}
-                                className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  // Clear presignal from state
-                                  setSettings(prev => prev ? { ...prev, presignalDemand: '', presignalSupply: '' } : prev);
-                                  // Clear from DB/localStorage
-                                  if (user?.id) {
-                                    await supabase.from('operator_settings').update({ presignal_demand: '', presignal_supply: '' }).eq('user_id', user.id);
-                                  } else {
-                                    const guestSettings = JSON.parse(localStorage.getItem('guest_settings') || '{}');
-                                    guestSettings.presignalDemand = '';
-                                    guestSettings.presignalSupply = '';
-                                    localStorage.setItem('guest_settings', JSON.stringify(guestSettings));
-                                  }
-                                }}
-                                className="text-[10px] text-red-400/50 hover:text-red-400/80 transition-colors"
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          </div>
-                          <p className="text-[13px] text-white/60 leading-relaxed text-center">{safeRender(currentContext)}</p>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => startEditPresignal('demand')}
-                          className="w-full group"
+                        <p className="text-[9px] text-white/20 mt-2 text-center">
+                          Some companies don't have public emails. This is normal.
+                        </p>
+                      </motion.div>
+                    )}
+
+                    {/* PHILEMON: Truth-Surfacing Cause Card */}
+                    {/* Show when matches exist but 0 sendable — explains WHY */}
+                    {(() => {
+                      const sendableCount = Math.min(demandEnriched, supplyEnriched);
+
+                      // Only show if: matches exist AND 0 sendable
+                      if (!(matchCount > 0 && sendableCount === 0)) {
+                        return null;
+                      }
+
+                      // Analyze causes from OUTCOME + INPUTS (no inference, no guessing)
+                      // Per user.txt: UI must render directly from outcome + inputs present
+
+                      // Group by outcome type
+                      const outcomesByType: Record<string, number> = {};
+                      const allResults = [
+                        ...Array.from(state.enrichedDemand.values()),
+                        ...Array.from(state.enrichedSupply.values()),
+                      ].filter((e): e is EnrichmentResult => !!e);
+
+                      for (const result of allResults) {
+                        if (!isSuccessfulEnrichment(result)) {
+                          outcomesByType[result.outcome] = (outcomesByType[result.outcome] || 0) + 1;
+                        }
+                      }
+
+                      // Count by cause (from outcome, not heuristics)
+                      const missingInputCount = outcomesByType['MISSING_INPUT'] || 0;
+                      const noCandidatesCount = outcomesByType['NO_CANDIDATES'] || 0;
+                      const noProvidersCount = outcomesByType['NO_PROVIDERS'] || 0;
+                      const errorCount = (outcomesByType['ERROR'] || 0) + (outcomesByType['AUTH_ERROR'] || 0) + (outcomesByType['RATE_LIMITED'] || 0);
+
+                      const hasMissingInput = missingInputCount > 0;
+                      const hasNoCandidates = noCandidatesCount > 0;
+                      const hasNoProviders = noProvidersCount > 0;
+                      const hasError = errorCount > 0;
+
+                      // If no identifiable cause, don't show card
+                      if (!hasMissingInput && !hasNoCandidates && !hasNoProviders && !hasError) {
+                        return null;
+                      }
+
+                      return (
+                        <motion.div
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.25 }}
+                          className="mb-6 p-4 rounded-xl bg-amber-500/[0.04] border border-amber-500/[0.12] max-w-md"
                         >
-                          <div className="p-4 rounded-xl border border-dashed border-white/[0.08] hover:border-white/[0.15] transition-all duration-300">
-                            <p className="text-[12px] text-white/30 group-hover:text-white/50 transition-colors text-center">
-                              Route Context <span className="text-white/20">(Optional)</span>
-                            </p>
-                            <p className="text-[10px] text-white/20 mt-1 text-center">
-                              Prior conversations or observations
-                            </p>
+                          {/* Header with Info icon — neutral amber tone */}
+                          <div className="flex items-center gap-2 mb-3">
+                            <Info className="w-4 h-4 text-amber-400/60" />
+                            <p className="text-[13px] text-white/80 font-medium">0 ready to send</p>
                           </div>
-                        </button>
-                      )}
-                    </motion.div>
+
+                          {/* Body — 2nd grade reading level */}
+                          <div className="space-y-2 text-[12px] text-white/60 mb-4">
+                            <p>These matches are real — but there's missing information.</p>
+                            <p>Connector OS can only send when there's a real person to contact.</p>
+                          </div>
+
+                          {/* Cause breakdown — from OUTCOME (no guessing) */}
+                          <div className="space-y-1.5 mb-4">
+                            {hasNoCandidates && (
+                              <div className="flex items-center gap-2 text-[11px] text-white/50">
+                                <span className="w-1 h-1 rounded-full bg-white/30" />
+                                <span>No public email exists ({noCandidatesCount})</span>
+                              </div>
+                            )}
+                            {hasMissingInput && (
+                              <div className="flex items-center gap-2 text-[11px] text-white/50">
+                                <span className="w-1 h-1 rounded-full bg-white/30" />
+                                <span>No website or company name found ({missingInputCount})</span>
+                              </div>
+                            )}
+                            {hasNoProviders && (
+                              <div className="flex items-center gap-2 text-[11px] text-white/50">
+                                <span className="w-1 h-1 rounded-full bg-white/30" />
+                                <span>No search providers configured ({noProvidersCount})</span>
+                              </div>
+                            )}
+                            {hasError && (
+                              <div className="flex items-center gap-2 text-[11px] text-white/50">
+                                <span className="w-1 h-1 rounded-full bg-white/30" />
+                                <span>Provider temporarily unavailable ({errorCount})</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Fix instructions — no tool names */}
+                          <div className="pt-3 border-t border-white/[0.06]">
+                            <p className="text-[11px] text-white/50 mb-2">To fix this:</p>
+                            <ul className="space-y-1 text-[11px] text-white/40">
+                              <li className="flex items-start gap-2">
+                                <span className="mt-1">•</span>
+                                <span>Make sure your dataset includes people (founder, CEO, head of X)</span>
+                              </li>
+                              <li className="flex items-start gap-2">
+                                <span className="mt-1">•</span>
+                                <span>Or include a company website so we can find the right person</span>
+                              </li>
+                            </ul>
+                          </div>
+
+                          {/* Optional actions — non-blocking */}
+                          <div className="flex gap-2 mt-4">
+                            <button
+                              onClick={() => window.open('/settings', '_blank')}
+                              className="px-3 py-1.5 text-[10px] text-white/50 hover:text-white/70
+                                bg-white/[0.04] hover:bg-white/[0.06] rounded-lg transition-colors"
+                            >
+                              Check dataset
+                            </button>
+                          </div>
+                        </motion.div>
+                      );
+                    })()}
 
                     {/* Buttons — conditional on enrichment state */}
                     {enrichmentFailed ? (
@@ -2828,24 +3059,33 @@ export default function Flow() {
                       </motion.div>
                     ) : (
                       <>
-                        <motion.button
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.3 }}
-                          onClick={generateIntrosWithPresignal}
-                          disabled={isEditingContext || savingPresignal || demandEnriched === 0}
-                          className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
-                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
-                            shadow-[0_0_20px_rgba(255,255,255,0.1)]
-                            disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                          whileHover={{ boxShadow: '0 0 30px rgba(255,255,255,0.15)' }}
-                        >
-                          Generate Intros
-                        </motion.button>
+                        {/* STATE-AWARE button: disabled when no routable contacts */}
+                        <div className="relative group">
+                          <motion.button
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.3 }}
+                            onClick={regenerateIntros}
+                            disabled={sendableCount === 0}
+                            className="px-8 py-3 bg-white text-black rounded-xl font-medium text-[14px]
+                              hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
+                              shadow-[0_0_20px_rgba(255,255,255,0.1)]
+                              disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                            whileHover={sendableCount > 0 ? { boxShadow: '0 0 30px rgba(255,255,255,0.15)' } : {}}
+                          >
+                            {sendableCount > 0 ? `Generate intros (${sendableCount})` : 'Generate intros'}
+                          </motion.button>
 
-                        <p className="mt-4 text-[10px] text-white/25">
-                          {currentContext ? 'Context will be used in all intros' : 'Skip context to use neutral intros'}
-                        </p>
+                          {/* Tooltip — shows when disabled */}
+                          {sendableCount === 0 && (
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5
+                              bg-black/90 border border-white/10 rounded-lg text-[11px] text-white/70
+                              opacity-0 group-hover:opacity-100 transition-opacity duration-200
+                              whitespace-nowrap pointer-events-none">
+                              No routable contacts yet. Add people or websites.
+                            </div>
+                          )}
+                        </div>
                       </>
                     )}
                   </div>
@@ -2880,143 +3120,209 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* READY */}
+          {/* READY — Split Model (Ready to Send vs Need Email) */}
           {state.step === 'ready' && (
             <motion.div
               key="ready"
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
-              className="text-center"
+              className="w-full max-w-2xl mx-auto"
             >
-{/* Ready to Route — Vercel/Linear Level */}
               {(() => {
-                // Calculate total sendable
+                // Calculate split: ready vs need email
                 const demandMatches = state.matchingResult?.demandMatches || [];
                 const supplyAggregates = state.matchingResult?.supplyAggregates || [];
 
-                const demandEnriched = demandMatches.filter(m => {
+                // Ready to send (has email)
+                const demandReady = demandMatches.filter(m => {
                   const e = state.enrichedDemand.get(m.demand.domain);
-                  return e?.success && e?.email;
-                }).length;
-
-                const supplyEnriched = supplyAggregates.filter(a => {
+                  return e && isSuccessfulEnrichment(e) && e.email;
+                });
+                const supplyReady = supplyAggregates.filter(a => {
                   const e = state.enrichedSupply.get(a.supply.domain);
-                  return e?.success && e?.email;
-                }).length;
+                  return e && isSuccessfulEnrichment(e) && e.email;
+                });
 
-                const totalReady = demandEnriched + supplyEnriched;
-                const hasContext = settings?.presignalDemand || settings?.presignalSupply;
-                const isEditingContext = editingPresignalSide !== null;
+                // Need email (no email found)
+                const demandNeedEmail = demandMatches.filter(m => {
+                  const e = state.enrichedDemand.get(m.demand.domain);
+                  return !e || !isSuccessfulEnrichment(e) || !e.email;
+                });
+                const supplyNeedEmail = supplyAggregates.filter(a => {
+                  const e = state.enrichedSupply.get(a.supply.domain);
+                  return !e || !isSuccessfulEnrichment(e) || !e.email;
+                });
+
+                const totalReady = demandReady.length + supplyReady.length;
+                const totalNeedEmail = demandNeedEmail.length + supplyNeedEmail.length;
 
                 return (
-                  <div className="flex flex-col items-center">
-                    {/* Checkmark with glow animation */}
+                  <div className="space-y-12">
+                    {/* ═══════════════════════════════════════════════════════════════
+                        ZONE 1: Ready to Send
+                    ═══════════════════════════════════════════════════════════════ */}
                     <motion.div
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                      className="relative w-16 h-16 mb-8"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.1 }}
+                      className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-8"
                     >
-                      <div className="absolute inset-0 rounded-full bg-emerald-500/20 blur-xl animate-pulse" />
-                      <div className="relative w-full h-full rounded-full bg-gradient-to-b from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 flex items-center justify-center">
-                        <motion.svg
-                          initial={{ pathLength: 0 }}
-                          animate={{ pathLength: 1 }}
-                          transition={{ duration: 0.5, delay: 0.2 }}
-                          className="w-7 h-7 text-emerald-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          strokeWidth={2.5}
+                      {/* Header */}
+                      <div className="flex items-baseline justify-between mb-2">
+                        <h2 className="text-[15px] font-medium text-white/90">Ready to Send</h2>
+                        <span className="text-[32px] font-light text-white/90 tabular-nums">{totalReady}</span>
+                      </div>
+                      <p className="text-[13px] text-white/40 mb-6">Emails found. Ready for Instantly.</p>
+
+                      {/* Preview cards (max 2) */}
+                      {totalReady > 0 && (
+                        <div className="space-y-3 mb-6">
+                          {demandReady.slice(0, 2).map((m, i) => {
+                            const e = state.enrichedDemand.get(m.demand.domain);
+                            const intro = state.demandIntros.get(m.demand.domain);
+                            return (
+                              <div key={m.demand.domain} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[13px] font-medium text-white/90 truncate">{m.demand.company}</p>
+                                    <p className="text-[12px] text-white/40 truncate">{m.demand.industry || 'Company'}</p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="text-[12px] text-white/60 font-mono">{e?.email}</p>
+                                    <p className="text-[10px] text-emerald-400/70">✓ verified</p>
+                                  </div>
+                                </div>
+                                {intro && (
+                                  <p className="mt-3 text-[11px] text-white/50 line-clamp-2 leading-relaxed">"{intro}"</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {totalReady > 2 && (
+                            <p className="text-[12px] text-white/30 text-center">+{totalReady - 2} more ready</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={startSending}
+                          disabled={totalReady === 0}
+                          className="flex-1 px-5 py-3 text-[13px] font-medium rounded-xl transition-all bg-white text-black hover:bg-white/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <motion.path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M5 13l4 4L19 7"
-                            initial={{ pathLength: 0 }}
-                            animate={{ pathLength: 1 }}
-                            transition={{ duration: 0.5, delay: 0.2 }}
-                          />
-                        </motion.svg>
+                          Send {totalReady} to Instantly
+                        </button>
+                        <button
+                          onClick={openExportReceipt}
+                          className="px-4 py-3 text-[13px] font-medium rounded-xl border border-white/[0.12] text-white/70 hover:text-white hover:border-white/30 transition-all active:scale-[0.98]"
+                        >
+                          Export CSV
+                        </button>
                       </div>
                     </motion.div>
 
-                    {/* Count — total contacts being reached */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.3 }}
-                      className="text-center mb-6"
-                    >
-                      <p className="text-[18px] font-light text-white/80">Found {demandEnriched} matches</p>
-                      <p className="text-[12px] text-white/40 mt-2">These will reach {demandEnriched + supplyEnriched} people</p>
-                      <p className="text-[11px] text-white/30 mt-0.5">{demandEnriched} demand · {supplyEnriched} supply</p>
-                    </motion.div>
+                    {/* ═══════════════════════════════════════════════════════════════
+                        ZONE 2: Need Email
+                    ═══════════════════════════════════════════════════════════════ */}
+                    {totalNeedEmail > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        className="rounded-2xl border border-amber-500/[0.15] bg-amber-500/[0.02] p-8"
+                      >
+                        {/* Header */}
+                        <div className="flex items-baseline justify-between mb-2">
+                          <h2 className="text-[15px] font-medium text-white/90">Need Email</h2>
+                          <span className="text-[32px] font-light text-white/60 tabular-nums">{totalNeedEmail}</span>
+                        </div>
+                        <p className="text-[13px] text-white/40 mb-6">Intro ready. Saad recommends LinkedIn DMs when no contact found.</p>
 
-                    {/* Intro Preview Cards — 2 samples */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.4 }}
-                      className="w-full max-w-md space-y-3 mb-8"
-                    >
-                      {(() => {
-                        // Get first match with both intros
-                        const matchesWithIntros = demandMatches
-                          .filter(m => state.demandIntros.get(m.demand.domain) && state.supplyIntros.get(m.supply.domain))
-                          .slice(0, 1);
+                        {/* Preview cards (max 2) */}
+                        <div className="space-y-3 mb-6">
+                          {demandNeedEmail.slice(0, 2).map((m, i) => {
+                            const intro = state.demandIntros.get(m.demand.domain);
+                            return (
+                              <div key={m.demand.domain} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[13px] font-medium text-white/90 truncate">{m.demand.company}</p>
+                                    <p className="text-[12px] text-white/40 truncate">{m.demand.industry || 'Company'}</p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="text-[12px] text-white/40 font-mono">{m.demand.domain}</p>
+                                    <p className="text-[10px] text-amber-400/70">no email found</p>
+                                  </div>
+                                </div>
+                                {intro && (
+                                  <p className="mt-3 text-[11px] text-white/50 line-clamp-2 leading-relaxed">"{intro}"</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {totalNeedEmail > 2 && (
+                            <p className="text-[12px] text-white/30 text-center">+{totalNeedEmail - 2} more need email</p>
+                          )}
+                        </div>
 
-                        if (matchesWithIntros.length === 0) return null;
+                        {/* Actions */}
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              // Export only need-email records
+                              const records = [...demandNeedEmail.map(m => ({
+                                type: 'demand',
+                                company: m.demand.company,
+                                domain: m.demand.domain,
+                                industry: m.demand.industry || '',
+                                intro: state.demandIntros.get(m.demand.domain) || '',
+                                email: '',
+                              })), ...supplyNeedEmail.map(a => ({
+                                type: 'supply',
+                                company: a.supply.company,
+                                domain: a.supply.domain,
+                                industry: a.supply.industry || '',
+                                intro: state.supplyIntros.get(a.supply.domain) || '',
+                                email: '',
+                              }))];
+                              const csv = [
+                                ['type', 'company', 'domain', 'industry', 'intro', 'email'].join(','),
+                                ...records.map(r => [r.type, `"${r.company}"`, r.domain, `"${r.industry}"`, `"${r.intro.replace(/"/g, '""')}"`, r.email].join(','))
+                              ].join('\n');
+                              const blob = new Blob([csv], { type: 'text/csv' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `need-email-${new Date().toISOString().split('T')[0]}.csv`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="flex-1 px-5 py-3 text-[13px] font-medium rounded-xl border border-white/[0.12] text-white/70 hover:text-white hover:border-white/30 transition-all active:scale-[0.98]"
+                          >
+                            Export {totalNeedEmail} to complete manually
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
 
-                        const match = matchesWithIntros[0];
-                        const demandIntro = state.demandIntros.get(match.demand.domain) || '';
-                        const supplyIntro = state.supplyIntros.get(match.supply.domain) || '';
-
-                        return (
-                          <>
-                            {/* Demand intro preview — compact, left-aligned */}
-                            <motion.div
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.5 }}
-                              className="text-left"
-                            >
-                              <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">
-                                To {match.demand.company}
-                              </p>
-                              <p className="text-[12px] text-white/60 leading-[1.7] whitespace-pre-line">
-                                {demandIntro}
-                              </p>
-                            </motion.div>
-
-                            <div className="h-px bg-white/[0.04] my-4" />
-
-                            {/* Supply intro preview — compact, left-aligned */}
-                            <motion.div
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: 0.65 }}
-                              className="text-left"
-                            >
-                              <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2">
-                                To {match.supply.company}
-                              </p>
-                              <p className="text-[12px] text-white/60 leading-[1.7] whitespace-pre-line">
-                                {supplyIntro}
-                              </p>
-                            </motion.div>
-                          </>
-                        );
-                      })()}
-                    </motion.div>
+                    {/* Start Over */}
+                    <div className="text-center">
+                      <button
+                        onClick={reset}
+                        className="px-4 py-2 text-[12px] text-white/40 hover:text-white/60 transition-colors"
+                      >
+                        Start Over
+                      </button>
+                    </div>
 
                     {/* Error surface */}
                     {state.error && (
                       <motion.p
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="text-[12px] text-red-400/80 mb-6 text-center max-w-sm"
+                        className="text-[12px] text-red-400/80 text-center"
                       >
                         {safeRender(state.error)}
                       </motion.p>
@@ -3025,89 +3331,6 @@ export default function Flow() {
                 );
               })()}
 
-              {/* Run Audit Panel — Observability (debug only) */}
-              {isDebugMode && state.connectorMode && (
-                <div className="mb-6 max-w-sm mx-auto">
-                  <RunAuditPanel
-                    data={state.auditData || {
-                      mode: state.connectorMode,
-                      registryVersion: MODE_REGISTRY_VERSION,
-                      demandCount: state.demandRecords.length,
-                      supplyCount: state.supplyRecords.length,
-                      enrichedCount: state.enrichedDemand.size + state.enrichedSupply.size,
-                      matchedCount: state.matchingResult?.demandMatches.length || 0,
-                      demandValidationFailures: [],
-                      supplyValidationFailures: [],
-                      copyValidationFailures: state.copyValidationFailures,
-                      instantlyPayloadSize: (state.matchingResult?.demandMatches.length || 0) + (state.matchingResult?.supplyAggregates.length || 0),
-                      sentCount: state.sentDemand + state.sentSupply,
-                      skippedReasons: [],
-                      runStartedAt: new Date(),
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* Route button with presignal gate */}
-              {(() => {
-                // Match count for button text
-                const matchCount = state.matchingResult?.demandMatches.length || 0;
-
-                // CANONICAL: Check for presignal violations using per-side presignal
-                const hasPresignalViolation = (() => {
-                  if (!state.matchingResult) return false;
-
-                  // Check demand intros (use per-side presignalDemand)
-                  const demandPresignal = settings?.presignalDemand;
-                  for (const match of state.matchingResult.demandMatches.slice(0, 2)) {
-                    const intro = state.demandIntros.get(match.demand.domain) || '';
-                    if (!hasPresignal(demandPresignal) && containsActivityTimingLanguage(intro).found) {
-                      return true;
-                    }
-                  }
-
-                  // Check supply intros (use per-side presignalSupply)
-                  const supplyPresignal = settings?.presignalSupply;
-                  for (const agg of state.matchingResult.supplyAggregates.slice(0, 1)) {
-                    const intro = state.supplyIntros.get(agg.supply.domain) || '';
-                    if (!hasPresignal(supplyPresignal) && containsActivityTimingLanguage(intro).found) {
-                      return true;
-                    }
-                  }
-
-                  return false;
-                })();
-
-                return (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="flex items-center justify-center gap-3">
-                      <button
-                        onClick={reset}
-                        className="px-4 py-2 text-[13px] text-white/50 hover:text-white/70 transition-colors"
-                      >
-                        Start Over
-                      </button>
-                      <button
-                        onClick={openExportReceipt}
-                        className="px-4 py-2.5 text-[13px] font-medium rounded-lg border border-white/20 text-white/70 hover:text-white hover:border-white/40 transition-all active:scale-[0.98]"
-                      >
-                        Export CSV
-                      </button>
-                      <button
-                        onClick={startSending}
-                        disabled={hasPresignalViolation}
-                        className={`px-5 py-2.5 text-[13px] font-medium rounded-lg transition-all ${
-                          hasPresignalViolation
-                            ? 'bg-white/20 text-white/30 cursor-not-allowed'
-                            : 'bg-white text-black hover:bg-white/90 active:scale-[0.98]'
-                        }`}
-                      >
-                        Route {matchCount} matches
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
             </motion.div>
           )}
 
