@@ -1420,10 +1420,8 @@ export default function Flow() {
     });
 
     // Enrich demand side with bounded concurrency
-    // TEST_LIMIT: Remove this line after testing
-    const TEST_LIMIT = 10; // Set to 0 or remove to enrich all
-    const demandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT || undefined);
-    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5)${TEST_LIMIT ? ` [TEST MODE: ${TEST_LIMIT}]` : ''}`);
+    const demandRecords = matching.demandMatches.map(m => m.demand);
+    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5)`);
 
     const enrichedDemand = await enrichBatch(
       demandRecords,
