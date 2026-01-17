@@ -15,6 +15,16 @@ export interface SchemaField {
   required?: boolean;
 }
 
+/**
+ * SignalType — Schema-level signal classification (user.txt contract).
+ * This is the TYPE of signal the schema represents, not the instance.
+ * - 'hiring': Job postings (Wellfound)
+ * - 'person': People/founders (Crunchbase People)
+ * - 'company': Organizations with funding/activity (Crunchbase Orgs)
+ * - 'contact': B2B contacts with emails (Leads Finder)
+ */
+export type SignalType = 'hiring' | 'person' | 'company' | 'contact';
+
 export interface Schema {
   id: string;
   name: string;
@@ -24,6 +34,9 @@ export interface Schema {
   affiliateUrl: string;
   sides: ('demand' | 'supply')[];
   hasContacts: boolean;
+
+  // === SIGNAL TYPE (user.txt contract) ===
+  signalType: SignalType;  // What type of signal this schema represents
 
   // Fields that uniquely identify this schema
   fingerprint: string[];
@@ -61,7 +74,35 @@ export interface Schema {
  */
 export type DomainSource = 'explicit' | 'trusted_inferred' | 'none';
 
+/**
+ * SignalKind — Record-level signal classification.
+ * Schema can provide defaultKind, but normalization emits truth per row.
+ * This replaces the broken "assume everything is hiring" pattern.
+ */
+export type SignalKind =
+  | 'HIRING_ROLE'    // Job posting — "Hiring Senior Engineer"
+  | 'PERSON_ROLE'    // Person/founder — "CTO at Stripe"
+  | 'FUNDING'        // Funding event — "Raised Series B"
+  | 'ACQUISITION'    // M&A — "Acquired by Google"
+  | 'CONTACT_ROLE'   // B2B contact — "VP Sales"
+  | 'GROWTH'         // Growth signal — "Expanding to Europe"
+  | 'UNKNOWN';       // Fallback — no assumptions
+
+/**
+ * SignalMeta — The truth about what this record represents.
+ * UI renders label only. No prefixes. No string concatenation.
+ * Normalization tells the truth once. UI stays dumb.
+ */
+export interface SignalMeta {
+  kind: SignalKind;
+  label: string;    // Final human-readable truth: "CTO at Stripe", "Hiring 5 engineers"
+  source: string;   // Which field produced this: "primary_job_title", "job_title", etc.
+}
+
 export interface NormalizedRecord {
+  // === IDENTITY (stable, non-null, never domain-based) ===
+  recordKey: string;  // Stable key: "cb_person:uuid", "job:wellfound:123", "contact:email"
+
   // Contact
   firstName: string;
   lastName: string;
@@ -84,7 +125,9 @@ export interface NormalizedRecord {
   companyFoundedYear: string | null;
   companyLinkedin: string | null;
 
-  // Signal
+  // === SIGNAL (record-level truth, not schema assumption) ===
+  signalMeta: SignalMeta;  // The truth about what this record represents
+  // Legacy fields (deprecated — use signalMeta.label instead)
   signal: string;
   signalDetail: string | null;
 
@@ -111,6 +154,7 @@ export const B2B_CONTACTS: Schema = {
   affiliateUrl: 'https://apify.com/code_crafter/leads-finder',
   sides: ['demand', 'supply'],
   hasContacts: true,
+  signalType: 'contact',  // B2B contacts with emails
 
   // Unique fingerprint
   fingerprint: ['first_name', 'company_domain', 'seniority_level'],
@@ -149,6 +193,7 @@ export const STARTUP_JOBS: Schema = {
   affiliateUrl: 'https://apify.com/radeance/wellfound-job-listings-scraper',
   sides: ['demand'],
   hasContacts: false,
+  signalType: 'hiring',  // Job postings — the ONLY true hiring signal
 
   // Unique fingerprint
   fingerprint: ['job_id', 'job_title', 'job_url'],
@@ -199,6 +244,7 @@ export const CRUNCHBASE_ORGS: Schema = {
   affiliateUrl: 'https://apify.com/curious_coder/crunchbase-search-companies',
   sides: ['demand', 'supply'],  // Companies can be both buyers AND sellers
   hasContacts: false,  // Crunchbase has company data, not contact emails
+  signalType: 'company',  // Organizations with funding/activity
 
   // Unique fingerprint: Crunchbase has 'link' (permalink) and funding fields
   fingerprint: ['link', 'name'],
@@ -237,6 +283,7 @@ export const CRUNCHBASE_PEOPLE: Schema = {
   affiliateUrl: 'https://apify.com/curious_coder/crunchbase-search-companies',
   sides: ['supply'],  // SUPPLY-INTENT, not demand
   hasContacts: false,  // NO contacts until enriched — this is doctrine
+  signalType: 'person',  // People/founders — NOT hiring
 
   // Unique fingerprint: Crunchbase person page + person-specific fields
   fingerprint: ['primary_job_title', 'primary_organization'],
@@ -518,9 +565,10 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   const b2bFullName = isLeadsFinder
     ? (record.full_name || record.fullName || record.name || `${b2bFirstName} ${b2bLastName}`.trim() || '')
     : (getNestedValue(record, fields.fullName) || '');
+  // Email extraction — check both direct fields AND existingContact (from SignalsClient extraction)
   const b2bEmail = isLeadsFinder
-    ? (record.email || record.work_email || record.contact_email || record.business_email || null)
-    : (getNestedValue(record, fields.email) || null);
+    ? (record.email || record.work_email || record.contact_email || record.business_email || record.existingContact?.email || null)
+    : (record.existingContact?.email || getNestedValue(record, fields.email) || null);
   const b2bTitle = isLeadsFinder
     ? (record.job_title || record.title || record.position || record.role || '')
     : (getNestedValue(record, fields.title) || '');
@@ -531,7 +579,77 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
     ? (record.company_name || record.company || record.companyName || record.organization || '')
     : (getNestedValue(record, fields.company) || '');
 
+  // ==========================================================================
+  // RECORD KEY — Stable identity, never domain-based, never empty
+  // ==========================================================================
+  const finalCompany = isCrunchbasePeople ? crunchbasePeopleCompany : b2bCompany;
+  const finalFullName = isCrunchbasePeople ? crunchbasePeopleFullName : b2bFullName;
+
+  let recordKey: string;
+  if (isCrunchbasePeople) {
+    // Crunchbase People: use identifier.value or uuid
+    const cbId = record.identifier?.value || record.uuid || record.id;
+    recordKey = cbId ? `cb_person:${cbId}` : `cb_person:${finalFullName}:${finalCompany}`.toLowerCase().replace(/\s+/g, '_');
+  } else if (isCrunchbase) {
+    // Crunchbase Orgs: use identifier.value or domain
+    const cbId = record.identifier?.value || record.uuid || domain;
+    recordKey = cbId ? `cb_org:${cbId}` : `cb_org:${finalCompany}`.toLowerCase().replace(/\s+/g, '_');
+  } else if (isWellfound) {
+    // Wellfound: use job ID or slug
+    const jobId = record.id || record.slug || record.job_id;
+    recordKey = jobId ? `job:wellfound:${jobId}` : `job:wellfound:${finalCompany}:${b2bTitle}`.toLowerCase().replace(/\s+/g, '_');
+  } else if (isLeadsFinder) {
+    // B2B Contacts: use email or apollo_id
+    const contactId = b2bEmail || record.apollo_id || record.id;
+    recordKey = contactId ? `contact:${contactId}` : `contact:${finalFullName}:${finalCompany}`.toLowerCase().replace(/\s+/g, '_');
+  } else {
+    // Fallback: hash of available fields
+    recordKey = `record:${domain || finalCompany || finalFullName || 'unknown'}:${Date.now()}`.toLowerCase().replace(/\s+/g, '_');
+  }
+
+  // ==========================================================================
+  // SIGNAL META — Record-level truth, UI renders label only
+  // ==========================================================================
+  let signalMeta: SignalMeta;
+  const rawSignal = getNestedValue(record, fields.signal) || '';
+
+  if (isCrunchbasePeople) {
+    // People/Founders: "{title} at {company}" or "{title}" or "{name}"
+    const personTitle = record.primary_job_title || b2bTitle || '';
+    const personOrg = crunchbasePeopleCompany;
+    const label = personTitle && personOrg
+      ? `${personTitle} at ${personOrg}`
+      : personTitle || crunchbasePeopleFullName || 'Person';
+    signalMeta = { kind: 'PERSON_ROLE', label, source: 'primary_job_title' };
+  } else if (isCrunchbase) {
+    // Companies: Check for funding first, then growth, then generic
+    const fundingAmount = record.last_funding_total?.value_usd || record.last_equity_funding_total?.value_usd;
+    const fundingType = record.last_funding_type;
+    if (fundingAmount || fundingType) {
+      const fundingLabel = fundingType
+        ? `Raised ${fundingType}${fundingAmount ? ` ($${(fundingAmount / 1000000).toFixed(1)}M)` : ''}`
+        : `Raised funding`;
+      signalMeta = { kind: 'FUNDING', label: fundingLabel, source: 'last_funding_type' };
+    } else {
+      signalMeta = { kind: 'GROWTH', label: `Active company`, source: 'schema' };
+    }
+  } else if (isWellfound) {
+    // Job postings: "Hiring {role}"
+    const jobTitle = record.title || record.job_title || b2bTitle || 'role';
+    signalMeta = { kind: 'HIRING_ROLE', label: `Hiring ${jobTitle}`, source: 'job_title' };
+  } else if (isLeadsFinder) {
+    // B2B Contacts: Use title as role
+    const contactTitle = b2bTitle || 'Decision maker';
+    signalMeta = { kind: 'CONTACT_ROLE', label: contactTitle, source: 'job_title' };
+  } else {
+    // Unknown schema: Use raw signal or fallback
+    signalMeta = { kind: 'UNKNOWN', label: rawSignal || 'Record', source: fields.signal || 'unknown' };
+  }
+
   return {
+    // === IDENTITY ===
+    recordKey,
+
     // Contact
     firstName: b2bFirstName,
     lastName: b2bLastName,
@@ -543,7 +661,7 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
     seniorityLevel: isLeadsFinder ? (record.seniority_level || record.seniorityLevel || null) : null,
 
     // Company - extract ALL available fields from all scrapers
-    company: isCrunchbasePeople ? crunchbasePeopleCompany : b2bCompany,
+    company: finalCompany,
     domain,
     domainSource,  // PHILEMON: Track domain provenance for proof-based enrichment
     industry: isCrunchbase ? crunchbaseIndustry : (getNestedValue(record, fields.industry) || null),
@@ -569,9 +687,10 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
       : (wellfoundCompany?.founded_year || wellfoundCompany?.year_founded || null),
     companyLinkedin: isLeadsFinder ? (record.company_linkedin || null) : null,
 
-    // Signal — event-only, no enrichment fallback
-    // Crunchbase: signal is empty, funding signals created in Flow.tsx from metadata
-    signal: getNestedValue(record, fields.signal) || '',
+    // === SIGNAL (record-level truth) ===
+    signalMeta,
+    // Legacy fields (deprecated — use signalMeta.label)
+    signal: rawSignal,
     signalDetail: getNestedValue(record, fields.signalDetail) || null,
 
     // Location - extract from all scrapers
@@ -616,4 +735,116 @@ export function normalizeDataset(dataset: any[], schema: Schema): NormalizedReco
   // Records with domainSource='none' will be skipped at enrichment time
   // We keep them in the batch for visibility (UI shows "needs domain")
   return records;
+}
+
+// =============================================================================
+// CANONICAL SIGNAL RENDERING (user.txt contract)
+// =============================================================================
+
+/**
+ * renderSignal — Canonical signal renderer.
+ *
+ * ONE function for ALL signal rendering. No inline "Hiring ${...}" anywhere else.
+ * UI calls this, never constructs signal strings manually.
+ *
+ * @param record - Normalized record
+ * @param schema - Schema with signalType
+ * @returns Human-readable signal string
+ */
+export function renderSignal(record: NormalizedRecord, schema: Schema): string {
+  switch (schema.signalType) {
+    case 'hiring':
+      // Job postings: "Hiring {role}"
+      return `Hiring ${record.signalMeta?.label || record.signal || 'role'}`;
+
+    case 'person':
+      // People/founders: "{title} at {company}" or just "{title}"
+      const personLabel = record.signalMeta?.label || record.title || record.fullName;
+      if (record.company && !personLabel?.includes(record.company)) {
+        return `${personLabel} at ${record.company}`;
+      }
+      return personLabel || 'Decision maker';
+
+    case 'company':
+      // Organizations: funding or activity
+      if (record.companyFunding) {
+        const fundingNum = typeof record.companyFunding === 'number'
+          ? record.companyFunding
+          : parseFloat(String(record.companyFunding).replace(/[^0-9.]/g, ''));
+        if (!isNaN(fundingNum) && fundingNum > 0) {
+          return `Raised $${(fundingNum / 1000000).toFixed(1)}M`;
+        }
+        return `Raised funding`;
+      }
+      return record.signalMeta?.label || 'Company activity detected';
+
+    case 'contact':
+      // B2B contacts: use title
+      return record.title || record.signalMeta?.label || 'Decision maker';
+
+    default:
+      // Fallback — never assume hiring
+      return record.signalMeta?.label || record.signal || 'Record';
+  }
+}
+
+// =============================================================================
+// SCHEMA-AWARE NARRATION (user.txt contract)
+// =============================================================================
+
+/**
+ * getNarration — Schema-aware match narration.
+ *
+ * Generates human-readable explanation of why demand matches supply.
+ * NEVER hardcodes "Hiring" — uses signalType to determine narration.
+ *
+ * @param demand - Demand record
+ * @param supply - Supply record
+ * @param demandSchema - Demand schema (for signalType)
+ * @param supplyServices - Optional services from capability profile
+ * @returns Human-readable narration string
+ */
+export function getNarration(
+  demand: NormalizedRecord,
+  supply: NormalizedRecord,
+  demandSchema: Schema,
+  supplyServices?: string[]
+): string {
+  const demandSignal = renderSignal(demand, demandSchema);
+  const supplyName = supply.company || supply.fullName || 'Provider';
+  const services = supplyServices?.length ? supplyServices.join(', ') : null;
+
+  switch (demandSchema.signalType) {
+    case 'hiring':
+      // Hiring → recruiter/agency
+      return services
+        ? `${demandSignal} → ${supplyName} (${services})`
+        : `${demandSignal} → ${supplyName}`;
+
+    case 'person':
+      // Person exploring services
+      return services
+        ? `${demand.fullName || demand.company} exploring ${services}`
+        : `${demand.fullName || demand.company} → ${supplyName}`;
+
+    case 'company':
+      // Company matched with provider
+      return `${demand.company} matched with ${supplyName}`;
+
+    case 'contact':
+      // Contact-to-contact (rare, but possible)
+      return `${demand.fullName || demand.company} → ${supplyName}`;
+
+    default:
+      // Fallback — generic
+      return 'Potential strategic match';
+  }
+}
+
+/**
+ * getSchemaById — Get schema by ID.
+ * Returns null if not found.
+ */
+export function getSchemaById(schemaId: string): Schema | null {
+  return SCHEMAS.find(s => s.id === schemaId) || null;
 }
