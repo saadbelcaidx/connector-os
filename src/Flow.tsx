@@ -26,6 +26,7 @@ import {
   isSuccessfulEnrichment,
   getOutcomeExplanation,
   getActionExplanation,
+  recordKey,
 } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
@@ -460,13 +461,13 @@ function buildDemandExportRows(data: ExportData): (string | null)[][] {
   const rows: (string | null)[][] = [];
 
   for (const match of data.matchingResult.demandMatches) {
-    const domain = match.demand.domain;
-    const enriched = data.enrichedDemand.get(domain);
+    const key = recordKey(match.demand);
+    const enriched = data.enrichedDemand.get(key);
 
     // Same filter as routing: must have email
     if (!enriched || !isSuccessfulEnrichment(enriched) || !enriched.email) continue;
 
-    const intro = data.demandIntros.get(domain) || '';
+    const intro = data.demandIntros.get(key) || '';
     if (!intro) continue; // No intro = wouldn't be sent
 
     rows.push([
@@ -497,13 +498,13 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
   const rows: (string | null)[][] = [];
 
   for (const agg of data.matchingResult.supplyAggregates) {
-    const domain = agg.supply.domain;
-    const enriched = data.enrichedSupply.get(domain);
+    const key = recordKey(agg.supply);
+    const enriched = data.enrichedSupply.get(key);
 
     // Same filter as routing: must have email
     if (!enriched || !isSuccessfulEnrichment(enriched) || !enriched.email) continue;
 
-    const intro = data.supplyIntros.get(domain) || '';
+    const intro = data.supplyIntros.get(key) || '';
     if (!intro) continue; // No intro = wouldn't be sent
 
     // Calculate average match score
@@ -1311,7 +1312,7 @@ export default function Flow() {
         };
 
         edgePositiveMatches.push(match);
-        detectedEdges.set(match.demand.domain, edge);
+        detectedEdges.set(recordKey(match.demand), edge);
         console.log(`[EDGE] ✓ ${match.demand.company} → ${confidenceLevel} (${confidence.toFixed(2)})`);
       }
     }
@@ -1420,8 +1421,9 @@ export default function Flow() {
     });
 
     // Enrich demand side with bounded concurrency
-    const demandRecords = matching.demandMatches.map(m => m.demand);
-    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5)`);
+    const TEST_LIMIT = 100; // TODO: Remove before deploy — saves enrichment credits during testing
+    const demandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT);
+    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5) [TEST MODE: ${TEST_LIMIT}]`);
 
     const enrichedDemand = await enrichBatch(
       demandRecords,
@@ -1564,7 +1566,7 @@ export default function Flow() {
     let dropped = 0;
 
     const total = matching.demandMatches.filter(m => {
-      const e = enrichedDemand.get(m.demand.domain);
+      const e = enrichedDemand.get(recordKey(m.demand));
       return e && isSuccessfulEnrichment(e) && e.email;
     }).length;
 
@@ -1572,8 +1574,11 @@ export default function Flow() {
     for (const match of matching.demandMatches) {
       if (abortRef.current) break;
 
+      const demandKey = recordKey(match.demand);
+      const supplyKey = recordKey(match.supply);
+
       // GATE 1: Check for detected edge (from preflight)
-      const edge = state.detectedEdges.get(match.demand.domain);
+      const edge = state.detectedEdges.get(demandKey);
       if (!edge) {
         console.log(`[COMPOSE] DROP: ${match.demand.company} - no edge detected`);
         dropped++;
@@ -1581,7 +1586,7 @@ export default function Flow() {
       }
 
       // GATE 2: Check demand enrichment
-      const demandEnriched = enrichedDemand.get(match.demand.domain);
+      const demandEnriched = enrichedDemand.get(demandKey);
       if (!demandEnriched || !isSuccessfulEnrichment(demandEnriched) || !demandEnriched.email) {
         console.log(`[COMPOSE] DROP: ${match.demand.company} - demand not enriched`);
         dropped++;
@@ -1589,7 +1594,7 @@ export default function Flow() {
       }
 
       // GATE 3: Check supply enrichment
-      const supplyEnriched = enrichedSupply.get(match.supply.domain);
+      const supplyEnriched = enrichedSupply.get(supplyKey);
       if (!supplyEnriched || !isSuccessfulEnrichment(supplyEnriched) || !supplyEnriched.email) {
         console.log(`[COMPOSE] DROP: ${match.demand.company} - supply not enriched`);
         dropped++;
@@ -1633,8 +1638,8 @@ export default function Flow() {
       try {
         const composed_output = composeIntros(demandRecord, edge, counterparty, supplyRecord);
 
-        demandIntros.set(match.demand.domain, composed_output.demandBody);
-        supplyIntros.set(match.supply.domain, composed_output.supplyBody);
+        demandIntros.set(recordKey(match.demand), composed_output.demandBody);
+        supplyIntros.set(recordKey(match.supply), composed_output.supplyBody);
 
         console.log(`[COMPOSE] ✓ ${match.demand.company} → ${match.supply.company} (${edge.type})`);
         composed++;
@@ -1822,7 +1827,7 @@ export default function Flow() {
     // Send to demand side
     if (senderConfig.demandCampaignId) {
       const demandToSend = matchingResult.demandMatches.filter(m => {
-        const enriched = enrichedDemand.get(m.demand.domain);
+        const enriched = enrichedDemand.get(recordKey(m.demand));
         return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
 
@@ -1835,11 +1840,12 @@ export default function Flow() {
         if (abortRef.current) break;
 
         const match = demandToSend[i];
-        const enriched = enrichedDemand.get(match.demand.domain)!;
+        const demandKey = recordKey(match.demand);
+        const enriched = enrichedDemand.get(demandKey)!;
 
         // Use pre-generated AI intro (fall back to template if missing)
         // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
-        const intro = state.demandIntros.get(match.demand.domain) || generateDemandIntro({
+        const intro = state.demandIntros.get(demandKey) || generateDemandIntro({
           ...match.demand,
           firstName: enriched.firstName || match.demand.firstName,
           email: enriched.email,
@@ -1891,7 +1897,7 @@ export default function Flow() {
     // Send to supply side (aggregated - one per supplier)
     if (senderConfig.supplyCampaignId) {
       const supplyToSend = matchingResult.supplyAggregates.filter(a => {
-        const enriched = enrichedSupply.get(a.supply.domain);
+        const enriched = enrichedSupply.get(recordKey(a.supply));
         return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
 
@@ -1904,11 +1910,12 @@ export default function Flow() {
         if (abortRef.current) break;
 
         const agg = supplyToSend[i];
-        const enriched = enrichedSupply.get(agg.supply.domain)!;
+        const supplyKey = recordKey(agg.supply);
+        const enriched = enrichedSupply.get(supplyKey)!;
 
         // Use pre-generated AI intro (fall back to template if missing)
         // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
-        const intro = state.supplyIntros.get(agg.supply.domain) || generateSupplyIntro(
+        const intro = state.supplyIntros.get(supplyKey) || generateSupplyIntro(
           {
             ...agg.supply,
             firstName: enriched.firstName || agg.supply.firstName,
@@ -2461,7 +2468,7 @@ export default function Flow() {
                     {/* ============================================= */}
                     <div className="space-y-3">
                       {previewMatches.map((match, i) => {
-                        const edge = state.detectedEdges.get(match.demand.domain);
+                        const edge = state.detectedEdges.get(recordKey(match.demand));
                         const demandSig = getDemandSignature(match, edge);
                         const supplySig = getSupplySignature(match, i);
                         const isLast = i === previewMatches.length - 1;
@@ -2783,11 +2790,11 @@ export default function Flow() {
 
                 // Enrichment results (can be 0 if BUDGET_EXCEEDED)
                 const demandEnriched = demandMatches.filter(m => {
-                  const e = state.enrichedDemand.get(m.demand.domain);
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 }).length;
                 const supplyEnriched = supplyAggregates.filter(a => {
-                  const e = state.enrichedSupply.get(a.supply.domain);
+                  const e = state.enrichedSupply.get(recordKey(a.supply));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 }).length;
                 const totalEnriched = demandEnriched + supplyEnriched;
@@ -2810,13 +2817,13 @@ export default function Flow() {
 
                 // Matches WITH email (for CSV export)
                 const demandWithEmail = demandMatches.filter(m => {
-                  const e = state.enrichedDemand.get(m.demand.domain);
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
 
                 // Matches WITHOUT email (for LinkedIn export)
                 const demandWithoutEmailList = demandMatches.filter(m => {
-                  const e = state.enrichedDemand.get(m.demand.domain);
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
 
@@ -2840,7 +2847,7 @@ export default function Flow() {
 
                 // Build per-company status list
                 const enrichmentStatusList = demandMatches.map(m => {
-                  const result = state.enrichedDemand.get(m.demand.domain);
+                  const result = state.enrichedDemand.get(recordKey(m.demand));
                   const status = getEnrichmentStatusLabel(result);
                   return {
                     company: m.demand.company,
@@ -2958,7 +2965,7 @@ export default function Flow() {
                             const csvContent = [
                               ['Company', 'Domain', 'Person', 'Title', 'Email'].join(','),
                               ...demandWithEmail.map(m => {
-                                const e = state.enrichedDemand.get(m.demand.domain);
+                                const e = state.enrichedDemand.get(recordKey(m.demand));
                                 return [
                                   m.demand.companyName || '',
                                   m.demand.domain || '',
@@ -3076,21 +3083,21 @@ export default function Flow() {
 
                 // Ready to send (has email)
                 const demandReady = demandMatches.filter(m => {
-                  const e = state.enrichedDemand.get(m.demand.domain);
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
                 const supplyReady = supplyAggregates.filter(a => {
-                  const e = state.enrichedSupply.get(a.supply.domain);
+                  const e = state.enrichedSupply.get(recordKey(a.supply));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
 
                 // Need email (no email found)
                 const demandNeedEmail = demandMatches.filter(m => {
-                  const e = state.enrichedDemand.get(m.demand.domain);
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
                 const supplyNeedEmail = supplyAggregates.filter(a => {
-                  const e = state.enrichedSupply.get(a.supply.domain);
+                  const e = state.enrichedSupply.get(recordKey(a.supply));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
 
@@ -3119,10 +3126,11 @@ export default function Flow() {
                       {totalReady > 0 && (
                         <div className="space-y-3 mb-6">
                           {demandReady.slice(0, 2).map((m, i) => {
-                            const e = state.enrichedDemand.get(m.demand.domain);
-                            const intro = state.demandIntros.get(m.demand.domain);
+                            const demandKey = recordKey(m.demand);
+                            const e = state.enrichedDemand.get(demandKey);
+                            const intro = state.demandIntros.get(demandKey);
                             return (
-                              <div key={m.demand.domain} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+                              <div key={demandKey} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
                                 <div className="flex items-start justify-between gap-4">
                                   <div className="min-w-0 flex-1">
                                     <p className="text-[13px] font-medium text-white/90 truncate">{m.demand.company}</p>
@@ -3183,7 +3191,7 @@ export default function Flow() {
                         {/* Preview cards (max 2) */}
                         <div className="space-y-3 mb-6">
                           {demandNeedEmail.slice(0, 2).map((m, i) => {
-                            const intro = state.demandIntros.get(m.demand.domain);
+                            const intro = state.demandIntros.get(recordKey(m.demand));
                             return (
                               <div key={m.demand.domain} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
                                 <div className="flex items-start justify-between gap-4">
@@ -3217,14 +3225,14 @@ export default function Flow() {
                                 company: m.demand.company,
                                 domain: m.demand.domain,
                                 industry: m.demand.industry || '',
-                                intro: state.demandIntros.get(m.demand.domain) || '',
+                                intro: state.demandIntros.get(recordKey(m.demand)) || '',
                                 email: '',
                               })), ...supplyNeedEmail.map(a => ({
                                 type: 'supply',
                                 company: a.supply.company,
                                 domain: a.supply.domain,
                                 industry: a.supply.industry || '',
-                                intro: state.supplyIntros.get(a.supply.domain) || '',
+                                intro: state.supplyIntros.get(recordKey(a.supply)) || '',
                                 email: '',
                               }))];
                               const csv = [

@@ -48,6 +48,10 @@ import {
   EnrichmentResult,
 } from './router';
 
+// Record key for stable storage/retrieval (supports domainless records)
+import { recordKey, domainFromKey } from './recordKey';
+export { recordKey } from './recordKey';
+
 // =============================================================================
 // CONSTANTS
 // =============================================================================
@@ -279,8 +283,10 @@ export async function enrichBatch(
       }
     }
 
-    if (record.domain && result) {
-      results.set(record.domain, result);
+    // Store result using stable key (supports domainless records)
+    const key = recordKey(record);
+    if (result) {
+      results.set(key, result);
       if (result.outcome === 'ENRICHED') enrichedCount++;
       if (result.outcome === 'VERIFIED') verifiedCount++;
     }

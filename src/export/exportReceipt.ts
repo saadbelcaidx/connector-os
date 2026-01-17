@@ -8,6 +8,7 @@
  */
 
 import type { EnrichmentResult } from '../enrichment';
+import { recordKey } from '../enrichment';
 
 // =============================================================================
 // TYPES
@@ -53,7 +54,7 @@ export interface ExportReceipt {
 // =============================================================================
 
 export interface DemandExportInput {
-  matches: Array<{ demand: { domain: string; companyName?: string } }>;
+  matches: Array<{ demand: { domain?: string | null; company?: string | null; fullName?: string | null; companyName?: string; raw?: { uuid?: string } | null } }>;
   enriched: Map<string, EnrichmentResult>;
   intros: Map<string, string>;
 }
@@ -62,24 +63,25 @@ export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
   const { matches, enriched, intros } = input;
 
   const filtered: FilteredRecord[] = [];
-  const seenDomains = new Set<string>();
+  const seenKeys = new Set<string>();
 
   let totalWithEmail = 0;
   let totalWithIntro = 0;
   let totalExported = 0;
 
   for (const match of matches) {
-    const domain = match.demand.domain;
+    const key = recordKey(match.demand);
+    const domain = match.demand.domain || key; // Use key as display fallback
 
     // Check duplicate
-    if (seenDomains.has(domain)) {
+    if (seenKeys.has(key)) {
       filtered.push({ domain, reason: 'DUPLICATE_DOMAIN' });
       continue;
     }
-    seenDomains.add(domain);
+    seenKeys.add(key);
 
     // Check enrichment
-    const enrichResult = enriched.get(domain);
+    const enrichResult = enriched.get(key);
     if (!enrichResult) {
       filtered.push({ domain, reason: 'ENRICHMENT_FAILED' });
       continue;
@@ -100,7 +102,7 @@ export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
     totalWithEmail++;
 
     // Check intro
-    const intro = intros.get(domain);
+    const intro = intros.get(key);
     if (!intro) {
       filtered.push({ domain, reason: 'NO_INTRO' });
       continue;
@@ -148,7 +150,7 @@ export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
 // =============================================================================
 
 export interface SupplyExportInput {
-  aggregates: Array<{ supply: { domain: string; companyName?: string }; matchCount: number }>;
+  aggregates: Array<{ supply: { domain?: string | null; company?: string | null; fullName?: string | null; companyName?: string; raw?: { uuid?: string } | null }; matchCount: number }>;
   enriched: Map<string, EnrichmentResult>;
   intros: Map<string, string>;
 }
@@ -157,24 +159,25 @@ export function buildSupplyReceipt(input: SupplyExportInput): ExportReceipt {
   const { aggregates, enriched, intros } = input;
 
   const filtered: FilteredRecord[] = [];
-  const seenDomains = new Set<string>();
+  const seenKeys = new Set<string>();
 
   let totalWithEmail = 0;
   let totalWithIntro = 0;
   let totalExported = 0;
 
   for (const agg of aggregates) {
-    const domain = agg.supply.domain;
+    const key = recordKey(agg.supply);
+    const domain = agg.supply.domain || key; // Use key as display fallback
 
     // Check duplicate
-    if (seenDomains.has(domain)) {
+    if (seenKeys.has(key)) {
       filtered.push({ domain, reason: 'DUPLICATE_DOMAIN' });
       continue;
     }
-    seenDomains.add(domain);
+    seenKeys.add(key);
 
     // Check enrichment
-    const enrichResult = enriched.get(domain);
+    const enrichResult = enriched.get(key);
     if (!enrichResult) {
       filtered.push({ domain, reason: 'ENRICHMENT_FAILED' });
       continue;
@@ -195,7 +198,7 @@ export function buildSupplyReceipt(input: SupplyExportInput): ExportReceipt {
     totalWithEmail++;
 
     // Check intro
-    const intro = intros.get(domain);
+    const intro = intros.get(key);
     if (!intro) {
       filtered.push({ domain, reason: 'NO_INTRO' });
       continue;
