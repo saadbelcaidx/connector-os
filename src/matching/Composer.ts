@@ -8,12 +8,17 @@
  * - BANNED: "I work with", "My client", "We partner with"
  * - ALLOWED: "I'm connected to", "I'm in touch with", "I know"
  * - Must be verifiable statements only
+ *
+ * SCHEMA AWARENESS (user.txt contract):
+ * - Uses signalType to generate appropriate bridge language
+ * - NO hiring assumption — only 'hiring' signalType uses hiring language
  */
 
 import type { DemandRecord } from '../schemas/DemandRecord';
 import type { SupplyRecord } from '../schemas/SupplyRecord';
 import type { Edge } from '../schemas/Edge';
 import type { Counterparty } from '../schemas/IntroOutput';
+import type { SignalType } from '../schemas';
 
 // =============================================================================
 // BANNED PHRASES
@@ -71,6 +76,10 @@ function cleanCompanyName(name: string): string {
 function extractCapabilityFromCompanyName(companyName: string): string {
   const lower = (companyName || '').toLowerCase();
 
+  // INVESTING / CAPITAL — distinct from sales
+  if (/invest|capital|ventures|vc\b|fund\b|equity|asset/.test(lower)) {
+    return 'investing';
+  }
   if (/marketing|growth|brand|creative|media|advertising|pr\b|communications/.test(lower)) {
     return 'marketing';
   }
@@ -80,7 +89,8 @@ function extractCapabilityFromCompanyName(companyName: string): string {
   if (/tech|software|dev|engineering|labs|digital|app|web|cloud|data|ai\b|ml\b/.test(lower)) {
     return 'engineering';
   }
-  if (/sales|revenue|consulting|advisory|partners|capital|ventures|invest/.test(lower)) {
+  // SALES — only actual sales indicators
+  if (/sales|revenue|consulting|advisory/.test(lower)) {
     return 'sales';
   }
   if (/finance|accounting|cfo|bookkeep|tax/.test(lower)) {
@@ -102,6 +112,10 @@ function extractCapabilityFromCompanyName(companyName: string): string {
 function detectSupplyCategory(capability: string): string {
   const lower = (capability || '').toLowerCase();
 
+  // INVESTING — distinct from sales/finance
+  if (/invest|capital|venture|vc\b|fund|equity|asset|portfolio/i.test(lower)) {
+    return 'investing';
+  }
   if (/marketing|growth|gtm|demand gen|brand|content|seo|paid|advertising/i.test(lower)) {
     return 'marketing';
   }
@@ -140,10 +154,71 @@ function detectSupplyCategory(capability: string): string {
  *
  * The bridge explains WHY the signal matters NOW, not just what happened.
  * This is what separates a connector from a spammer.
+ *
+ * SCHEMA AWARENESS (user.txt contract):
+ * - Uses signalType as PRIMARY routing
+ * - Only 'hiring' type uses hiring-specific language
+ * - Other types get appropriate bridges for their signal category
  */
-function buildBridge(evidence: string, capability: string): string {
+function buildBridge(evidence: string, capability: string, signalType?: SignalType): string {
   const evLower = evidence.toLowerCase();
   const supplyCategory = detectSupplyCategory(capability);
+
+  // =========================================================================
+  // SCHEMA-AWARE ROUTING — signalType determines bridge category
+  // =========================================================================
+
+  // PERSON signals (founders, executives, investors)
+  if (signalType === 'person') {
+    switch (supplyCategory) {
+      case 'marketing': return 'leaders at this level often explore GTM partnerships';
+      case 'recruiting': return 'executives like this often know others exploring similar moves';
+      case 'engineering': return 'leaders at this stage often need technical partners';
+      case 'sales': return 'executives at this level often drive partnership decisions';
+      case 'finance': return 'leaders at this stage often explore strategic advisors';
+      case 'operations': return 'executives at this level often explore operational partners';
+      default: return 'leaders at this stage often explore strategic partnerships';
+    }
+  }
+
+  // COMPANY signals (org activity, funding, growth)
+  if (signalType === 'company') {
+    // Check for funding specifically
+    if (evLower.includes('funding') || evLower.includes('raised') || evLower.includes('series')) {
+      switch (supplyCategory) {
+        case 'marketing': return 'post-raise companies usually accelerate GTM';
+        case 'recruiting': return 'post-raise companies usually accelerate hiring';
+        case 'engineering': return 'post-raise timelines usually compress';
+        case 'sales': return 'boards expect pipeline acceleration after a raise';
+        case 'finance': return 'investors usually want tighter financial ops';
+        default: return 'teams at this stage usually move fast on partners';
+      }
+    }
+    // General company activity
+    switch (supplyCategory) {
+      case 'marketing': return 'companies showing this activity often explore GTM partners';
+      case 'recruiting': return 'companies at this stage often explore outside help';
+      case 'engineering': return 'companies showing momentum often explore dev partnerships';
+      case 'sales': return 'companies with this activity often explore sales acceleration';
+      case 'finance': return 'companies at this stage often bring in finance specialists';
+      default: return 'companies showing this momentum often explore outside partners';
+    }
+  }
+
+  // CONTACT signals (decision makers, direct contacts)
+  if (signalType === 'contact') {
+    switch (supplyCategory) {
+      case 'marketing': return 'decision makers at this level often drive GTM partnerships';
+      case 'recruiting': return 'contacts at this level often explore talent partnerships';
+      case 'engineering': return 'decision makers here often evaluate tech partners';
+      case 'sales': return 'contacts at this level often drive vendor decisions';
+      case 'finance': return 'decision makers here often explore advisory relationships';
+      default: return 'decision makers at this level often explore outside partners';
+    }
+  }
+
+  // HIRING signals — use detailed keyword detection (existing logic)
+  // This handles signalType === 'hiring' AND legacy records without signalType
 
   // =========================================================================
   // FUNDING SIGNAL — Post-raise pressure is real and urgent
@@ -400,6 +475,101 @@ function generateWhatTheyDo(supplyRecord: SupplyRecord): string {
   return 'They work with firms like yours.';
 }
 
+/**
+ * Build supply relevance phrase for demand intro.
+ * Explains WHY supply is relevant to the signal, not just WHAT they do.
+ *
+ * Returns a phrase that completes: "folks at [supply] who [relevance]"
+ */
+function buildSupplyRelevance(supplyCategory: string, signalType?: SignalType, evidence?: string): string {
+  const evLower = (evidence || '').toLowerCase();
+
+  // ==========================================================================
+  // SIGNAL-SPECIFIC RELEVANCE
+  // ==========================================================================
+
+  // FUNDING signals
+  if (evLower.includes('funding') || evLower.includes('raised') || evLower.includes('series')) {
+    switch (supplyCategory) {
+      case 'investing': return 'work with companies at your stage';
+      case 'marketing': return 'help post-raise companies scale GTM';
+      case 'recruiting': return 'help post-raise companies build teams';
+      case 'engineering': return 'help companies ship faster post-raise';
+      case 'sales': return 'help companies accelerate pipeline after raises';
+      case 'finance': return 'help companies tighten ops post-raise';
+      default: return 'work with companies at your stage';
+    }
+  }
+
+  // HIRING / LEADERSHIP signals
+  if (evLower.includes('hiring') || evLower.includes('open') || evLower.includes('leadership')) {
+    switch (supplyCategory) {
+      case 'recruiting': return 'specialize in roles like this';
+      case 'engineering': return 'augment teams during hiring ramps';
+      case 'hr': return 'help scale people ops';
+      default: return 'help companies in similar situations';
+    }
+  }
+
+  // GROWTH signals
+  if (evLower.includes('growth') || evLower.includes('scaling') || evLower.includes('expanding')) {
+    switch (supplyCategory) {
+      case 'marketing': return 'help fast-growing companies scale GTM';
+      case 'sales': return 'help companies accelerate revenue';
+      case 'operations': return 'help companies scale operations';
+      case 'recruiting': return 'help fast-growing companies build teams';
+      default: return 'work with companies scaling like this';
+    }
+  }
+
+  // ==========================================================================
+  // SCHEMA-TYPE FALLBACKS
+  // ==========================================================================
+
+  if (signalType === 'person') {
+    switch (supplyCategory) {
+      case 'investing': return 'back founders at this level';
+      case 'recruiting': return 'work with executives like this';
+      case 'marketing': return 'work with leaders at this stage';
+      default: return 'work with leaders at this level';
+    }
+  }
+
+  if (signalType === 'company') {
+    switch (supplyCategory) {
+      case 'investing': return 'invest in companies like this';
+      case 'marketing': return 'help companies like this grow';
+      case 'recruiting': return 'help companies like this hire';
+      default: return 'work with companies like this';
+    }
+  }
+
+  if (signalType === 'contact') {
+    switch (supplyCategory) {
+      case 'recruiting': return 'work with decision makers like this';
+      case 'sales': return 'work with buyers at this level';
+      default: return 'work with contacts at this level';
+    }
+  }
+
+  // ==========================================================================
+  // GENERAL FALLBACKS BY SUPPLY CATEGORY
+  // ==========================================================================
+  switch (supplyCategory) {
+    case 'investing': return 'invest in companies like this';
+    case 'marketing': return 'help companies like this grow';
+    case 'recruiting': return 'help companies like this hire';
+    case 'engineering': return 'help companies like this build';
+    case 'sales': return 'help companies like this scale';
+    case 'finance': return 'help companies like this with financial ops';
+    case 'hr': return 'help companies like this with people ops';
+    case 'design': return 'help companies like this with design';
+    case 'legal': return 'help companies like this with compliance';
+    case 'operations': return 'help companies like this with operations';
+    default: return 'work with companies like this';
+  }
+}
+
 // =============================================================================
 // MAIN EXPORT
 // =============================================================================
@@ -433,88 +603,51 @@ export function composeIntros(
   const demandCompany = cleanCompanyName(demand.company);
   const supplyCompany = cleanCompanyName(counterparty.company);
 
-  // Generate "what they do" line from supply record's capability
-  const whatTheyDo = generateWhatTheyDo(supplyRecord);
+  // ==========================================================================
+  // SUPPLY RELEVANCE — What makes supply relevant to this signal
+  // ==========================================================================
+  const supplyCapability = supplyRecord.capability
+    || extractCapabilityFromCompanyName(supplyRecord.company)
+    || '';
+  const supplyCategory = detectSupplyCategory(supplyCapability);
+  const supplyRelevance = buildSupplyRelevance(supplyCategory, demand.signalType, edge.evidence);
 
   // ==========================================================================
-  // DEMAND INTRO
+  // DEMAND INTRO — Signal-First Template
   // ==========================================================================
-  // Template:
+  // Template (signal-first, named counterparty):
   // Hey [firstName] —
   //
-  // I'm connected to [counterparty.contact] at [counterparty.company].
-  // [What they do/want].
-  // [demand.company] [edge.evidence].
+  // Noticed [company] [evidence] — I'm connected to [contact] at [supply] who [relevance].
   //
   // Worth an intro?
 
   const demandLines = [
     `Hey ${demandFirstName} —`,
     '',
-    `I'm connected to ${counterparty.contact} at ${supplyCompany}.`,
+    `Noticed ${demandCompany} ${edge.evidence} — I'm connected to ${counterparty.contact} at ${supplyCompany} who ${supplyRelevance}.`,
+    '',
+    'Worth an intro?',
   ];
-
-  if (whatTheyDo) {
-    demandLines.push(whatTheyDo);
-  }
-
-  // Bridge: demand evidence + supply capability = specific "why"
-  // Priority: capability → company name keywords → generic (NEVER use title - it's job title, not company capability)
-  const supplyCapability = supplyRecord.capability
-    || extractCapabilityFromCompanyName(supplyRecord.company)
-    || '';
-  demandLines.push(`${demandCompany} ${edge.evidence} — ${buildBridge(edge.evidence, supplyCapability)}.`);
-  demandLines.push('');
-  demandLines.push('Worth an intro?');
 
   const demandBody = demandLines.join('\n');
 
   // ==========================================================================
-  // SUPPLY INTRO
+  // SUPPLY INTRO — Signal-First Template
   // ==========================================================================
-  // Template (exact structure required):
+  // Template (signal-first, named contact):
   // Hey [firstName] —
   //
-  // [demand.company] [edge.evidence].
-  // [demand.contact] is [demand.title].
-  // [fitReason — capability only, no edge echo].
+  // [demand.company] [evidence] — [contact] ([title]) is driving it.
   //
   // Worth a look?
 
-  // ==========================================================================
-  // FIT REASON — Explain WHY they fit, not WHO supply is
-  // ==========================================================================
-  // RULE: Don't restate brand + persona. Explain the connection.
-  // BAD:  "Lincoln Capital focuses on Owner/founding partner."
-  // GOOD: "This fits your focus on owner-led firms."
-
-  let fitReasonLine: string;
-
-  // Check if we have actual capability (not persona)
-  const capability = supplyRecord.capability || '';
-
-  if (capability.trim() && !isPersonaLabel(capability)) {
-    // Real capability — frame as why they fit
-    const formatted = formatCapability(capability);
-    fitReasonLine = `This aligns with your work in ${formatted}.`;
-  } else {
-    // Fallback: try extracting from company name
-    // "All Star Incentive Marketing" → "marketing"
-    const companyCapability = extractCapabilityFromCompanyName(supplyRecord.company || '');
-    if (companyCapability) {
-      fitReasonLine = `This fits your focus on ${companyCapability}.`;
-    } else {
-      // Final fallback: neutral fit line
-      fitReasonLine = 'Looks like a fit based on what you do.';
-    }
-  }
+  const demandTitle = extractPrimaryTitle(demand.title) || 'decision maker';
 
   const supplyLines = [
     `Hey ${supplyFirstName} —`,
     '',
-    `${demandCompany} ${edge.evidence}.`,
-    `${demand.contact} is ${extractPrimaryTitle(demand.title) || 'the point of contact'}.`,
-    fitReasonLine,
+    `${demandCompany} ${edge.evidence} — ${demand.contact} (${demandTitle}) is driving it.`,
     '',
     'Worth a look?',
   ];

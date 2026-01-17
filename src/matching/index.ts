@@ -610,12 +610,15 @@ function scoreAlignment(need: NeedProfile, capability: CapabilityProfile): numbe
 function determineTier(
   score: number,
   need: NeedProfile,
-  capability: CapabilityProfile
+  capability: CapabilityProfile,
+  demandSignalLabel?: string  // From signalMeta.label — truth from normalization
 ): { tier: ConfidenceTier; tierReason: string } {
-  // Build human-readable reason
-  const needLabel = need.category === 'growth' ? 'Raised funding' :
+  // Build human-readable reason — use signalMeta.label if available
+  const needLabel = demandSignalLabel || (
+    need.category === 'growth' ? 'Raised funding' :
     need.category === 'general' ? 'Active company' :
-      `Hiring ${need.category}`;
+    need.category  // Just use category, no "Hiring" prefix
+  );
 
   const capLabel = capability.category === 'general' ? 'Provider' :
     capability.category === 'recruiting' ? 'Recruiter' :
@@ -743,7 +746,7 @@ export function clearScoreLog(): void {
  * - Need-Capability alignment (NEW - the core intelligence)
  * - Buyer-seller overlap (mode-specific validation)
  */
-function scoreMatch(
+export function scoreMatch(
   demand: NormalizedRecord,
   supply: NormalizedRecord,
   mode?: ConnectorMode
@@ -854,7 +857,7 @@ function scoreMatch(
   // ==========================================================================
   // STEP 6: Determine confidence tier
   // ==========================================================================
-  const { tier, tierReason } = determineTier(totalScore, needProfile, capabilityProfile);
+  const { tier, tierReason } = determineTier(totalScore, needProfile, capabilityProfile, demand.signalMeta?.label);
 
   // Ensure minimum score of 1 (never zero - graceful degradation)
   if (totalScore === 0) {
@@ -1019,6 +1022,21 @@ function parseSize(size: unknown): number {
 // =============================================================================
 
 /**
+ * Get stable demand record key.
+ * DOCTRINE: Never rely on domain for people records.
+ * Domain is optional metadata, not identity.
+ * Identity must survive missing enrichment.
+ */
+function getDemandKey(demand: NormalizedRecord): string {
+  return (
+    demand.raw?.identifier ||
+    demand.raw?.uuid ||
+    demand.fullName ||
+    `${demand.company || ''}-${demand.title || ''}`
+  );
+}
+
+/**
  * Get best match for each demand company.
  */
 function getBestMatchPerDemand(matches: Match[]): Match[] {
@@ -1026,7 +1044,7 @@ function getBestMatchPerDemand(matches: Match[]): Match[] {
   const result: Match[] = [];
 
   for (const match of matches) {
-    const key = match.demand.domain;
+    const key = getDemandKey(match.demand);
     if (!seen.has(key)) {
       seen.add(key);
       result.push(match);
@@ -1037,6 +1055,20 @@ function getBestMatchPerDemand(matches: Match[]): Match[] {
 }
 
 /**
+ * Get stable supply record key.
+ * DOCTRINE: Same principle as demand — identity survives missing data.
+ */
+function getSupplyKey(supply: NormalizedRecord): string {
+  return (
+    supply.domain ||
+    supply.raw?.identifier ||
+    supply.raw?.uuid ||
+    supply.fullName ||
+    `${supply.company || ''}-${supply.title || ''}`
+  );
+}
+
+/**
  * Aggregate all matches by supply.
  * Each supplier gets ONE entry with all their matches.
  */
@@ -1044,7 +1076,7 @@ function aggregateBySupply(matches: Match[]): SupplyAggregate[] {
   const bySupply = new Map<string, Match[]>();
 
   for (const match of matches) {
-    const key = match.supply.domain;
+    const key = getSupplyKey(match.supply);
     if (!bySupply.has(key)) {
       bySupply.set(key, []);
     }
@@ -1053,20 +1085,20 @@ function aggregateBySupply(matches: Match[]): SupplyAggregate[] {
 
   const aggregates: SupplyAggregate[] = [];
 
-  for (const [domain, supplierMatches] of bySupply) {
+  for (const [, supplierMatches] of bySupply) {
     // Sort by score, best first
     supplierMatches.sort((a, b) => b.score - a.score);
 
-    // totalMatches counts unique demand companies, not raw match pairs
-    const uniqueDemandDomains = new Set(
-      supplierMatches.map(m => m.demand.domain).filter(Boolean)
+    // totalMatches counts unique demand records, not raw match pairs
+    const uniqueDemandKeys = new Set(
+      supplierMatches.map(m => getDemandKey(m.demand))
     );
 
     aggregates.push({
       supply: supplierMatches[0].supply,
       matches: supplierMatches,
       bestMatch: supplierMatches[0],
-      totalMatches: uniqueDemandDomains.size,
+      totalMatches: uniqueDemandKeys.size,
     });
   }
 
@@ -1117,3 +1149,39 @@ export function limitResults(result: MatchingResult, maxDemand: number, maxSuppl
     stats: result.stats,
   };
 }
+
+// =============================================================================
+// UNIVERSAL MATCHING (re-export)
+// =============================================================================
+
+export {
+  scoreUniversalMatch,
+  extractNeedProfile,
+  extractCapabilityProfile,
+  matchAllUniversal,
+  getBestMatchPerDemand as getBestMatchPerDemandUniversal,
+  aggregateBySupplyUniversal,
+  type UniversalMatch,
+  type UniversalNeedProfile,
+  type UniversalCapabilityProfile,
+  type UniversalMatchResult,
+  type SupplyAggregateUniversal,
+  type CompanyStage,
+} from './universal';
+
+// =============================================================================
+// DOCTRINE (re-export)
+// =============================================================================
+
+export {
+  TIER_THRESHOLDS,
+  DOCTRINE_VERSION,
+  getTierFromScore,
+  getTierDisplay,
+  assertRecordKey,
+  isValidRecordKey,
+  calculateMatchStats,
+  formatMatchStats,
+  type TierName,
+  type MatchStats,
+} from './doctrine';
