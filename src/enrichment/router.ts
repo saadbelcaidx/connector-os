@@ -72,7 +72,7 @@ export type ProviderName = 'connectorAgent' | 'anymail' | 'apollo';
  */
 export const PROVIDER_CAPABILITIES: Record<ProviderName, EnrichmentAction[]> = {
   connectorAgent: ['VERIFY', 'FIND_PERSON'],
-  anymail: ['VERIFY', 'FIND_PERSON', 'FIND_COMPANY_CONTACT'],
+  anymail: ['VERIFY', 'FIND_PERSON', 'FIND_COMPANY_CONTACT', 'SEARCH_PERSON'],
   apollo: ['FIND_PERSON', 'FIND_COMPANY_CONTACT', 'SEARCH_PERSON', 'SEARCH_COMPANY'],
 };
 
@@ -84,7 +84,7 @@ const PROVIDER_PRIORITY: Record<EnrichmentAction, ProviderName[]> = {
   'VERIFY': ['connectorAgent', 'anymail'],
   'FIND_PERSON': ['anymail', 'connectorAgent', 'apollo'],
   'FIND_COMPANY_CONTACT': ['anymail', 'apollo'],
-  'SEARCH_PERSON': ['apollo'],
+  'SEARCH_PERSON': ['anymail', 'apollo'],
   'SEARCH_COMPANY': ['apollo'],
   'CANNOT_ROUTE': [],
 };
@@ -221,24 +221,39 @@ async function verifyWithAnymail(
  * Find person's email with Anymail (find_person endpoint).
  */
 async function findPersonWithAnymail(
-  domain: string,
+  domainOrCompany: { domain?: string | null; company_name?: string | null },
   personName: string,
   config: RouterConfig
 ): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any }> {
   try {
+    const payload: any = {
+      type: 'find_person',
+      apiKey: config.anymailApiKey,
+      full_name: personName,
+    };
+    if (domainOrCompany.domain) {
+      payload.domain = domainOrCompany.domain;
+    } else if (domainOrCompany.company_name) {
+      payload.company_name = domainOrCompany.company_name;
+    }
+    // DEBUG: Log exact payload being sent to anymail-finder
+    console.log(`[Router] findPersonWithAnymail payload:`, {
+      full_name: payload.full_name,
+      domain: payload.domain,
+      company_name: payload.company_name,
+      hasApiKey: !!payload.apiKey,
+    });
     const response = await fetch(`${config.supabaseFunctionsUrl}/anymail-finder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'find_person',
-        apiKey: config.anymailApiKey,
-        domain,
-        full_name: personName,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-      return { email: null, error: { status: response.status } };
+      // DEBUG: Capture full error response
+      const errorBody = await response.text().catch(() => 'failed to read body');
+      console.log(`[Router] anymail-finder error ${response.status}:`, errorBody);
+      return { email: null, error: { status: response.status, body: errorBody } };
     }
 
     const data = await response.json();
@@ -332,17 +347,116 @@ async function findPersonWithConnectorAgent(
 /**
  * Find/search with Apollo.
  * Supports: domain, company+person, company only.
+ *
+ * CREDIT OPTIMIZATION:
+ * - mixed_people/api_search = FREE (no emails returned)
+ * - people/match = 1 credit (even if no email found!)
+ *
+ * Strategy: Use free search first to confirm person exists,
+ * only then call paid match endpoint.
  */
 async function findWithApollo(
   params: { domain?: string; company?: string; firstName?: string; lastName?: string; title?: string },
   config: RouterConfig
 ): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any }> {
   try {
+    const hasPersonName = params.firstName || params.lastName;
+
+    if (hasPersonName && params.company) {
+      // SEARCH_PERSON: Find specific person by name + company
+      // STEP 1: Use FREE search to confirm person exists
+      console.log(`[Apollo] Step 1: FREE search for ${params.firstName} ${params.lastName} at ${params.company}`);
+
+      const searchPayload = {
+        q_organization_name: params.company,
+        person_titles: [], // Empty = no title filter
+        page: 1,
+        per_page: 10,
+      };
+
+      const searchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'people_search',
+          apiKey: config.apolloApiKey,
+          organization_name: params.company,
+        }),
+      });
+
+      if (!searchResponse.ok) {
+        const errorBody = await searchResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] FREE search error ${searchResponse.status}:`, errorBody);
+        return { email: null, error: { status: searchResponse.status, body: errorBody } };
+      }
+
+      const searchData = await searchResponse.json();
+      const people = searchData.people || [];
+
+      // Look for name match in search results
+      const targetFirst = (params.firstName || '').toLowerCase();
+      const targetLast = (params.lastName || '').toLowerCase();
+
+      const matchedPerson = people.find((p: any) => {
+        const pFirst = (p.first_name || '').toLowerCase();
+        const pLast = (p.last_name || '').toLowerCase();
+        return pFirst === targetFirst && pLast === targetLast;
+      });
+
+      if (!matchedPerson) {
+        console.log(`[Apollo] FREE search: person not found in ${people.length} results (0 credits used)`);
+        return { email: null };
+      }
+
+      console.log(`[Apollo] FREE search: found ${matchedPerson.first_name} ${matchedPerson.last_name}, now enriching...`);
+
+      // STEP 2: Person exists, now use PAID match to get email (1 credit)
+      const matchPayload: any = {
+        first_name: params.firstName || '',
+        last_name: params.lastName || '',
+        organization_name: params.company,
+        reveal_personal_emails: true,
+      };
+
+      const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'people_match',
+          apiKey: config.apolloApiKey,
+          payload: matchPayload,
+        }),
+      });
+
+      if (!matchResponse.ok) {
+        const errorBody = await matchResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] people_match error ${matchResponse.status}:`, errorBody);
+        return { email: null, error: { status: matchResponse.status, body: errorBody } };
+      }
+
+      const matchData = await matchResponse.json();
+      const person = matchData.person;
+
+      if (!person?.email) {
+        console.log(`[Apollo] people_match: no email for ${params.firstName} ${params.lastName} (1 credit used)`);
+        return { email: null };
+      }
+
+      console.log(`[Apollo] people_match: found email for ${params.firstName} ${params.lastName} (1 credit used)`);
+      return {
+        email: person.email,
+        firstName: person.first_name,
+        lastName: person.last_name,
+        title: person.title,
+      };
+    }
+
+    // FIND_COMPANY_CONTACT or SEARCH_COMPANY: Find any decision maker
     const response = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        type: 'find_decision_maker',  // Two-step: search people + enrich to get email
+        type: 'find_decision_maker',
         apiKey: config.apolloApiKey,
         domain: params.domain,
         organization_name: params.company,
@@ -565,9 +679,18 @@ export async function routeEnrichment(
     switch (provider) {
       case 'anymail':
         if (action === 'FIND_PERSON') {
-          result = await findPersonWithAnymail(inputs.domain!, inputs.person_name!, config);
+          result = await findPersonWithAnymail({ domain: inputs.domain }, inputs.person_name!, config);
         } else if (action === 'FIND_COMPANY_CONTACT') {
           result = await findCompanyContactWithAnymail(inputs.domain!, config);
+        } else if (action === 'SEARCH_PERSON') {
+          // DEBUG: Log actual values before SEARCH_PERSON call
+          console.log(`[Router] SEARCH_PERSON values:`, {
+            company: inputs.company,
+            person_name: inputs.person_name,
+            companyType: typeof inputs.company,
+            personNameType: typeof inputs.person_name,
+          });
+          result = await findPersonWithAnymail({ company_name: inputs.company }, inputs.person_name!, config);
         } else {
           providerResults[provider].result = 'skipped';
           providerResults[provider].reason = `Anymail cannot handle ${action}`;

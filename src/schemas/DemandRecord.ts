@@ -5,6 +5,8 @@
  * Used as input to the matching pipeline.
  */
 
+import type { SignalType } from './index';
+
 export interface Signal {
   type: string;
   value?: string;
@@ -21,4 +23,7 @@ export interface DemandRecord {
   industry: string;
   signals: Signal[];
   metadata: Record<string, any>;
+
+  // === SCHEMA AWARENESS (user.txt contract) ===
+  signalType?: SignalType;  // 'hiring' | 'person' | 'company' | 'contact'
 }

@@ -42,10 +42,19 @@ function simpleHash(s: string): string {
 /**
  * Generate stable key for a record.
  *
- * @param r - Record with optional domain, company, fullName, raw
+ * @param r - Record with optional domain, company, fullName, raw, recordKey
  * @returns Stable string key prefixed by source type
  *
+ * PRIORITY:
+ * 0. recordKey field (if set by normalization — canonical source)
+ * 1. domain-based (existing behavior)
+ * 2. uuid-based (Crunchbase)
+ * 3. person+company slug
+ * 4. company-only slug
+ * 5. hash fallback
+ *
  * Prefixes:
+ * - "cb_person:", "cb_org:", "job:", "contact:" (from normalization)
  * - "d:" domain-based (existing behavior)
  * - "u:" uuid-based (Crunchbase)
  * - "p:" person+company slug
@@ -53,6 +62,7 @@ function simpleHash(s: string): string {
  * - "x:" hash fallback
  */
 export function recordKey(r: {
+  recordKey?: string;  // Preferred: set by normalization
   domain?: string | null;
   company?: string | null;
   fullName?: string | null;
@@ -60,6 +70,10 @@ export function recordKey(r: {
   lastName?: string | null;
   raw?: { uuid?: string } | null;
 }): string {
+  // Priority 0: Use recordKey from normalization if available (canonical)
+  if (r.recordKey) {
+    return r.recordKey;
+  }
   // Priority 1: domain (preserves existing behavior exactly)
   if (r.domain) {
     return `d:${r.domain.toLowerCase()}`;

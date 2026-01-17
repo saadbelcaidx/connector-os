@@ -80,14 +80,14 @@ const CACHE_TTL_DAYS = 90;
 
 /**
  * Check cache for existing enrichment result.
- * Returns full EnrichmentResult with action/outcome on cache hit.
+ * Uses recordKey (stable identifier) — works for domainless records too.
  */
-async function checkCache(domain: string): Promise<EnrichmentResult | null> {
+async function checkCache(key: string): Promise<EnrichmentResult | null> {
   try {
     const { data, error } = await supabase
       .from('enriched_contacts')
       .select('*')
-      .eq('domain', domain.toLowerCase())
+      .eq('domain', key.toLowerCase())  // 'domain' column stores recordKey
       .maybeSingle();
 
     if (error || !data) return null;
@@ -98,6 +98,8 @@ async function checkCache(domain: string): Promise<EnrichmentResult | null> {
     if (daysSince > CACHE_TTL_DAYS) {
       return null;
     }
+
+    console.log(`[Enrichment] CACHE_HIT key=${key}`);
 
     // Return full EnrichmentResult format (not legacy boolean format)
     return {
@@ -111,9 +113,9 @@ async function checkCache(domain: string): Promise<EnrichmentResult | null> {
       source: data.source as 'apollo' | 'anymail' | 'connectorAgent',
       inputsPresent: {
         email: false, // Cache hit means we didn't have email initially
-        domain: true,
-        person_name: true, // Assume we had person name for FIND_PERSON
-        company: false,
+        domain: !!data.domain?.includes('.'),  // Guess based on key format
+        person_name: true,
+        company: true,
       },
       providersAttempted: [],
       providerResults: {
@@ -130,9 +132,9 @@ async function checkCache(domain: string): Promise<EnrichmentResult | null> {
 
 /**
  * Store successful enrichment result in cache.
- * Only stores ENRICHED or VERIFIED outcomes.
+ * Uses recordKey (stable identifier) — works for domainless records too.
  */
-async function storeInCache(domain: string, result: EnrichmentResult): Promise<void> {
+async function storeInCache(key: string, result: EnrichmentResult): Promise<void> {
   // Only cache successful enrichments
   if (result.outcome !== 'ENRICHED' && result.outcome !== 'VERIFIED') return;
   if (!result.email) return;
@@ -142,7 +144,7 @@ async function storeInCache(domain: string, result: EnrichmentResult): Promise<v
     await supabase
       .from('enriched_contacts')
       .upsert({
-        domain: domain.toLowerCase(),
+        domain: key.toLowerCase(),  // 'domain' column stores recordKey
         email: result.email,
         first_name: result.firstName,
         last_name: result.lastName,
@@ -150,6 +152,7 @@ async function storeInCache(domain: string, result: EnrichmentResult): Promise<v
         source: result.source,
         enriched_at: new Date().toISOString(),
       }, { onConflict: 'domain' });
+    console.log(`[Enrichment] CACHE_STORE key=${key} email=${result.email}`);
   } catch {
     // Swallow cache errors
   }
@@ -176,13 +179,15 @@ export async function enrichRecord(
   signal?: string,
   correlationId?: string
 ): Promise<EnrichmentResult> {
-  const cid = correlationId || `enrich-${Date.now()}-${record.domain?.replace(/[^a-z0-9.-]/gi, '') || 'unknown'}`;
+  // Use recordKey for stable identification (works for domainless records)
+  const key = recordKey(record);
+  const cid = correlationId || `enrich-${Date.now()}-${key.replace(/[^a-z0-9.-]/gi, '').slice(0, 30)}`;
 
   // STEP 1: Check cache (only if no email — if email exists, we need to VERIFY)
-  if (record.domain && !record.email) {
-    const cached = await checkCache(record.domain);
+  // Now works for domainless records too (uses recordKey)
+  if (!record.email) {
+    const cached = await checkCache(key);
     if (cached) {
-      console.log(`[Enrichment] cid=${cid} CACHE_HIT domain=${record.domain}`);
       return cached;
     }
   }
@@ -212,8 +217,9 @@ export async function enrichRecord(
   );
 
   // STEP 4: Store in cache (only for FIND/SEARCH actions, not VERIFY)
-  if (record.domain && result.action !== 'VERIFY' && result.outcome === 'ENRICHED') {
-    await storeInCache(record.domain, result);
+  // Now works for domainless records too (uses recordKey)
+  if (result.action !== 'VERIFY' && result.outcome === 'ENRICHED') {
+    await storeInCache(key, result);
   }
 
   console.log(`[Enrichment] cid=${cid} ACTION=${result.action} OUTCOME=${result.outcome} source=${result.source}`);
@@ -255,10 +261,13 @@ export async function enrichBatch(
   let verifiedCount = 0;
 
   for (const record of records) {
+    // Use recordKey for stable identification (works for domainless records)
+    const key = recordKey(record);
+
     // Check cache first (only if no email — if email exists, we need to VERIFY)
     let result: EnrichmentResult | null = null;
-    if (record.domain && !record.email) {
-      result = await checkCache(record.domain);
+    if (!record.email) {
+      result = await checkCache(key);
     }
 
     if (!result) {
@@ -278,13 +287,12 @@ export async function enrichBatch(
       );
 
       // Store in cache (only for FIND/SEARCH actions, not VERIFY)
-      if (record.domain && result.action !== 'VERIFY' && result.outcome === 'ENRICHED') {
-        await storeInCache(record.domain, result);
+      if (result.action !== 'VERIFY' && result.outcome === 'ENRICHED') {
+        await storeInCache(key, result);
       }
     }
 
     // Store result using stable key (supports domainless records)
-    const key = recordKey(record);
     if (result) {
       results.set(key, result);
       if (result.outcome === 'ENRICHED') enrichedCount++;
