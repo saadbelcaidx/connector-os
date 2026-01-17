@@ -1008,19 +1008,21 @@ export default function Flow() {
 
         setState(prev => ({ ...prev, progress: { current: 40, total: 100, message: 'Deduplicating...' } }));
 
-        // Dedupe demand by domain
-        const seenDemandDomains = new Set<string>();
+        // Dedupe demand by recordKey (supports domainless records)
+        const seenDemandKeys = new Set<string>();
         const dedupedDemand = hubDemand.filter(r => {
-          if (!r.domain || seenDemandDomains.has(r.domain)) return false;
-          seenDemandDomains.add(r.domain);
+          const key = recordKey(r);
+          if (seenDemandKeys.has(key)) return false;
+          seenDemandKeys.add(key);
           return true;
         });
 
-        // Dedupe supply by domain
-        const seenSupplyDomains = new Set<string>();
+        // Dedupe supply by recordKey (supports domainless records)
+        const seenSupplyKeys = new Set<string>();
         const dedupedSupply = hubSupply.filter(r => {
-          if (!r.domain || seenSupplyDomains.has(r.domain)) return false;
-          seenSupplyDomains.add(r.domain);
+          const key = recordKey(r);
+          if (seenSupplyKeys.has(key)) return false;
+          seenSupplyKeys.add(key);
           return true;
         });
 
@@ -1038,9 +1040,10 @@ export default function Flow() {
               console.error(`[Flow] Record sample:`, { company: r.company, domain: r.domain, size: r.size });
               return false;
             }
-            // Required fields
-            if (!r.domain) {
-              console.error(`[Flow] CONTRACT VIOLATION in ${label}[${i}]: missing domain`, r);
+            // Records need EITHER domain OR (company + name) for enrichment
+            // Domainless records use SEARCH_PERSON action via Anymail
+            if (!r.domain && !r.company) {
+              console.error(`[Flow] CONTRACT VIOLATION in ${label}[${i}]: missing both domain and company`, r);
               return false;
             }
           }
@@ -1445,12 +1448,13 @@ export default function Flow() {
     const enrichedSupply = new Map<string, EnrichmentResult>();
 
     // Extract unique supplies from demand matches (not all supplyAggregates)
-    const matchedSupplyDomains = new Set<string>();
+    const matchedSupplyKeys = new Set<string>();
     const supplyToEnrich: { supply: NormalizedRecord }[] = [];
 
     for (const match of matching.demandMatches) {
-      if (!matchedSupplyDomains.has(match.supply.domain)) {
-        matchedSupplyDomains.add(match.supply.domain);
+      const supplyKey = recordKey(match.supply);
+      if (!matchedSupplyKeys.has(supplyKey)) {
+        matchedSupplyKeys.add(supplyKey);
         supplyToEnrich.push({ supply: match.supply });
       }
     }
