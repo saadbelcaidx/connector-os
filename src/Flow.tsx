@@ -15,7 +15,7 @@ import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
 
 // New architecture
-import { validateDataset, validateSupplyDataset, normalizeDataset, NormalizedRecord, Schema } from './schemas';
+import { validateDataset, validateSupplyDataset, normalizeDataset, NormalizedRecord, Schema, getSchemaById, renderSignal, getNarration } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
 import {
   enrichRecord,
@@ -40,6 +40,9 @@ import type { Counterparty } from './schemas/IntroOutput';
 
 // AI Config type
 import { AIConfig } from './services/AIService';
+
+// 3-Step AI Intro Generation (user.txt contract)
+import { generateIntrosAI, IntroAIConfig } from './services/IntroAI';
 
 // INTRO RELIABILITY CONTRACT — Stripe-level infrastructure
 // Layer 0: Deterministic base (always runs first, always succeeds)
@@ -122,6 +125,62 @@ import {
   type DemandExportInput,
   type SupplyExportInput,
 } from './export/exportReceipt';
+
+// =============================================================================
+// BUTTON STYLES — Stripe-grade design system
+// =============================================================================
+// Philosophy: Physical, weighted, consistent. Every button feels the same.
+// - translateY(-1px) on hover creates "lift"
+// - Shadow progression creates depth
+// - scale(0.98) on active creates "press"
+// - No color for primary CTAs - color is for feedback AFTER actions
+
+const BTN = {
+  // Primary: White, for main actions (Begin Matching, Generate Intros, Send)
+  primary: `
+    px-6 py-3 text-[13px] font-medium rounded-xl
+    bg-white text-black
+    shadow-[0_1px_2px_rgba(0,0,0,0.05)]
+    hover:shadow-[0_4px_12px_rgba(255,255,255,0.15)]
+    hover:-translate-y-[1px]
+    active:translate-y-0 active:shadow-[0_1px_2px_rgba(0,0,0,0.05)]
+    active:scale-[0.98]
+    disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none
+    transition-all duration-150 ease-out
+  `.replace(/\s+/g, ' ').trim(),
+
+  // Secondary: Ghost, for alternate actions (Export, Try different)
+  secondary: `
+    px-5 py-2.5 text-[13px] font-medium rounded-xl
+    bg-transparent text-white/60
+    border border-white/[0.08]
+    hover:border-white/[0.15] hover:text-white/80
+    hover:-translate-y-[1px]
+    active:translate-y-0 active:scale-[0.98]
+    disabled:opacity-40 disabled:cursor-not-allowed
+    transition-all duration-150 ease-out
+  `.replace(/\s+/g, ' ').trim(),
+
+  // Danger: Red tint, for destructive or warning actions
+  danger: `
+    px-5 py-2.5 text-[13px] font-medium rounded-xl
+    bg-red-500/10 text-red-400
+    border border-red-500/20
+    hover:bg-red-500/15 hover:border-red-500/30
+    hover:-translate-y-[1px]
+    active:translate-y-0 active:scale-[0.98]
+    transition-all duration-150 ease-out
+  `.replace(/\s+/g, ' ').trim(),
+
+  // Icon: Small, square, for icon-only buttons
+  icon: `
+    p-2 rounded-lg
+    text-white/40 hover:text-white/70
+    hover:bg-white/[0.04]
+    active:scale-[0.95]
+    transition-all duration-150
+  `.replace(/\s+/g, ' ').trim(),
+} as const;
 
 // =============================================================================
 // SIGNAL STATUS — Explicit 3-state for UX (no silent failures)
@@ -296,6 +355,9 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
     metadata.openRolesDays = raw.days_open;
   }
 
+  // Get schema to extract signalType
+  const schema = getSchemaById(normalized.schemaId);
+
   return {
     domain: normalized.domain,
     company: normalized.company,
@@ -305,6 +367,8 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
     industry: Array.isArray(normalized.industry) ? normalized.industry[0] || '' : (normalized.industry || ''),
     signals,
     metadata,
+    // === SCHEMA AWARENESS (user.txt contract) ===
+    signalType: schema?.signalType,  // Pass through for Composer
   };
 }
 
@@ -464,19 +528,20 @@ function buildDemandExportRows(data: ExportData): (string | null)[][] {
     const key = recordKey(match.demand);
     const enriched = data.enrichedDemand.get(key);
 
-    // Same filter as routing: must have email
-    if (!enriched || !isSuccessfulEnrichment(enriched) || !enriched.email) continue;
+    // EMAIL RESOLUTION (user.txt contract): pre-existing OR enriched
+    const email = match.demand.email || (enriched && isSuccessfulEnrichment(enriched) ? enriched.email : null);
+    if (!email) continue;
 
     const intro = data.demandIntros.get(key) || '';
     if (!intro) continue; // No intro = wouldn't be sent
 
     rows.push([
       'DEMAND',
-      enriched.email,
-      enriched.firstName || '',
-      enriched.lastName || '',
+      email,  // Use resolved email
+      enriched?.firstName || match.demand.firstName || '',
+      enriched?.lastName || match.demand.lastName || '',
       cleanCompanyName(match.demand.company),
-      domain || '',
+      match.demand.domain || '',
       intro,
       cleanCompanyName(match.supply.company),
       String(match.score),
@@ -501,8 +566,9 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
     const key = recordKey(agg.supply);
     const enriched = data.enrichedSupply.get(key);
 
-    // Same filter as routing: must have email
-    if (!enriched || !isSuccessfulEnrichment(enriched) || !enriched.email) continue;
+    // EMAIL RESOLUTION (user.txt contract): pre-existing OR enriched
+    const email = agg.supply.email || (enriched && isSuccessfulEnrichment(enriched) ? enriched.email : null);
+    if (!email) continue;
 
     const intro = data.supplyIntros.get(key) || '';
     if (!intro) continue; // No intro = wouldn't be sent
@@ -514,11 +580,11 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
 
     rows.push([
       'SUPPLY',
-      enriched.email,
-      enriched.firstName || '',
-      enriched.lastName || '',
+      email,  // Use resolved email
+      enriched?.firstName || agg.supply.firstName || '',
+      enriched?.lastName || agg.supply.lastName || '',
       cleanCompanyName(agg.supply.company),
-      domain || '',
+      agg.supply.domain || '',
       intro,
       String(agg.matches.length),
       String(avgScore),
@@ -789,8 +855,8 @@ export default function Flow() {
               provider: 'azure',
               model: s.azureDeployment || 'gpt-4o-mini',
               apiKey: s.azureApiKey,
-              endpoint: s.azureEndpoint,
-              deployment: s.azureDeployment,
+              azureEndpoint: s.azureEndpoint,
+              azureDeployment: s.azureDeployment,
             };
           } else if (s.openaiApiKey) {
             return {
@@ -1258,33 +1324,57 @@ export default function Flow() {
     console.log('[EDGE] Annotating', filtered.demandMatches.length, 'matches with confidence levels');
     setState(prev => ({ ...prev, progress: { current: 90, total: 100, message: 'Analyzing match quality...' } }));
 
-    // GRACEFUL DEGRADATION: Always build human-readable evidence
-    // Priority: strong signal → soft signal → generic (never empty)
+    // GRACEFUL DEGRADATION: Schema-aware human-readable evidence
+    // Uses signalType to generate appropriate "why" — NO hiring assumption
     const buildWhy = (match: Match): string => {
       const demand = match.demand;
+      const schema = getSchemaById(demand.schemaId);
 
-      // Priority 1: Hiring signal (strong)
-      if (demand.signal && /hiring|recruit|engineer|sales|marketing|developer/i.test(demand.signal)) {
-        return `is hiring ${demand.signal.toLowerCase().slice(0, 30)}`;
+      // SCHEMA-AWARE: Use renderSignal for the right language
+      if (schema) {
+        switch (schema.signalType) {
+          case 'hiring':
+            // Wellfound Jobs — ONLY true hiring
+            return `is hiring ${demand.signalMeta?.label || demand.signal || 'talent'}`;
+
+          case 'person':
+            // Crunchbase People — Person at company (NOT hiring)
+            const personRole = demand.signalMeta?.label || demand.title || '';
+            if (personRole) {
+              return `has ${personRole} exploring partners`;
+            }
+            return 'is exploring strategic partnerships';
+
+          case 'company':
+            // Crunchbase Orgs — Funding or company activity
+            if (demand.companyFunding) {
+              return 'recently raised funding';
+            }
+            return 'is showing activity';
+
+          case 'contact':
+            // B2B Contacts — Contact role (NOT hiring)
+            const contactTitle = demand.title || demand.signalMeta?.label || '';
+            if (contactTitle) {
+              return `has ${contactTitle} exploring options`;
+            }
+            return 'may be exploring outside partners';
+        }
       }
 
-      // Priority 2: Funding signal (strong)
+      // FALLBACK: Generic (schema not found)
+      // Priority 1: Funding signal
       if (demand.companyFunding) {
         return 'recently raised funding';
       }
 
-      // Priority 3: Industry (medium)
+      // Priority 2: Industry
       if (demand.industry) {
         const ind = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
         if (ind) return `is growing in ${String(ind).split(',')[0].trim()}`;
       }
 
-      // Priority 4: Company description (soft)
-      if (demand.companyDescription) {
-        return 'is scaling';
-      }
-
-      // Priority 5: Generic (escape hatch — always works)
+      // Priority 3: Generic
       return 'may be exploring outside partners';
     };
 
@@ -1465,18 +1555,19 @@ export default function Flow() {
       if (abortRef.current) break;
 
       const record = agg.supply;
+      const key = recordKey(record); // Use recordKey for consistent Map access
 
-      // Supply from B2B Contacts usually has email — will be VERIFIED by router
+      // Supply enrichment (verify if has email, find if not)
       if (supplySchema) {
         const sanitizedDomain = record.domain?.replace(/[^a-z0-9.-]/gi, '') || 'unknown';
         const correlationId = `${runId}-supply-${sanitizedDomain}`;
         try {
           const result = await enrichRecord(record, supplySchema, config, undefined, correlationId);
-          enrichedSupply.set(record.domain, result);
+          enrichedSupply.set(key, result);
         } catch (err) {
           console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain}`);
           // Construct error result with new format
-          enrichedSupply.set(record.domain, {
+          enrichedSupply.set(key, {
             action: record.email ? 'VERIFY' : 'FIND_COMPANY_CONTACT',
             outcome: 'ERROR',
             email: record.email || null,
@@ -1564,6 +1655,9 @@ export default function Flow() {
     console.log('  - demandMatches:', matching.demandMatches.length);
     console.log('  - supplyAggregates:', matching.supplyAggregates.length);
     console.log('  - detectedEdges:', state.detectedEdges.size);
+    console.log('  - enrichedDemand size:', enrichedDemand.size);
+    console.log('  - enrichedDemand keys (first 5):', Array.from(enrichedDemand.keys()).slice(0, 5));
+    console.log('  - demandMatches keys (first 5):', matching.demandMatches.slice(0, 5).map(m => recordKey(m.demand)));
 
     let progress = 0;
     let composed = 0;
@@ -1589,66 +1683,116 @@ export default function Flow() {
         continue;
       }
 
-      // GATE 2: Check demand enrichment
+      // GATE 2: Check demand email (pre-existing OR enriched)
       const demandEnriched = enrichedDemand.get(demandKey);
-      if (!demandEnriched || !isSuccessfulEnrichment(demandEnriched) || !demandEnriched.email) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - demand not enriched`);
+      const demandEmail = match.demand.email || (demandEnriched && isSuccessfulEnrichment(demandEnriched) ? demandEnriched.email : null);
+      if (!demandEmail) {
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - no demand email`);
         dropped++;
         continue;
       }
 
-      // GATE 3: Check supply enrichment
+      // GATE 3: Check supply email (pre-existing OR enriched)
       const supplyEnriched = enrichedSupply.get(supplyKey);
-      if (!supplyEnriched || !isSuccessfulEnrichment(supplyEnriched) || !supplyEnriched.email) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - supply not enriched`);
+      const supplyEmail = match.supply.email || (supplyEnriched && isSuccessfulEnrichment(supplyEnriched) ? supplyEnriched.email : null);
+      if (!supplyEmail) {
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - no supply email`);
         dropped++;
         continue;
       }
 
-      // Build DemandRecord
+      // Build DemandRecord with FULL metadata (user.txt contract: feed ALL data)
+      const demandRaw = match.demand.raw || {};
       const demandRecord: DemandRecord = {
         domain: match.demand.domain,
         company: match.demand.company,
-        contact: demandEnriched.firstName || match.demand.firstName || '',
-        email: demandEnriched.email,
-        title: demandEnriched.title || match.demand.title || '',
+        contact: demandEnriched?.firstName || match.demand.firstName || '',
+        email: demandEmail,
+        title: demandEnriched?.title || match.demand.title || '',
         industry: Array.isArray(match.demand.industry) ? match.demand.industry[0] || '' : (match.demand.industry || ''),
         signals: [],
-        metadata: {},
+        metadata: {
+          // Funding data (Crunchbase)
+          fundingDate: demandRaw.last_funding_at || null,
+          fundingType: demandRaw.last_funding_type || demandRaw.last_equity_funding_type || null,
+          fundingUsd: demandRaw.last_funding_total?.value_usd || demandRaw.last_equity_funding_total?.value_usd || null,
+          fundingStage: demandRaw.funding_stage || null,
+          numFundingRounds: demandRaw.num_funding_rounds || null,
+          // Company size
+          employeeEnum: demandRaw.num_employees_enum || null,
+          revenueRange: demandRaw.revenue_range || null,
+          // Hiring signals
+          openRolesCount: demandRaw.open_roles_count || null,
+          openRolesDays: demandRaw.days_open || null,
+        },
       };
 
-      // Build SupplyRecord (use raw fields for extended data)
+      // Build SupplyRecord with capability data
       const supplyRaw = match.supply.raw || {};
       const supplyRecord: SupplyRecord = {
         domain: match.supply.domain,
         company: match.supply.company,
-        contact: supplyEnriched.firstName || match.supply.firstName || '',
-        email: supplyEnriched.email || '',
-        title: supplyEnriched.title || match.supply.title || '',
+        contact: supplyEnriched?.firstName || match.supply.firstName || '',
+        email: supplyEmail,
+        title: supplyEnriched?.title || match.supply.title || '',
         capability: supplyRaw.capability || supplyRaw.services || match.supply.headline || match.supply.signal || '',
         targetProfile: supplyRaw.targetProfile || (Array.isArray(match.supply.industry) ? (match.supply.industry as string[])[0] : match.supply.industry) || '',
         metadata: {},
       };
 
-      // Build Counterparty (for Composer)
-      const counterparty: Counterparty = {
-        company: supplyRecord.company,
-        contact: supplyRecord.contact,
-        email: supplyRecord.email,
-        fitReason: `${supplyRecord.company} focuses on ${supplyRecord.capability}. ${demandRecord.company} ${edge.evidence}.`,
-      };
+      // ==========================================================================
+      // 3-STEP AI INTRO GENERATION (user.txt contract)
+      // ==========================================================================
+      // Step 1: Generate value props (WHY this match matters)
+      // Step 2: Generate demand intro (using value prop)
+      // Step 3: Generate supply intro (using value prop)
+      // ==========================================================================
 
-      // Compose intros using deterministic Composer
       try {
-        const composed_output = composeIntros(demandRecord, edge, counterparty, supplyRecord);
+        // Check if AI is configured
+        if (settings.aiConfig?.apiKey) {
+          console.log('[COMPOSE] AI Config:', {
+            provider: settings.aiConfig.provider,
+            hasApiKey: !!settings.aiConfig.apiKey,
+            azureEndpoint: settings.aiConfig.azureEndpoint || 'MISSING',
+            azureDeployment: settings.aiConfig.azureDeployment || 'MISSING',
+          });
+          // Build IntroAIConfig from settings
+          const introAIConfig: IntroAIConfig = {
+            provider: settings.aiConfig.provider as 'openai' | 'anthropic' | 'azure',
+            apiKey: settings.aiConfig.apiKey,
+            model: settings.aiConfig.model,
+            azureEndpoint: settings.aiConfig.azureEndpoint,
+            azureDeployment: settings.aiConfig.azureDeployment,
+          };
 
-        demandIntros.set(recordKey(match.demand), composed_output.demandBody);
-        supplyIntros.set(recordKey(match.supply), composed_output.supplyBody);
+          console.log(`[COMPOSE] AI generating: ${match.demand.company} → ${match.supply.company}`);
+          const aiResult = await generateIntrosAI(introAIConfig, demandRecord, supplyRecord, edge);
 
-        console.log(`[COMPOSE] ✓ ${match.demand.company} → ${match.supply.company} (${edge.type})`);
-        composed++;
+          demandIntros.set(recordKey(match.demand), aiResult.demandIntro);
+          supplyIntros.set(recordKey(match.supply), aiResult.supplyIntro);
+
+          console.log(`[COMPOSE] ✓ AI: ${match.demand.company} → ${match.supply.company} (${edge.type})`);
+          composed++;
+        } else {
+          // Fallback to deterministic Composer (no AI configured)
+          const counterparty: Counterparty = {
+            company: supplyRecord.company,
+            contact: supplyRecord.contact,
+            email: supplyRecord.email,
+            fitReason: `${supplyRecord.company} focuses on ${supplyRecord.capability}. ${demandRecord.company} ${edge.evidence}.`,
+          };
+
+          const composed_output = composeIntros(demandRecord, edge, counterparty, supplyRecord);
+
+          demandIntros.set(recordKey(match.demand), composed_output.demandBody);
+          supplyIntros.set(recordKey(match.supply), composed_output.supplyBody);
+
+          console.log(`[COMPOSE] ✓ Template: ${match.demand.company} → ${match.supply.company} (${edge.type})`);
+          composed++;
+        }
       } catch (err) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - Composer error: ${err}`);
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - Error: ${err}`);
         dropped++;
         continue;
       }
@@ -1831,6 +1975,8 @@ export default function Flow() {
     // Send to demand side
     if (senderConfig.demandCampaignId) {
       const demandToSend = matchingResult.demandMatches.filter(m => {
+        // Check pre-existing email first, then enriched
+        if (m.demand.email) return true;
         const enriched = enrichedDemand.get(recordKey(m.demand));
         return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
@@ -1845,27 +1991,29 @@ export default function Flow() {
 
         const match = demandToSend[i];
         const demandKey = recordKey(match.demand);
-        const enriched = enrichedDemand.get(demandKey)!;
+        const enriched = enrichedDemand.get(demandKey);
+        // Use pre-existing email OR enriched email
+        const email = match.demand.email || enriched?.email;
 
         // Use pre-generated AI intro (fall back to template if missing)
         // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
         const intro = state.demandIntros.get(demandKey) || generateDemandIntro({
           ...match.demand,
-          firstName: enriched.firstName || match.demand.firstName,
-          email: enriched.email,
+          firstName: enriched?.firstName || match.demand.firstName,
+          email: email!,
         });
 
         try {
           const result = await sender.sendLead(senderConfig, {
             type: 'DEMAND',
             campaignId: senderConfig.demandCampaignId!,
-            email: enriched.email!,
-            firstName: enriched.firstName,
-            lastName: enriched.lastName,
+            email: email!,
+            firstName: enriched?.firstName || match.demand.firstName,
+            lastName: enriched?.lastName || match.demand.lastName,
             companyName: match.demand.company,
             companyDomain: match.demand.domain,
             introText: intro,
-            contactTitle: enriched.title,
+            contactTitle: enriched?.title || match.demand.title,
           });
           if (result.success) {
             sentDemand++;
@@ -1901,6 +2049,8 @@ export default function Flow() {
     // Send to supply side (aggregated - one per supplier)
     if (senderConfig.supplyCampaignId) {
       const supplyToSend = matchingResult.supplyAggregates.filter(a => {
+        // Check pre-existing email first (Leads Finder), then enriched
+        if (a.supply.email) return true;
         const enriched = enrichedSupply.get(recordKey(a.supply));
         return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
@@ -1915,15 +2065,17 @@ export default function Flow() {
 
         const agg = supplyToSend[i];
         const supplyKey = recordKey(agg.supply);
-        const enriched = enrichedSupply.get(supplyKey)!;
+        const enriched = enrichedSupply.get(supplyKey);
+        // Use pre-existing email (Leads Finder) OR enriched email
+        const email = agg.supply.email || enriched?.email;
 
         // Use pre-generated AI intro (fall back to template if missing)
         // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
         const intro = state.supplyIntros.get(supplyKey) || generateSupplyIntro(
           {
             ...agg.supply,
-            firstName: enriched.firstName || agg.supply.firstName,
-            email: enriched.email,
+            firstName: enriched?.firstName || agg.supply.firstName,
+            email: email!,
           },
           agg.bestMatch.demand
         );
@@ -1932,13 +2084,13 @@ export default function Flow() {
           const result = await sender.sendLead(senderConfig, {
             type: 'SUPPLY',
             campaignId: senderConfig.supplyCampaignId!,
-            email: enriched.email!,
-            firstName: enriched.firstName,
-            lastName: enriched.lastName,
+            email: email!,
+            firstName: enriched?.firstName || agg.supply.firstName,
+            lastName: enriched?.lastName || agg.supply.lastName,
             companyName: agg.supply.company,
             companyDomain: agg.supply.domain,
             introText: intro,
-            contactTitle: enriched.title,
+            contactTitle: enriched?.title || agg.supply.title,
           });
           if (result.success) {
             sentSupply++;
@@ -2027,7 +2179,7 @@ export default function Flow() {
       <div className="px-8 pt-8">
         <button
           onClick={() => navigate('/launcher')}
-          className="p-2 rounded-xl hover:bg-white/[0.04] transition-colors"
+          className={BTN.icon}
         >
           <ArrowLeft size={18} className="text-white/50" />
         </button>
@@ -2164,7 +2316,7 @@ export default function Flow() {
               <button
                 onClick={startFlow}
                 disabled={!settings?.demandDatasetId}
-                className="px-5 py-2.5 text-[13px] font-medium rounded-xl bg-white text-black hover:bg-white/90 active:scale-[0.98] disabled:opacity-30 transition-all"
+                className={BTN.primary}
               >
                 {state.error ? 'Retry' : 'Begin Matching'}
               </button>
@@ -2232,6 +2384,34 @@ export default function Flow() {
                 const totalScanned = state.demandRecords.length;
                 const edgeCount = matches.length;
 
+                // DOCTRINE: Tier counts — NEVER compress into single number
+                const strongCount = matches.filter(m => m.tier === 'strong').length;
+                const goodCount = matches.filter(m => m.tier === 'good').length;
+                const exploratoryCount = matches.filter(m => m.tier === 'open').length;
+
+                // DOCTRINE: Stable React key — use recordKey from normalization
+                // recordKey is stable, non-null, never domain-based (set in normalize())
+                const getDemandReactKey = (demand: NormalizedRecord): string => {
+                  return demand.recordKey || `fallback:${demand.company}:${demand.fullName}`;
+                };
+
+                // DOCTRINE: 4 separate counters — Matching ≠ Quality ≠ Sendability
+                // Raw emails: emails that came with the dataset (Leads Finder) — need verification
+                const rawEmailCount = matches.filter(m => m.demand.email).length;
+                // Enriched emails: emails found via Apollo/Anymail
+                const enrichedEmailCount = matches.filter(m => {
+                  if (m.demand.email) return false; // Don't double-count raw
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
+                  return e?.email;
+                }).length;
+                // Total emails: raw + enriched
+                const emailCount = rawEmailCount + enrichedEmailCount;
+                // Ready to send: only VERIFIED emails (must pass through enrichment)
+                const readyToSendCount = matches.filter(m => {
+                  const e = state.enrichedDemand.get(recordKey(m.demand));
+                  return e?.email && e?.verified;
+                }).length;
+
                 // Get top 3 matches for preview
                 const previewMatches = matches.slice(0, 3);
                 const moreCount = Math.max(0, matches.length - 3);
@@ -2268,13 +2448,8 @@ export default function Flow() {
                 // =============================================================
                 const getDemandSignature = (match: typeof matches[0], edge: Edge | undefined) => {
                   const company = match.demand.company;
-                  // Line 2: Signal - use actual job title or edge type
-                  const signal = match.demand.signal
-                    ? `Hiring ${match.demand.signal}`
-                    : edge?.type === 'FUNDING_RECENT' ? 'Just raised funding'
-                    : edge?.type === 'SCALING' ? 'Scaling team'
-                    : edge?.type === 'GROWTH' ? 'Growing fast'
-                    : 'Active hiring signal';
+                  // Line 2: Signal — use signalMeta.label (truth from normalization, no prefixes)
+                  const signal = match.demand.signalMeta?.label || 'Active signal';
                   // Line 3: Context - industry with dots (limit to 3 for readability)
                   // Handle string, array, or missing industry
                   let context = 'Timing signal detected';
@@ -2419,30 +2594,43 @@ export default function Flow() {
                       className="text-center mb-8"
                     >
                       <h2 className="text-[32px] font-light text-white/90 mb-2">
-                        {edgeCount > 0 ? `${edgeCount} companies ready` : 'Datasets loaded'}
+                        {edgeCount > 0 ? 'Matches found' : 'Datasets loaded'}
                       </h2>
-                      <p className="text-[12px] text-white/40">
-                        {edgeCount > 0
-                          ? `${totalScanned} scanned · ready to find contacts`
-                          : `${totalScanned} companies loaded · you can send to any of them`
-                        }
+                      <p className="text-[12px] text-white/40 mb-4">
+                        Scanned {totalScanned} companies · matched with {state.supplyRecords.length} providers
                       </p>
 
-                      {/* Confidence Tier Legend */}
-                      <div className="flex items-center justify-center gap-4 mt-4 text-[11px]">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-violet-400">🟣</span>
-                          <span className="text-white/50">Strong fit</span>
+                      {/* DOCTRINE: Quality summary — always show all three tiers */}
+                      {edgeCount > 0 && (
+                        <div className="flex items-center justify-center gap-6 text-[13px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-violet-400">🟣</span>
+                            <span className="text-white/70">{strongCount} strong</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-blue-400">🔵</span>
+                            <span className="text-white/70">{goodCount} good</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-white/40">⚪</span>
+                            <span className="text-white/70">{exploratoryCount} exploratory</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-blue-400">🔵</span>
-                          <span className="text-white/50">Good fit</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-white/40">⚪</span>
-                          <span className="text-white/50">Exploratory</span>
-                        </div>
+                      )}
+
+                      {/* DOCTRINE: 4 canonical counters — always show, never conflate */}
+                      <div className="flex items-center justify-center gap-4 mt-4 text-[12px] text-white/50">
+                        <span>Matches: {edgeCount}</span>
+                        <span>·</span>
+                        <span>Emails: {emailCount}{rawEmailCount > 0 && enrichedEmailCount === 0 ? ' (need verification)' : ''}</span>
+                        <span>·</span>
+                        <span>Ready to send: {readyToSendCount}</span>
                       </div>
+
+                      {/* DOCTRINE: Exploratory ≠ bad */}
+                      <p className="text-[11px] text-white/40 mt-3">
+                        Exploratory matches are normal. Sending teaches the system.
+                      </p>
                     </motion.div>
 
                     {/* ============================================= */}
@@ -2479,7 +2667,7 @@ export default function Flow() {
 
                         return (
                           <motion.div
-                            key={match.demand.domain}
+                            key={getDemandReactKey(match.demand)}
                             initial={{ opacity: 0, y: 12 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.2 + (i * 0.02), duration: 0.3 }}
@@ -2713,9 +2901,7 @@ export default function Flow() {
               {/* PRIMARY CTA — Send anyway (escape hatch) */}
               <button
                 onClick={proceedToEnrichment}
-                className="px-8 py-3 bg-white text-black rounded-xl text-[14px] font-medium
-                  hover:scale-[1.02] active:scale-[0.98]
-                  transition-all duration-200 shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+                className={BTN.primary}
               >
                 Find contacts anyway
               </button>
@@ -2735,9 +2921,7 @@ export default function Flow() {
                     progress: { current: 0, total: 0, message: '' },
                   }));
                 }}
-                className="mt-4 px-6 py-2.5 bg-transparent border border-white/[0.08] text-white/50 rounded-xl text-[13px]
-                  hover:border-white/[0.12] hover:text-white/70
-                  transition-all duration-200"
+                className={`mt-4 ${BTN.secondary}`}
               >
                 Or try different datasets
               </button>
@@ -2794,10 +2978,16 @@ export default function Flow() {
 
                 // Enrichment results (can be 0 if BUDGET_EXCEEDED)
                 const demandEnriched = demandMatches.filter(m => {
+                  // Check pre-existing email in normalized record first
+                  if (m.demand.email) return true;
+                  // Then check enriched map
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 }).length;
                 const supplyEnriched = supplyAggregates.filter(a => {
+                  // Check pre-existing email in normalized record first (Leads Finder)
+                  if (a.supply.email) return true;
+                  // Then check enriched map
                   const e = state.enrichedSupply.get(recordKey(a.supply));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 }).length;
@@ -2819,14 +3009,16 @@ export default function Flow() {
                   demandEnriched === demandMatches.length ? 'ALL' : 'PARTIAL';
                 const demandWithoutEmail = demandMatches.length - demandEnriched;
 
-                // Matches WITH email (for CSV export)
+                // Matches WITH email (for CSV export) — check pre-existing OR enriched
                 const demandWithEmail = demandMatches.filter(m => {
+                  if (m.demand.email) return true;
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
 
                 // Matches WITHOUT email (for LinkedIn export)
                 const demandWithoutEmailList = demandMatches.filter(m => {
+                  if (m.demand.email) return false; // Has pre-existing email
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
@@ -2954,91 +3146,21 @@ export default function Flow() {
                       </motion.div>
                     )}
 
-                    {/* Buttons — based on EMAIL AVAILABILITY STATE */}
-                    {/* INVARIANT: If at least ONE email exists, CSV export MUST be available */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.3 }}
-                      className="flex flex-col items-center gap-3"
-                    >
-                      {/* CSV Export — shows when ANY emails exist (STATE A or B) */}
-                      {demandEmailState !== 'NONE' && (
-                        <button
-                          onClick={() => {
-                            const csvContent = [
-                              ['Company', 'Domain', 'Person', 'Title', 'Email'].join(','),
-                              ...demandWithEmail.map(m => {
-                                const e = state.enrichedDemand.get(recordKey(m.demand));
-                                return [
-                                  m.demand.companyName || '',
-                                  m.demand.domain || '',
-                                  e?.name || m.demand.existingContact?.name || '',
-                                  e?.title || m.demand.existingContact?.title || '',
-                                  e?.email || ''
-                                ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
-                              })
-                            ].join('\n');
-                            const blob = new Blob([csvContent], { type: 'text/csv' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `email-outreach-${Date.now()}.csv`;
-                            a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="px-6 py-2.5 bg-white text-black rounded-xl font-medium text-[13px]
-                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
-                        >
-                          Export CSV ({demandEnriched} emails)
-                        </button>
-                      )}
-
-                      {/* LinkedIn Export — shows when ANY are missing emails (STATE B or C) */}
-                      {demandWithoutEmail > 0 && (
-                        <button
-                          onClick={() => {
-                            const csvContent = [
-                              ['Company', 'Domain', 'Person', 'Title', 'LinkedIn'].join(','),
-                              ...demandWithoutEmailList.map(m => [
-                                m.demand.companyName || '',
-                                m.demand.domain || '',
-                                m.demand.existingContact?.name || '',
-                                m.demand.existingContact?.title || '',
-                                m.demand.existingContact?.linkedin || ''
-                              ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
-                            ].join('\n');
-                            const blob = new Blob([csvContent], { type: 'text/csv' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `linkedin-outreach-${Date.now()}.csv`;
-                            a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className={`px-6 py-2.5 rounded-xl font-medium text-[13px]
-                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200
-                            ${demandEmailState === 'NONE'
-                              ? 'bg-white text-black'
-                              : 'bg-white/[0.08] text-white/80 hover:bg-white/[0.12]'
-                            }`}
-                        >
-                          Export LinkedIn ({demandWithoutEmail})
-                        </button>
-                      )}
-
-                      {/* Generate Intros — only when sendableCount > 0 */}
-                      {sendableCount > 0 && (
+                    {/* Generate Intros — export happens AFTER intros in Ready step */}
+                    {sendableCount > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                      >
                         <button
                           onClick={regenerateIntros}
-                          className="px-6 py-2.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30
-                            rounded-xl font-medium text-[13px]
-                            hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+                          className={BTN.primary}
                         >
                           Generate intros ({sendableCount})
                         </button>
-                      )}
-                    </motion.div>
+                      </motion.div>
+                    )}
                   </div>
                 );
               })()}
@@ -3071,21 +3193,19 @@ export default function Flow() {
             </motion.div>
           )}
 
-          {/* READY — Split Model (Ready to Send vs Need Email) */}
+          {/* READY — Split Screen (The Holy Shit Moment) */}
           {state.step === 'ready' && (
             <motion.div
               key="ready"
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="w-full max-w-2xl mx-auto"
+              className="w-full max-w-5xl mx-auto px-4"
             >
               {(() => {
-                // Calculate split: ready vs need email
                 const demandMatches = state.matchingResult?.demandMatches || [];
                 const supplyAggregates = state.matchingResult?.supplyAggregates || [];
 
-                // Ready to send (has email)
                 const demandReady = demandMatches.filter(m => {
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
@@ -3095,7 +3215,6 @@ export default function Flow() {
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
 
-                // Need email (no email found)
                 const demandNeedEmail = demandMatches.filter(m => {
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
@@ -3108,173 +3227,180 @@ export default function Flow() {
                 const totalReady = demandReady.length + supplyReady.length;
                 const totalNeedEmail = demandNeedEmail.length + supplyNeedEmail.length;
 
+                // Build message previews — 2 per side, dedupe supply
+                const demandMessages = demandReady.slice(0, 2).map(m => ({
+                  company: m.demand.company,
+                  intro: state.demandIntros.get(recordKey(m.demand)) || '',
+                }));
+                // Dedupe supply by company name
+                const seenSupply = new Set<string>();
+                const uniqueSupply: typeof demandReady = [];
+                for (const m of demandReady) {
+                  if (!seenSupply.has(m.supply.company)) {
+                    seenSupply.add(m.supply.company);
+                    uniqueSupply.push(m);
+                  }
+                }
+                const supplyMessages = uniqueSupply.slice(0, 2).map(m => ({
+                  company: m.supply.company,
+                  intro: state.supplyIntros.get(recordKey(m.supply)) || '',
+                }));
+
                 return (
-                  <div className="space-y-12">
-                    {/* ═══════════════════════════════════════════════════════════════
-                        ZONE 1: Ready to Send
-                    ═══════════════════════════════════════════════════════════════ */}
+                  <div className="text-center">
+                    {/* HERO — compact */}
                     <motion.div
-                      initial={{ opacity: 0, y: 20 }}
+                      initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.1 }}
-                      className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-8"
+                      transition={{ duration: 0.4 }}
+                      className="mb-5"
                     >
-                      {/* Header */}
-                      <div className="flex items-baseline justify-between mb-2">
-                        <h2 className="text-[15px] font-medium text-white/90">Ready to Send</h2>
-                        <span className="text-[32px] font-light text-white/90 tabular-nums">{totalReady}</span>
+                      <div className="relative inline-block">
+                        <div className="absolute inset-0 blur-2xl bg-gradient-to-r from-blue-500/30 via-white/20 to-violet-500/30 rounded-full scale-125" />
+                        <span className="relative text-[44px] font-extralight text-white tracking-tight tabular-nums">
+                          {totalReady}
+                        </span>
                       </div>
-                      <p className="text-[13px] text-white/40 mb-6">Emails found. Ready for Instantly.</p>
-
-                      {/* Preview cards (max 2) */}
-                      {totalReady > 0 && (
-                        <div className="space-y-3 mb-6">
-                          {demandReady.slice(0, 2).map((m, i) => {
-                            const demandKey = recordKey(m.demand);
-                            const e = state.enrichedDemand.get(demandKey);
-                            const intro = state.demandIntros.get(demandKey);
-                            return (
-                              <div key={demandKey} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-                                <div className="flex items-start justify-between gap-4">
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-[13px] font-medium text-white/90 truncate">{m.demand.company}</p>
-                                    <p className="text-[12px] text-white/40 truncate">{m.demand.industry || 'Company'}</p>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <p className="text-[12px] text-white/60 font-mono">{e?.email}</p>
-                                    <p className="text-[10px] text-emerald-400/70">✓ verified</p>
-                                  </div>
-                                </div>
-                                {intro && (
-                                  <p className="mt-3 text-[11px] text-white/50 line-clamp-2 leading-relaxed">"{intro}"</p>
-                                )}
-                              </div>
-                            );
-                          })}
-                          {totalReady > 2 && (
-                            <p className="text-[12px] text-white/30 text-center">+{totalReady - 2} more ready</p>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={startSending}
-                          disabled={totalReady === 0}
-                          className="flex-1 px-5 py-3 text-[13px] font-medium rounded-xl transition-all bg-white text-black hover:bg-white/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          Send {totalReady} to Instantly
-                        </button>
-                        <button
-                          onClick={openExportReceipt}
-                          className="px-4 py-3 text-[13px] font-medium rounded-xl border border-white/[0.12] text-white/70 hover:text-white hover:border-white/30 transition-all active:scale-[0.98]"
-                        >
-                          Export CSV
-                        </button>
-                      </div>
+                      <p className="text-[12px] text-white/40 mt-0.5">intros ready</p>
                     </motion.div>
 
-                    {/* ═══════════════════════════════════════════════════════════════
-                        ZONE 2: Need Email
-                    ═══════════════════════════════════════════════════════════════ */}
-                    {totalNeedEmail > 0 && (
+                    {/* SPLIT SCREEN */}
+                    <div className="grid grid-cols-2 gap-4 mb-5">
+                      {/* LEFT — Demand (blue) */}
                       <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className="rounded-2xl border border-amber-500/[0.15] bg-amber-500/[0.02] p-8"
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.2, duration: 0.4 }}
+                        className="space-y-2"
                       >
-                        {/* Header */}
-                        <div className="flex items-baseline justify-between mb-2">
-                          <h2 className="text-[15px] font-medium text-white/90">Need Email</h2>
-                          <span className="text-[32px] font-light text-white/60 tabular-nums">{totalNeedEmail}</span>
+                        <div className="flex items-center gap-1.5 pl-1">
+                          <div className="w-5 h-5 rounded bg-blue-500/20 flex items-center justify-center">
+                            <span className="text-[9px] font-bold text-blue-400">D</span>
+                          </div>
+                          <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Demand</span>
+                          <span className="text-[10px] text-white/20">({demandReady.length})</span>
                         </div>
-                        <p className="text-[13px] text-white/40 mb-6">Intro ready. Saad recommends LinkedIn DMs when no contact found.</p>
-
-                        {/* Preview cards (max 2) */}
-                        <div className="space-y-3 mb-6">
-                          {demandNeedEmail.slice(0, 2).map((m, i) => {
-                            const intro = state.demandIntros.get(recordKey(m.demand));
-                            return (
-                              <div key={m.demand.domain} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-                                <div className="flex items-start justify-between gap-4">
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-[13px] font-medium text-white/90 truncate">{m.demand.company}</p>
-                                    <p className="text-[12px] text-white/40 truncate">{m.demand.industry || 'Company'}</p>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <p className="text-[12px] text-white/40 font-mono">{m.demand.domain}</p>
-                                    <p className="text-[10px] text-amber-400/70">no email found</p>
-                                  </div>
-                                </div>
-                                {intro && (
-                                  <p className="mt-3 text-[11px] text-white/50 line-clamp-2 leading-relaxed">"{intro}"</p>
-                                )}
-                              </div>
-                            );
-                          })}
-                          {totalNeedEmail > 2 && (
-                            <p className="text-[12px] text-white/30 text-center">+{totalNeedEmail - 2} more need email</p>
-                          )}
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => {
-                              // Export only need-email records
-                              const records = [...demandNeedEmail.map(m => ({
-                                type: 'demand',
-                                company: m.demand.company,
-                                domain: m.demand.domain,
-                                industry: m.demand.industry || '',
-                                intro: state.demandIntros.get(recordKey(m.demand)) || '',
-                                email: '',
-                              })), ...supplyNeedEmail.map(a => ({
-                                type: 'supply',
-                                company: a.supply.company,
-                                domain: a.supply.domain,
-                                industry: a.supply.industry || '',
-                                intro: state.supplyIntros.get(recordKey(a.supply)) || '',
-                                email: '',
-                              }))];
-                              const csv = [
-                                ['type', 'company', 'domain', 'industry', 'intro', 'email'].join(','),
-                                ...records.map(r => [r.type, `"${r.company}"`, r.domain, `"${r.industry}"`, `"${r.intro.replace(/"/g, '""')}"`, r.email].join(','))
-                              ].join('\n');
-                              const blob = new Blob([csv], { type: 'text/csv' });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = `need-email-${new Date().toISOString().split('T')[0]}.csv`;
-                              a.click();
-                              URL.revokeObjectURL(url);
-                            }}
-                            className="flex-1 px-5 py-3 text-[13px] font-medium rounded-xl border border-white/[0.12] text-white/70 hover:text-white hover:border-white/30 transition-all active:scale-[0.98]"
+                        {demandMessages.map((msg, i) => (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, x: -10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.3 + i * 0.08 }}
                           >
-                            Export {totalNeedEmail} to complete manually
-                          </button>
-                        </div>
+                            <div className="h-[130px] rounded-xl rounded-tl-sm bg-blue-500/[0.05] border border-blue-500/[0.10] text-left flex flex-col">
+                              <div className="px-3 pt-2.5 pb-1.5 border-b border-blue-500/[0.06]">
+                                <p className="text-[10px] text-blue-400/70 font-medium">→ {msg.company}</p>
+                              </div>
+                              <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
+                                <p className="text-[11px] text-white/60 leading-[1.55]">{msg.intro || '...'}</p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        ))}
+                        {demandReady.length > 2 && (
+                          <p className="text-[10px] text-white/25 pl-1">+{demandReady.length - 2} more</p>
+                        )}
                       </motion.div>
-                    )}
 
-                    {/* Start Over */}
-                    <div className="text-center">
-                      <button
-                        onClick={reset}
-                        className="px-4 py-2 text-[12px] text-white/40 hover:text-white/60 transition-colors"
+                      {/* RIGHT — Supply (violet) */}
+                      <motion.div
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.25, duration: 0.4 }}
+                        className="space-y-2"
                       >
-                        Start Over
-                      </button>
+                        <div className="flex items-center justify-end gap-1.5 pr-1">
+                          <span className="text-[10px] text-white/20">({uniqueSupply.length})</span>
+                          <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Supply</span>
+                          <div className="w-5 h-5 rounded bg-violet-500/20 flex items-center justify-center">
+                            <span className="text-[9px] font-bold text-violet-400">S</span>
+                          </div>
+                        </div>
+                        {supplyMessages.map((msg, i) => (
+                          <motion.div
+                            key={i}
+                            initial={{ opacity: 0, x: 10 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ delay: 0.35 + i * 0.08 }}
+                          >
+                            <div className="h-[130px] rounded-xl rounded-tr-sm bg-violet-500/[0.05] border border-violet-500/[0.10] text-left flex flex-col">
+                              <div className="px-3 pt-2.5 pb-1.5 border-b border-violet-500/[0.06]">
+                                <p className="text-[10px] text-violet-400/70 font-medium">→ {msg.company}</p>
+                              </div>
+                              <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
+                                <p className="text-[11px] text-white/60 leading-[1.55]">{msg.intro || '...'}</p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        ))}
+                        {uniqueSupply.length > 2 && (
+                          <p className="text-[10px] text-white/25 text-right pr-1">+{uniqueSupply.length - 2} more</p>
+                        )}
+                      </motion.div>
                     </div>
 
-                    {/* Error surface */}
+                    {/* ACTIONS — all in one row */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.5 }}
+                      className="flex items-center justify-center gap-2 flex-wrap"
+                    >
+                      <button onClick={startSending} disabled={totalReady === 0} className={BTN.primary}>
+                        Send {totalReady}
+                      </button>
+                      <button onClick={openExportReceipt} className={BTN.secondary}>
+                        Export
+                      </button>
+                      {totalNeedEmail > 0 && (
+                        <button
+                          onClick={() => {
+                            const records = [...demandNeedEmail.map(m => ({
+                              type: 'demand',
+                              company: m.demand.company,
+                              domain: m.demand.domain,
+                              industry: m.demand.industry || '',
+                              intro: state.demandIntros.get(recordKey(m.demand)) || '',
+                              linkedin: m.demand.existingContact?.linkedin || '',
+                            })), ...supplyNeedEmail.map(a => ({
+                              type: 'supply',
+                              company: a.supply.company,
+                              domain: a.supply.domain,
+                              industry: a.supply.industry || '',
+                              intro: state.supplyIntros.get(recordKey(a.supply)) || '',
+                              linkedin: a.supply.linkedin || '',
+                            }))];
+                            const csv = [
+                              ['type', 'company', 'domain', 'industry', 'intro', 'linkedin'].join(','),
+                              ...records.map(r => [r.type, `"${r.company}"`, r.domain, `"${r.industry}"`, `"${r.intro.replace(/"/g, '""')}"`, r.linkedin].join(','))
+                            ].join('\n');
+                            const blob = new Blob([csv], { type: 'text/csv' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `linkedin-dm-${new Date().toISOString().split('T')[0]}.csv`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[#0A66C2]/10 border border-[#0A66C2]/20 text-[11px] font-medium text-[#0A66C2] hover:bg-[#0A66C2]/15 transition-all"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                          </svg>
+                          {totalNeedEmail} DM
+                        </button>
+                      )}
+                      <span className="text-white/10 mx-1">|</span>
+                      <button onClick={reset} className="h-9 px-3 rounded-lg text-[11px] text-white/30 hover:text-white/50 hover:bg-white/[0.03] transition-all">
+                        Start over
+                      </button>
+                    </motion.div>
+
                     {state.error && (
                       <motion.p
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="text-[12px] text-red-400/80 text-center"
+                        className="mt-4 text-[11px] text-red-400/80"
                       >
                         {safeRender(state.error)}
                       </motion.p>
@@ -3282,7 +3408,6 @@ export default function Flow() {
                   </div>
                 );
               })()}
-
             </motion.div>
           )}
 
@@ -3367,7 +3492,7 @@ export default function Flow() {
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.5 }}
                 onClick={reset}
-                className="px-5 py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 active:scale-[0.98] transition-all"
+                className={BTN.primary}
               >
                 Run again
               </motion.button>
@@ -3409,7 +3534,7 @@ export default function Flow() {
 
               <button
                 onClick={handleExportCSV}
-                className="w-full py-2.5 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 transition-all active:scale-[0.98]"
+                className={`w-full ${BTN.primary}`}
               >
                 Download CSV
               </button>
