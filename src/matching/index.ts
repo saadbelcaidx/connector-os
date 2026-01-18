@@ -208,8 +208,10 @@ export async function matchRecords(
     maxCandidatesPerDemand: 3
   });
 
-  // SUPPLY SIDE: Aggregate all matches per supplier
-  const supplyAggregates = aggregateBySupply(allMatches);
+  // SUPPLY SIDE: Aggregate matches per supplier (from demandMatches, not allMatches)
+  // DOCTRINE: Only supplies that appear in demandMatches should be in supplyAggregates.
+  // This ensures supplyIntros (populated from demandMatches) aligns with supplyAggregates.
+  const supplyAggregates = aggregateBySupply(demandMatches);
 
   // Calculate stats
   const scores = allMatches.map(m => m.score);
@@ -289,8 +291,10 @@ export function matchRecordsSync(
     maxCandidatesPerDemand: 3
   });
 
-  // SUPPLY SIDE: Aggregate all matches per supplier
-  const supplyAggregates = aggregateBySupply(allMatches);
+  // SUPPLY SIDE: Aggregate matches per supplier (from demandMatches, not allMatches)
+  // DOCTRINE: Only supplies that appear in demandMatches should be in supplyAggregates.
+  // This ensures supplyIntros (populated from demandMatches) aligns with supplyAggregates.
+  const supplyAggregates = aggregateBySupply(demandMatches);
 
   // Calculate stats
   const scores = allMatches.map(m => m.score);
