@@ -1170,31 +1170,48 @@ export default function Flow() {
       // END HUB ADAPTER - Normal flow continues below
       // =========================================================================
 
-      // GUARDS — Zero Silent Failures
-      if (!guard(settings?.apifyToken, BLOCKS.NO_APIFY_TOKEN, setFlowBlock)) return;
-      if (!guard(settings?.demandDatasetId, BLOCKS.NO_DEMAND_DATASET, setFlowBlock)) return;
+      // Fetch demand dataset (CSV takes priority over Apify)
+      let demandRecords: NormalizedRecord[] = [];
+      let demandValidation: { valid: boolean; schema: Schema | null; error?: string } = { valid: false, schema: null };
 
-      setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading demand...' } }));
+      const csvDemandData = getCsvData('demand');
+      if (csvDemandData && csvDemandData.length > 0) {
+        // CSV demand data exists - use it
+        console.log('[Flow] Using CSV demand data:', csvDemandData.length, 'records');
+        console.log('[Flow] CSV demand sample:', csvDemandData[0]);
+        setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading demand from CSV...' } }));
 
-      // Fetch demand dataset
-      const demandData = await fetchApifyDataset(settings.demandDatasetId, settings.apifyToken);
-      console.log('[Flow] Raw demand data sample:', demandData[0]);
-      console.log('[Flow] Raw demand fields:', demandData[0] ? Object.keys(demandData[0]) : 'empty');
-      setState(prev => ({ ...prev, progress: { ...prev.progress, current: 30, message: 'Validating demand...' } }));
+        demandValidation = validateDataset(csvDemandData);
+        console.log('[Flow] CSV Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
 
-      // Validate demand
-      const demandValidation = validateDataset(demandData);
-      console.log('[Flow] Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
+        if (!guard(demandValidation.valid && demandValidation.schema,
+          BLOCKS.SCHEMA_INVALID(demandValidation.error || 'Unknown CSV schema'), setFlowBlock)) return;
 
-      // GUARDS — Dataset validation
-      if (!guard(demandData && demandData.length > 0, BLOCKS.DATASET_EMPTY, setFlowBlock)) return;
-      if (!guard(demandValidation.valid && demandValidation.schema,
-        BLOCKS.SCHEMA_INVALID(demandValidation.error || 'Unknown schema'), setFlowBlock)) return;
+        demandRecords = normalizeDataset(csvDemandData, demandValidation.schema);
+        console.log(`[Flow] CSV Demand: ${demandRecords.length} records (${demandValidation.schema.name})`);
+      } else {
+        // No CSV - require Apify
+        if (!guard(settings?.apifyToken, BLOCKS.NO_APIFY_TOKEN, setFlowBlock)) return;
+        if (!guard(settings?.demandDatasetId, BLOCKS.NO_DEMAND_DATASET, setFlowBlock)) return;
 
-      // Normalize demand
-      const demandRecords = normalizeDataset(demandData, demandValidation.schema);
-      console.log(`[Flow] Demand: ${demandRecords.length} records (${demandValidation.schema.name})`);
-      console.log('[Flow] Normalized demand sample:', demandRecords[0] ? { email: demandRecords[0].email, firstName: demandRecords[0].firstName, company: demandRecords[0].company, domain: demandRecords[0].domain, signal: demandRecords[0].signal } : 'empty');
+        setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading demand...' } }));
+
+        const demandData = await fetchApifyDataset(settings.demandDatasetId, settings.apifyToken);
+        console.log('[Flow] Raw demand data sample:', demandData[0]);
+        console.log('[Flow] Raw demand fields:', demandData[0] ? Object.keys(demandData[0]) : 'empty');
+        setState(prev => ({ ...prev, progress: { ...prev.progress, current: 30, message: 'Validating demand...' } }));
+
+        demandValidation = validateDataset(demandData);
+        console.log('[Flow] Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
+
+        if (!guard(demandData && demandData.length > 0, BLOCKS.DATASET_EMPTY, setFlowBlock)) return;
+        if (!guard(demandValidation.valid && demandValidation.schema,
+          BLOCKS.SCHEMA_INVALID(demandValidation.error || 'Unknown schema'), setFlowBlock)) return;
+
+        demandRecords = normalizeDataset(demandData, demandValidation.schema);
+        console.log(`[Flow] Demand: ${demandRecords.length} records (${demandValidation.schema.name})`);
+        console.log('[Flow] Normalized demand sample:', demandRecords[0] ? { email: demandRecords[0].email, firstName: demandRecords[0].firstName, company: demandRecords[0].company, domain: demandRecords[0].domain, signal: demandRecords[0].signal } : 'empty');
+      }
 
       // Fetch supply dataset (CSV takes priority over Apify)
       let supplyRecords: NormalizedRecord[] = [];
