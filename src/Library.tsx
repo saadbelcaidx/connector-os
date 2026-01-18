@@ -3984,15 +3984,45 @@ const sections: DocSection[] = [
             <div className="text-[15px] font-medium text-white/90">Upload your partner</div>
           </div>
           <p className="text-[13px] text-white/60 mb-4">
-            Go to Settings → Data Sources → Supply. Click "Upload CSV" and add your partner's info. Just one row:
+            Go to Settings → Data Sources → Supply. Download the template, fill in your partner's info.
           </p>
-          <div className="p-3 rounded-lg bg-black/40 border border-white/[0.06] font-mono text-[11px] text-white/50 overflow-x-auto">
-            company,name,email,title<br/>
-            Apex Recruiting,Sarah Chen,sarah@apex.io,Managing Partner
+
+          {/* CSV Format */}
+          <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] mb-4">
+            <div className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Required headers</div>
+            <div className="font-mono text-[11px] text-white/50 mb-4">
+              Full Name,Company Name,Domain,Service Description,LinkedIn URL,Email,Target Industries
+            </div>
+            <div className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Example row</div>
+            <div className="font-mono text-[10px] text-white/40 leading-relaxed">
+              Alex Brown,Certus Recruitment,certusrecruitment.com,"Tech recruitment agency placing GTM and IT roles for SaaS companies. 16 days avg fill time vs industry 60-90 days. ICP: Founders, CROs, VPs Sales at SaaS (11-1000 employees).",https://linkedin.com/in/alexbrown,,SaaS
+            </div>
           </div>
-          <p className="text-[12px] text-white/40 mt-3 italic">
-            That's it. One row. One partner. Ready to activate.
-          </p>
+
+          {/* Field Guide */}
+          <div className="space-y-2 mb-4">
+            <div className="text-[11px] text-white/30 uppercase tracking-wider">What goes where</div>
+            <div className="grid gap-2">
+              <div className="flex items-start gap-2 text-[12px]">
+                <span className="text-violet-400/60 font-mono">Service Description</span>
+                <span className="text-white/40">— Put everything here: what they do, ICP, differentiators, case studies. The system uses this for intros.</span>
+              </div>
+              <div className="flex items-start gap-2 text-[12px]">
+                <span className="text-violet-400/60 font-mono">Email</span>
+                <span className="text-white/40">— Leave blank. They're your client. You don't send to them via Instantly.</span>
+              </div>
+              <div className="flex items-start gap-2 text-[12px]">
+                <span className="text-violet-400/60 font-mono">Domain</span>
+                <span className="text-white/40">— Their real domain. Used for matching and deduplication.</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-amber-500/[0.06] border border-amber-500/20">
+            <p className="text-[11px] text-amber-200/70 m-0">
+              <strong className="text-amber-300/90">Key insight:</strong> The more detail you put in Service Description, the better the intros. Include ICP, differentiators, proof points. This is what the system uses to pitch them.
+            </p>
+          </div>
         </div>
 
         {/* Step 2 */}
