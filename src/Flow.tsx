@@ -105,6 +105,7 @@ import {
 import { AlertPanel, AlertFromExplanation } from './components/AlertPanel';
 import { TooltipHint, LabelWithHint } from './components/TooltipHint';
 import { InlineHelpLink } from './components/InlineHelpLink';
+import { MatchReasoningPopover } from './ui/matching/reasoning';
 import { explain, type UXBlock } from './services/Explainability';
 import { DOCS } from './config/docs';
 
@@ -2720,21 +2721,24 @@ export default function Flow() {
                                 whileHover={{ y: -2 }}
                                 title={getDemandTooltip(match, edge)}
                               >
-                                {/* Line 1: Entity + Tier Badge */}
+                                {/* Line 1: Entity + Tier Badge + Info */}
                                 <div className="flex items-center gap-2">
                                   <p className="text-[14px] font-medium text-white/80 truncate flex-1">
                                     {demandSig.company}
                                   </p>
-                                  {/* Confidence Tier Badge */}
-                                  <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                                    match.tier === 'strong'
-                                      ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                                      : match.tier === 'good'
-                                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                                        : 'bg-white/10 text-white/50 border border-white/20'
-                                  }`}>
-                                    {match.tier === 'strong' ? '🟣' : match.tier === 'good' ? '🔵' : '⚪'}
-                                  </span>
+                                  {/* Tier Badge + Reasoning Icon */}
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                                      match.tier === 'strong'
+                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
+                                        : match.tier === 'good'
+                                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                                          : 'bg-white/10 text-white/50 border border-white/20'
+                                    }`}>
+                                      {match.tier === 'strong' ? '🟣' : match.tier === 'good' ? '🔵' : '⚪'}
+                                    </span>
+                                    <MatchReasoningPopover match={match} />
+                                  </div>
                                 </div>
                                 {/* Line 2: Signal */}
                                 <p className="text-[12px] text-white/50 mt-1 truncate">
