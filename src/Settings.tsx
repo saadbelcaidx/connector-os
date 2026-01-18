@@ -4,15 +4,14 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp } from 'lucide-react';
+import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useAuth } from './AuthContext';
 import Dock from './Dock';
-import { DatasetHealthCard } from './components/DatasetHealthCard';
 import { InfoTip } from './components/InfoTip';
 import { LearnMore, LearnMoreCard, LearnMoreList } from './components/LearnMore';
-import { analyzeDatasetHealth, generateCounterpartyFilters, type DatasetHealth, type CounterpartyFilters, INTENT_HUMAN_LABELS } from './services/DatasetIntelligence';
 import type { AIConfig } from './services/AIService';
+import CsvUpload from './components/CsvUpload';
 
 // =============================================================================
 // TYPES
@@ -253,62 +252,9 @@ export default function Settings() {
     setTimeout(() => setCopiedPlusvibeWebhook(false), 1500);
   };
 
-  // Dataset Analysis
-  const [demandHealth, setDemandHealth] = useState<DatasetHealth | null>(null);
-  const [counterpartyFilters, setCounterpartyFilters] = useState<CounterpartyFilters | null>(null);
-  const [analyzingDemand, setAnalyzingDemand] = useState(false);
-  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-
-  const analyzeDemandDataset = async () => {
-    if (!settings.demandDatasetId || !settings.apifyToken) {
-      setAnalyzeError('Enter Apify token and demand dataset ID first');
-      return;
-    }
-
-    setAnalyzingDemand(true);
-    setAnalyzeError(null);
-    setDemandHealth(null);
-    setCounterpartyFilters(null);
-
-    try {
-      // Fetch dataset from Apify
-      const url = `https://api.apify.com/v2/datasets/${settings.demandDatasetId}/items?token=${settings.apifyToken}&format=json`;
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch dataset: ${response.status}`);
-      }
-
-      const items = await response.json();
-
-      if (!Array.isArray(items) || items.length === 0) {
-        throw new Error('Dataset is empty');
-      }
-
-      // Build AI config from settings (for niche detection)
-      const aiConfig: AIConfig | null = settings.aiProvider === 'openai' && settings.openaiApiKey
-        ? { enabled: true, provider: 'openai', apiKey: settings.openaiApiKey, model: settings.aiModel || 'gpt-4o-mini' }
-        : settings.aiProvider === 'azure' && settings.azureApiKey
-        ? { enabled: true, provider: 'azure', apiKey: settings.azureApiKey, model: settings.azureDeployment || 'gpt-4o-mini', endpoint: settings.azureEndpoint, deployment: settings.azureDeployment }
-        : settings.aiProvider === 'anthropic' && settings.claudeApiKey
-        ? { enabled: true, provider: 'anthropic', apiKey: settings.claudeApiKey, model: settings.aiModel || 'claude-3-haiku-20240307' }
-        : null;
-
-      // Analyze dataset health
-      const health = await analyzeDatasetHealth(items, aiConfig);
-      setDemandHealth(health);
-
-      // Generate counterparty filters (use defaultIntent from health, pass aiConfig separately)
-      const filters = await generateCounterpartyFilters(health, undefined, aiConfig);
-      setCounterpartyFilters(filters);
-
-    } catch (e: any) {
-      console.error('[Settings] Analyze error:', e);
-      setAnalyzeError(e.message || 'Failed to analyze dataset');
-    }
-
-    setAnalyzingDemand(false);
-  };
+  // CSV Upload State (Phase 1-3)
+  const [showDemandCsv, setShowDemandCsv] = useState(false);
+  const [showSupplyCsv, setShowSupplyCsv] = useState(false);
 
   // Load
   useEffect(() => { load(); }, [isGuest]);
@@ -725,47 +671,12 @@ export default function Settings() {
                         <p className="text-[12px] text-white/40 mt-0.5">Companies with timing signals</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-[180px]">
-                        <Input
-                          value={settings.demandDatasetId}
-                          onChange={(v) => {
-                            setSettings({ ...settings, demandDatasetId: v });
-                            setDemandHealth(null);
-                            setCounterpartyFilters(null);
-                            setAnalyzeError(null);
-                          }}
-                          placeholder="Dataset ID"
-                        />
-                      </div>
-                      <button
-                        onClick={analyzeDemandDataset}
-                        disabled={analyzingDemand || !settings.demandDatasetId}
-                        className={`h-8 px-3 rounded-lg text-[12px] font-medium flex items-center gap-1.5 transition-all whitespace-nowrap ${
-                          analyzingDemand
-                            ? 'bg-white/[0.04] text-white/40'
-                            : demandHealth
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/15'
-                            : 'bg-white/[0.06] text-white/60 hover:text-white/90 hover:bg-white/[0.1] active:scale-[0.98]'
-                        }`}
-                      >
-                        {analyzingDemand ? (
-                          <>
-                            <Loader2 size={12} className="animate-spin" />
-                            <span>Analyzing</span>
-                          </>
-                        ) : demandHealth ? (
-                          <>
-                            <Check size={12} />
-                            <span>Done</span>
-                          </>
-                        ) : (
-                          <>
-                            <BarChart3 size={12} />
-                            <span>Analyze</span>
-                          </>
-                        )}
-                      </button>
+                    <div className="w-[180px]">
+                      <Input
+                        value={settings.demandDatasetId}
+                        onChange={(v) => setSettings({ ...settings, demandDatasetId: v })}
+                        placeholder="Dataset ID"
+                      />
                     </div>
                   </div>
 
@@ -781,6 +692,36 @@ export default function Settings() {
                         ]} />
                       </LearnMoreCard>
                     </LearnMore>
+                  </div>
+
+                  {/* CSV Upload Option */}
+                  <div className="ml-11 mt-3 pt-3 border-t border-white/[0.04]">
+                    {!showDemandCsv ? (
+                      <button
+                        onClick={() => setShowDemandCsv(true)}
+                        className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                      >
+                        <Upload size={12} />
+                        <span>Or upload CSV</span>
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-white/50">Upload demand CSV</span>
+                          <button
+                            onClick={() => setShowDemandCsv(false)}
+                            className="text-[10px] text-white/30 hover:text-white/50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <CsvUpload
+                          side="demand"
+                          userId={user?.id}
+                          onNormalized={() => setShowDemandCsv(false)}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -821,48 +762,38 @@ export default function Settings() {
                       />
                     </div>
                   </div>
-                </div>
 
-                {/* Analyze Error */}
-                {analyzeError && (
-                  <div className="mt-4 p-4 rounded-xl bg-red-500/5 border border-red-500/20" style={{ animation: 'settings-fade-in 200ms ease-out' }}>
-                    <p className="text-[12px] text-red-400">{analyzeError}</p>
-                  </div>
-                )}
-
-                {/* Dataset Health Card */}
-                {(demandHealth || analyzingDemand) && (
-                  <div className="mt-4" style={{ animation: 'settings-fade-in 300ms ease-out' }}>
-                    <DatasetHealthCard
-                      title="Analysis"
-                      health={demandHealth}
-                      isLoading={analyzingDemand}
-                      counterpartyFilters={counterpartyFilters}
-                    />
-
-
-                    {demandHealth && (
-                      <LearnMore title="What does this mean?">
-                        <LearnMoreCard>
-                          <div className="space-y-3 text-[12px] text-white/60">
-                            <p>
-                              <span className="text-white/80">Emails:</span> Contacts that already have verified emails. No enrichment needed.
-                            </p>
-                            <p>
-                              <span className="text-white/80">Decision makers:</span> Percentage of contacts at decision-making level.
-                            </p>
-                            <p>
-                              <span className="text-white/80">Need enrichment:</span> Contacts where the system will look up decision makers via Apollo.
-                            </p>
-                            <p>
-                              <span className="text-white/80">Estimated cost:</span> Apollo credits needed at ~$0.024 per lookup.
-                            </p>
-                          </div>
-                        </LearnMoreCard>
-                      </LearnMore>
+                  {/* CSV Upload Option */}
+                  <div className="ml-11 mt-3 pt-3 border-t border-white/[0.04]">
+                    {!showSupplyCsv ? (
+                      <button
+                        onClick={() => setShowSupplyCsv(true)}
+                        className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                      >
+                        <Upload size={12} />
+                        <span>Or upload CSV</span>
+                      </button>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-white/50">Upload supply CSV</span>
+                          <button
+                            onClick={() => setShowSupplyCsv(false)}
+                            className="text-[10px] text-white/30 hover:text-white/50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <CsvUpload
+                          side="supply"
+                          userId={user?.id}
+                          onNormalized={() => setShowSupplyCsv(false)}
+                        />
+                      </div>
                     )}
                   </div>
-                )}
+                </div>
+
               </div>
 
               {/* Which scrapers work? */}

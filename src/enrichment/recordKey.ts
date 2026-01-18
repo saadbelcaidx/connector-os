@@ -28,8 +28,9 @@ function slug(s: string): string {
 
 /**
  * Simple hash for fallback (deterministic, not cryptographic)
+ * Exported for CSV stableKey generation (CSV Phase 2)
  */
-function simpleHash(s: string): string {
+export function simpleHash(s: string): string {
   let hash = 0;
   for (let i = 0; i < s.length; i++) {
     const char = s.charCodeAt(i);
