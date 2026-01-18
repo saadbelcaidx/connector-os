@@ -30,6 +30,7 @@ const RELATION_WEIGHTS: Record<EdgeRelation, number> = {
   equivalent: 1.0,
   specializes: 0.9,
   fulfills: 0.95,
+  indicates: 0.95,  // Signal → Need relationship (high weight for BIZ-2E)
   related: 0.7,
   role_variant: 0.85,
 };
@@ -182,18 +183,35 @@ function expandToken(
         continue;
       }
 
-      // Check fulfills direction (supply service/function → demand intent/function)
+      // Check fulfills direction (supply service/function → demand intent/function/need)
       if (relation === 'fulfills') {
         const fromConcept = graph.bundle.concepts[fromId];
         const toConcept = graph.bundle.concepts[targetId];
 
-        // Fulfills only works: supply side with service/function → demand intent/function
+        // Fulfills only works: supply side with service/function → demand intent/function/need
         if (context.side === 'supply') {
           if (!['service', 'function'].includes(fromConcept?.t || '')) continue;
-          if (!['intent', 'function'].includes(toConcept?.t || '')) continue;
+          if (!['intent', 'function', 'need'].includes(toConcept?.t || '')) continue;  // BIZ-2E: Added 'need'
         } else {
           // Demand side: reverse direction (intent → service that fulfills)
           // Skip fulfills on demand side for now
+          continue;
+        }
+      }
+
+      // Check indicates direction (demand signal → need)
+      // BIZ-2E: Signals indicate needs, which services can fulfill
+      if (relation === 'indicates') {
+        const fromConcept = graph.bundle.concepts[fromId];
+        const toConcept = graph.bundle.concepts[targetId];
+
+        // Indicates only works: demand side with signal → need
+        if (context.side === 'demand') {
+          // Signal indicates a need
+          if (!['signal'].includes(fromConcept?.t || '')) continue;
+          if (!['need'].includes(toConcept?.t || '')) continue;
+        } else {
+          // Supply side: Skip indicates (supply doesn't have signals, it has services)
           continue;
         }
       }

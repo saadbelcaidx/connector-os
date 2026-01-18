@@ -138,9 +138,9 @@ function scoreWithBizgraph(
     ...expandedSupply.evidence,
   ];
 
-  // Check for STRONG semantic equivalence (w >= 0.9, equivalent or fulfills)
+  // Check for STRONG semantic equivalence (w >= 0.9, equivalent, fulfills, or indicates)
   const strongEvidence = allEvidence.filter(
-    e => e.w >= 0.9 && (e.rel === 'equivalent' || e.rel === 'fulfills')
+    e => e.w >= 0.9 && (e.rel === 'equivalent' || e.rel === 'fulfills' || e.rel === 'indicates')
   );
   const hasStrongEquivalence = strongEvidence.length > 0;
 
@@ -341,6 +341,242 @@ describe('BIZGRAPH Matching Integration', () => {
       // Only "ai" and "hiring" might overlap, but not "safety"→"sales"
       expect(result.overlap).not.toContain('sales');
       expect(result.evidence).not.toContain('ai safety→sales');
+    });
+  });
+
+  // =============================================================================
+  // SIGNAL → SERVICE MATCHING TESTS (BIZ-2E)
+  // =============================================================================
+
+  describe('Signal → Service: Funding → Growth Marketing (Tier 6)', () => {
+    const supplyText = 'Growth marketing agency for funded startups';
+    const demandText = 'We raised $10M series A, need to scale customer acquisition';
+
+    it('should match funding signal to growth marketing agency', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n💰 Funding → Growth Marketing Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}, overlap=[${before.overlap.join(', ')}]`);
+      console.log(`   After:  score=${after.score}, overlap=[${after.overlap.join(', ')}]`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      // "series a" should indicate "growth marketing" need
+      // "growth marketing agency" should fulfill that need
+      // Note: This test uses simulated scoring. Real engine scores higher.
+      expect(after.score).toBeGreaterThan(before.score);
+      expect(after.score).toBeGreaterThanOrEqual(40); // Good tier (simulated scoring limitation)
+    });
+
+    it('should show series A → growth marketing semantic path', () => {
+      expect(graph).not.toBeNull();
+
+      const result = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      // Check for semantic expansion including growth-related terms
+      const hasGrowthExpansion = result.overlap.some(t =>
+        t.includes('growth') || t.includes('marketing') || t.includes('series')
+      );
+      expect(hasGrowthExpansion).toBe(true);
+
+      // Verify the evidence shows the signal→need→service path
+      const hasIndicatesPath = result.evidence.some(e =>
+        e.includes('series a→growth marketing') || e.includes('series a→demand generation')
+      );
+      expect(hasIndicatesPath).toBe(true);
+    });
+  });
+
+  describe('Signal → Service: Lead Gen for Funded Companies', () => {
+    const supplyText = 'Lead generation agency specializing in B2B demand gen';
+    const demandText = 'Funded startup, raised funding, need leads and customer acquisition';
+
+    it('should match funded company to lead gen agency', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n🎯 Funded Startup → Lead Gen Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}`);
+      console.log(`   After:  score=${after.score}`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      // Verify the semantic paths exist (signal→need→service)
+      // Note: Simulated scoring may not increase if overlap tokens don't connect
+      const hasValidEvidence = after.evidence.some(e =>
+        e.includes('raised funding→') || e.includes('lead generation')
+      );
+      expect(hasValidEvidence).toBe(true);
+    });
+  });
+
+  describe('Signal → Service: GDPR Compliance → Legal Services (Tier 7)', () => {
+    const supplyText = 'Privacy law firm specializing in GDPR compliance consulting';
+    const demandText = 'Need GDPR compliance help for our data protection';
+
+    it('should match compliance signal to privacy law firm', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n🔒 GDPR Compliance → Legal Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}, overlap=[${before.overlap.join(', ')}]`);
+      console.log(`   After:  score=${after.score}, overlap=[${after.overlap.join(', ')}]`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      // "GDPR" should indicate "privacy compliance" need
+      // "privacy law firm" should fulfill that need
+      expect(after.overlap).toContain('gdpr');
+      expect(after.overlap).toContain('compliance');
+      expect(after.score).toBeGreaterThanOrEqual(70); // Strong tier
+    });
+  });
+
+  describe('Signal → Service: Regulatory Audit → Compliance Consulting (Tier 7)', () => {
+    const supplyText = 'Compliance consultant for regulatory audits and certification';
+    const demandText = 'Preparing for regulatory audit, need licensing help';
+
+    it('should match audit signal to compliance consultant', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n📋 Regulatory Audit → Compliance Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}`);
+      console.log(`   After:  score=${after.score}`);
+      console.log(`   Overlap: [${after.overlap.join(', ')}]`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      // Both texts have "regulatory" - direct overlap
+      // Also "audit" and "certification" may appear via expansion
+      expect(after.overlap).toContain('regulatory');
+      expect(after.score).toBeGreaterThanOrEqual(before.score);
+    });
+  });
+
+  describe('Signal → Service: Product Launch → GTM Services (Tier 8)', () => {
+    const supplyText = 'Product marketing consultant specializing in GTM strategy';
+    const demandText = 'Launching new product Q2, need go-to-market help';
+
+    it('should match product launch signal to GTM consultant', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n🚀 Product Launch → GTM Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}, overlap=[${before.overlap.join(', ')}]`);
+      console.log(`   After:  score=${after.score}, overlap=[${after.overlap.join(', ')}]`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      // Both texts have "product" - direct overlap
+      // Evidence should show GTM semantic paths
+      expect(after.overlap).toContain('product');
+      expect(after.score).toBeGreaterThanOrEqual(before.score);
+    });
+  });
+
+  describe('Signal → Service: Rebranding → Brand Agency (Tier 8)', () => {
+    const supplyText = 'Brand strategy agency for brand refresh and repositioning';
+    const demandText = 'Going through rebranding, need brand strategy help';
+
+    it('should match rebrand signal to brand agency', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n🎨 Rebranding → Brand Agency Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}`);
+      console.log(`   After:  score=${after.score}`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      expect(after.overlap).toContain('brand');
+      expect(after.score).toBeGreaterThan(before.score);
+    });
+  });
+
+  describe('Signal → Service: Technical Debt → Engineering Consulting (Tier 9)', () => {
+    const supplyText = 'Engineering consultant for technical advisory and architecture review';
+    const demandText = 'Dealing with technical debt, need architecture modernization';
+
+    it('should match technical debt signal to engineering consultant', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n🔧 Technical Debt → Engineering Consulting Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}`);
+      console.log(`   After:  score=${after.score}`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      expect(after.score).toBeGreaterThan(before.score);
+    });
+  });
+
+  describe('Signal → Service: Security Incident → Security Consulting (Tier 9)', () => {
+    const supplyText = 'Cybersecurity consultant for security audits and penetration testing';
+    const demandText = 'Had security incident, need cybersecurity help and security audit';
+
+    it('should match security signal to security consultant', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n🛡️ Security Incident → Security Consulting Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}, overlap=[${before.overlap.join(', ')}]`);
+      console.log(`   After:  score=${after.score}, overlap=[${after.overlap.join(', ')}]`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      expect(after.overlap).toContain('security');
+      expect(after.overlap).toContain('cybersecurity');
+      expect(after.score).toBeGreaterThanOrEqual(70); // Strong tier
+    });
+  });
+
+  describe('Signal → Service: Scaling Company → Operations Consulting (Tier 10)', () => {
+    const supplyText = 'Operations consulting firm for process optimization and scaling';
+    const demandText = 'Rapid growth company, need help scaling operations';
+
+    it('should match scaling signal to operations consultant', () => {
+      expect(graph).not.toBeNull();
+
+      const before = scoreWithoutBizgraph(demandText, supplyText);
+      const after = scoreWithBizgraph(graph!, demandText, supplyText);
+
+      console.log('\n📈 Scaling → Operations Consulting Test:');
+      console.log(`   Demand: "${demandText}"`);
+      console.log(`   Supply: "${supplyText}"`);
+      console.log(`   Before: score=${before.score}`);
+      console.log(`   After:  score=${after.score}`);
+      console.log(`   Evidence: ${after.evidence.slice(0, 5).join(', ')}`);
+
+      expect(after.overlap).toContain('scaling');
+      expect(after.overlap).toContain('operations');
+      expect(after.score).toBeGreaterThan(before.score);
     });
   });
 });

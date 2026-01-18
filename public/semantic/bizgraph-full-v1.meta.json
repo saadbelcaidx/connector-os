@@ -1,17 +1,17 @@
 {
   "version": "2.0.0",
-  "built_at": "2026-01-18T22:05:54.607Z",
-  "build_hash": "2cfa6ce18b84cbaf",
-  "concept_count": 18121,
-  "edge_count": 19693,
-  "label_count": 42284,
+  "built_at": "2026-01-18T22:56:35.812Z",
+  "build_hash": "eb0226533329f287",
+  "concept_count": 18204,
+  "edge_count": 19797,
+  "label_count": 42555,
   "sources": [
     "manual_core",
     "onet_30.1",
     "esco_1.1.1"
   ],
-  "json_size_bytes": 5371974,
-  "gz_size_bytes": 660362,
-  "json_size_kb": "5246.07",
+  "json_size_bytes": 5397615,
+  "gz_size_bytes": 664505,
+  "json_size_kb": "5271.11",
   "gz_size_mb": "0.63"
 }

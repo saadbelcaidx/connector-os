@@ -232,6 +232,538 @@ const TIER_5_DISAMBIGUATION: ManualCoreConcept[] = [
   },
 ];
 
+// -----------------------------------------------------------------------------
+// TIER 6: GROWTH / FUNDING SIGNALS → MARKETING SERVICES
+// Pattern: Signal → indicates → Need → fulfills → Service
+// -----------------------------------------------------------------------------
+
+const TIER_6_GROWTH_SIGNALS: ManualCoreConcept[] = [
+  // === SIGNALS (what we detect in demand) ===
+  {
+    tag: 'signal',
+    domain: 'marketing',
+    labels: ['funding raised', 'raised funding', 'raised capital', 'secured funding'],
+  },
+  {
+    tag: 'signal',
+    domain: 'marketing',
+    labels: ['series a', 'series b', 'series c', 'series d'],
+  },
+  {
+    tag: 'signal',
+    domain: 'marketing',
+    labels: ['seed round', 'seed funding', 'pre-seed'],
+  },
+  {
+    tag: 'signal',
+    domain: 'marketing',
+    labels: ['scaling', 'rapid growth', 'hypergrowth', 'fast growing'],
+  },
+  {
+    tag: 'signal',
+    domain: 'marketing',
+    labels: ['expanding team', 'team expansion', 'growing team'],
+  },
+  {
+    tag: 'signal',
+    domain: 'marketing',
+    labels: ['market expansion', 'entering new market', 'geographic expansion'],
+  },
+
+  // === NEEDS (what the signal indicates) ===
+  {
+    tag: 'need',
+    domain: 'marketing',
+    labels: ['growth marketing', 'growth marketing need', 'marketing growth'],
+  },
+  {
+    tag: 'need',
+    domain: 'marketing',
+    labels: ['demand generation', 'demand gen', 'demandgen'],
+  },
+  {
+    tag: 'need',
+    domain: 'marketing',
+    labels: ['lead generation', 'lead gen need', 'leads generation'],
+  },
+  {
+    tag: 'need',
+    domain: 'marketing',
+    labels: ['customer acquisition', 'acquiring customers', 'customer growth'],
+  },
+  {
+    tag: 'need',
+    domain: 'marketing',
+    labels: ['brand awareness', 'brand building', 'brand growth'],
+  },
+  {
+    tag: 'need',
+    domain: 'marketing',
+    labels: ['pipeline generation', 'pipeline growth', 'building pipeline'],
+  },
+
+  // === SERVICES (who fulfills the need) ===
+  {
+    tag: 'service',
+    domain: 'marketing',
+    labels: ['growth marketing agency', 'growth agency', 'growth marketing firm'],
+  },
+  {
+    tag: 'service',
+    domain: 'marketing',
+    labels: ['demand gen agency', 'demand generation agency', 'demandgen firm'],
+  },
+  {
+    tag: 'service',
+    domain: 'marketing',
+    labels: ['lead gen agency', 'lead generation agency', 'leadgen service'],
+  },
+  {
+    tag: 'service',
+    domain: 'marketing',
+    labels: ['marketing consulting', 'marketing consultant', 'marketing advisor'],
+  },
+  {
+    tag: 'service',
+    domain: 'marketing',
+    labels: ['digital marketing agency', 'digital agency', 'performance marketing'],
+  },
+  {
+    tag: 'service',
+    domain: 'marketing',
+    labels: ['content marketing agency', 'content agency', 'content marketing firm'],
+  },
+  {
+    tag: 'role',
+    domain: 'marketing',
+    labels: ['fractional cmo', 'fractional chief marketing officer', 'part-time cmo'],
+  },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 7: COMPLIANCE / REGULATORY SIGNALS → LEGAL SERVICES
+// Pattern: Signal → indicates → Need → fulfills → Service
+// -----------------------------------------------------------------------------
+
+const TIER_7_COMPLIANCE_SIGNALS: ManualCoreConcept[] = [
+  // === SIGNALS (regulatory/compliance triggers) ===
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['gdpr', 'gdpr compliance', 'gdpr requirement'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['ccpa', 'ccpa compliance', 'california privacy'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['privacy regulation', 'data privacy', 'privacy law'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['regulatory audit', 'compliance audit', 'audit requirement'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['licensing requirement', 'license application', 'regulatory approval'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['soc2', 'soc 2', 'soc2 compliance', 'soc 2 certification'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['hipaa', 'hipaa compliance', 'healthcare compliance'],
+  },
+  {
+    tag: 'signal',
+    domain: 'legal',
+    labels: ['pci dss', 'pci compliance', 'payment compliance'],
+  },
+
+  // === NEEDS (what the signal indicates) ===
+  {
+    tag: 'need',
+    domain: 'legal',
+    labels: ['privacy compliance', 'privacy compliance need', 'data protection compliance'],
+  },
+  {
+    tag: 'need',
+    domain: 'legal',
+    labels: ['regulatory compliance', 'compliance requirement', 'regulatory need'],
+  },
+  {
+    tag: 'need',
+    domain: 'legal',
+    labels: ['legal advisory', 'legal guidance', 'legal counsel need'],
+  },
+  {
+    tag: 'need',
+    domain: 'legal',
+    labels: ['contract review', 'legal review', 'agreement review'],
+  },
+  {
+    tag: 'need',
+    domain: 'legal',
+    labels: ['compliance preparation', 'audit preparation', 'certification prep'],
+  },
+
+  // === SERVICES (who fulfills the need) ===
+  {
+    tag: 'service',
+    domain: 'legal',
+    labels: ['privacy law firm', 'privacy attorney', 'data privacy lawyer'],
+  },
+  {
+    tag: 'service',
+    domain: 'legal',
+    labels: ['compliance consultant', 'compliance consulting', 'compliance advisory'],
+  },
+  {
+    tag: 'service',
+    domain: 'legal',
+    labels: ['regulatory advisor', 'regulatory consulting', 'regulatory affairs firm'],
+  },
+  {
+    tag: 'service',
+    domain: 'legal',
+    labels: ['corporate law firm', 'corporate attorney', 'business lawyer'],
+  },
+  {
+    tag: 'service',
+    domain: 'legal',
+    labels: ['legal consulting', 'legal consultant', 'legal services firm'],
+  },
+  {
+    tag: 'role',
+    domain: 'legal',
+    labels: ['fractional gc', 'fractional general counsel', 'part-time gc'],
+  },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 8: PRODUCT / LAUNCH SIGNALS → GTM SERVICES
+// Pattern: Signal → indicates → Need → fulfills → Service
+// -----------------------------------------------------------------------------
+
+const TIER_8_PRODUCT_SIGNALS: ManualCoreConcept[] = [
+  // === SIGNALS (product/launch triggers) ===
+  {
+    tag: 'signal',
+    domain: 'product',
+    labels: ['product launch', 'launching product', 'new product launch'],
+  },
+  {
+    tag: 'signal',
+    domain: 'product',
+    labels: ['beta launch', 'beta release', 'public beta'],
+  },
+  {
+    tag: 'signal',
+    domain: 'product',
+    labels: ['product announcement', 'new feature', 'feature release'],
+  },
+  {
+    tag: 'signal',
+    domain: 'product',
+    labels: ['rebranding', 'rebrand', 'brand refresh', 'new brand'],
+  },
+  {
+    tag: 'signal',
+    domain: 'product',
+    labels: ['market entry', 'new market', 'market launch'],
+  },
+  {
+    tag: 'signal',
+    domain: 'product',
+    labels: ['pivoting', 'pivot', 'strategic pivot', 'business pivot'],
+  },
+
+  // === NEEDS (what the signal indicates) ===
+  {
+    tag: 'need',
+    domain: 'product',
+    labels: ['go-to-market strategy', 'gtm strategy', 'gtm planning'],
+  },
+  {
+    tag: 'need',
+    domain: 'product',
+    labels: ['product marketing', 'product marketing need', 'pmm'],
+  },
+  {
+    tag: 'need',
+    domain: 'product',
+    labels: ['launch strategy', 'launch planning', 'product launch strategy'],
+  },
+  {
+    tag: 'need',
+    domain: 'product',
+    labels: ['brand strategy', 'brand development', 'brand positioning'],
+  },
+  {
+    tag: 'need',
+    domain: 'product',
+    labels: ['market positioning', 'positioning strategy', 'competitive positioning'],
+  },
+  {
+    tag: 'need',
+    domain: 'product',
+    labels: ['messaging strategy', 'product messaging', 'value proposition'],
+  },
+
+  // === SERVICES (who fulfills the need) ===
+  {
+    tag: 'service',
+    domain: 'product',
+    labels: ['gtm consultant', 'go-to-market consultant', 'gtm advisor'],
+  },
+  {
+    tag: 'service',
+    domain: 'product',
+    labels: ['product marketing agency', 'product marketing consultant', 'pmm agency'],
+  },
+  {
+    tag: 'service',
+    domain: 'product',
+    labels: ['brand agency', 'branding agency', 'brand consultant'],
+  },
+  {
+    tag: 'service',
+    domain: 'product',
+    labels: ['launch advisor', 'launch consultant', 'product launch agency'],
+  },
+  {
+    tag: 'service',
+    domain: 'product',
+    labels: ['positioning consultant', 'messaging consultant', 'strategic consultant'],
+  },
+  {
+    tag: 'role',
+    domain: 'product',
+    labels: ['fractional cpo', 'fractional chief product officer', 'part-time cpo'],
+  },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 9: TECHNICAL / ENGINEERING SIGNALS → ENGINEERING SERVICES
+// Pattern: Signal → indicates → Need → fulfills → Service
+// -----------------------------------------------------------------------------
+
+const TIER_9_TECHNICAL_SIGNALS: ManualCoreConcept[] = [
+  // === SIGNALS (technical triggers) ===
+  {
+    tag: 'signal',
+    domain: 'tech',
+    labels: ['technical debt', 'tech debt', 'legacy code'],
+  },
+  {
+    tag: 'signal',
+    domain: 'tech',
+    labels: ['modernization', 'system modernization', 'platform modernization'],
+  },
+  {
+    tag: 'signal',
+    domain: 'tech',
+    labels: ['migration', 'cloud migration', 'platform migration'],
+  },
+  {
+    tag: 'signal',
+    domain: 'tech',
+    labels: ['scalability issues', 'scaling problems', 'performance issues'],
+  },
+  {
+    tag: 'signal',
+    domain: 'tech',
+    labels: ['architecture review', 'tech review', 'system assessment'],
+  },
+
+  // === SECURITY SIGNALS ===
+  {
+    tag: 'signal',
+    domain: 'security',
+    labels: ['security incident', 'breach', 'data breach'],
+  },
+  {
+    tag: 'signal',
+    domain: 'security',
+    labels: ['vulnerability', 'security vulnerability', 'security risk'],
+  },
+  {
+    tag: 'signal',
+    domain: 'security',
+    labels: ['penetration test', 'pentest', 'security assessment'],
+  },
+  {
+    tag: 'signal',
+    domain: 'security',
+    labels: ['security audit', 'infosec audit', 'cybersecurity audit'],
+  },
+
+  // === NEEDS (what the signal indicates) ===
+  {
+    tag: 'need',
+    domain: 'tech',
+    labels: ['engineering consulting', 'technical consulting', 'tech advisory'],
+  },
+  {
+    tag: 'need',
+    domain: 'tech',
+    labels: ['architecture consulting', 'system architecture', 'solution architecture'],
+  },
+  {
+    tag: 'need',
+    domain: 'tech',
+    labels: ['technical advisory', 'cto advisory', 'tech leadership'],
+  },
+  {
+    tag: 'need',
+    domain: 'tech',
+    labels: ['platform engineering', 'infrastructure consulting', 'devops consulting'],
+  },
+  {
+    tag: 'need',
+    domain: 'security',
+    labels: ['security consulting', 'cybersecurity', 'infosec consulting'],
+  },
+  {
+    tag: 'need',
+    domain: 'security',
+    labels: ['security assessment', 'vulnerability assessment', 'risk assessment'],
+  },
+
+  // === SERVICES (who fulfills the need) ===
+  {
+    tag: 'service',
+    domain: 'tech',
+    labels: ['engineering consultant', 'technical consultant', 'tech consulting firm'],
+  },
+  {
+    tag: 'service',
+    domain: 'tech',
+    labels: ['architecture consultant', 'solution architect', 'enterprise architect'],
+  },
+  {
+    tag: 'service',
+    domain: 'tech',
+    labels: ['cto advisor', 'cto consultant', 'technical advisor'],
+  },
+  {
+    tag: 'service',
+    domain: 'tech',
+    labels: ['devops consulting', 'devops agency', 'platform consulting'],
+  },
+  {
+    tag: 'service',
+    domain: 'security',
+    labels: ['security consultant', 'cybersecurity firm', 'infosec consultant'],
+  },
+  {
+    tag: 'service',
+    domain: 'security',
+    labels: ['penetration testing firm', 'pentest service', 'ethical hacking'],
+  },
+  {
+    tag: 'role',
+    domain: 'tech',
+    labels: ['fractional cto', 'fractional chief technology officer', 'part-time cto'],
+  },
+  {
+    tag: 'role',
+    domain: 'security',
+    labels: ['fractional ciso', 'fractional chief information security officer', 'virtual ciso'],
+  },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 10: OPERATIONS / SCALING SIGNALS → OPS SERVICES
+// Pattern: Signal → indicates → Need → fulfills → Service
+// -----------------------------------------------------------------------------
+
+const TIER_10_OPS_SIGNALS: ManualCoreConcept[] = [
+  // === SIGNALS (operations triggers) ===
+  {
+    tag: 'signal',
+    domain: 'ops',
+    labels: ['operational challenges', 'ops challenges', 'process bottleneck'],
+  },
+  {
+    tag: 'signal',
+    domain: 'ops',
+    labels: ['scaling operations', 'ops scaling', 'operational scaling'],
+  },
+  {
+    tag: 'signal',
+    domain: 'ops',
+    labels: ['process inefficiency', 'workflow issues', 'operational inefficiency'],
+  },
+  {
+    tag: 'signal',
+    domain: 'ops',
+    labels: ['supply chain issues', 'logistics challenges', 'fulfillment problems'],
+  },
+  {
+    tag: 'signal',
+    domain: 'ops',
+    labels: ['cost optimization', 'cost reduction', 'expense management'],
+  },
+
+  // === NEEDS (what the signal indicates) ===
+  {
+    tag: 'need',
+    domain: 'ops',
+    labels: ['operations consulting', 'ops consulting', 'operational advisory'],
+  },
+  {
+    tag: 'need',
+    domain: 'ops',
+    labels: ['process optimization', 'workflow optimization', 'operational efficiency'],
+  },
+  {
+    tag: 'need',
+    domain: 'ops',
+    labels: ['scaling advisory', 'growth operations', 'scale operations'],
+  },
+  {
+    tag: 'need',
+    domain: 'ops',
+    labels: ['supply chain consulting', 'logistics consulting', 'fulfillment consulting'],
+  },
+
+  // === SERVICES (who fulfills the need) ===
+  {
+    tag: 'service',
+    domain: 'ops',
+    labels: ['operations consultant', 'ops consultant', 'operational advisor'],
+  },
+  {
+    tag: 'service',
+    domain: 'ops',
+    labels: ['management consulting', 'management consultant', 'strategy consulting'],
+  },
+  {
+    tag: 'service',
+    domain: 'ops',
+    labels: ['process consultant', 'workflow consultant', 'efficiency consultant'],
+  },
+  {
+    tag: 'service',
+    domain: 'ops',
+    labels: ['supply chain consultant', 'logistics consultant', 'fulfillment consultant'],
+  },
+  {
+    tag: 'role',
+    domain: 'ops',
+    labels: ['fractional coo', 'fractional chief operating officer', 'part-time coo'],
+  },
+];
+
 // =============================================================================
 // COMBINE ALL CONCEPTS
 // =============================================================================
@@ -242,6 +774,11 @@ export const MANUAL_CORE_CONCEPTS: ManualCoreConcept[] = [
   ...TIER_3_TECH_LEADERSHIP,
   ...TIER_4_MODERN_INDUSTRIES,
   ...TIER_5_DISAMBIGUATION,
+  ...TIER_6_GROWTH_SIGNALS,
+  ...TIER_7_COMPLIANCE_SIGNALS,
+  ...TIER_8_PRODUCT_SIGNALS,
+  ...TIER_9_TECHNICAL_SIGNALS,
+  ...TIER_10_OPS_SIGNALS,
 ];
 
 // =============================================================================
@@ -334,6 +871,189 @@ const TIER_5_EDGES: ManualCoreEdgeDef[] = [
   { from: 'ai sales', rel: 'related', to: 'sales', weight: 0.7 },
 ];
 
+// -----------------------------------------------------------------------------
+// TIER 6 EDGES: GROWTH/FUNDING SIGNALS → MARKETING SERVICES
+// Pattern: Signal → indicates → Need → fulfills ← Service
+// -----------------------------------------------------------------------------
+
+const TIER_6_EDGES: ManualCoreEdgeDef[] = [
+  // Signal → indicates → Need
+  { from: 'funding raised', rel: 'indicates', to: 'growth marketing', weight: 0.95 },
+  { from: 'funding raised', rel: 'indicates', to: 'demand generation', weight: 0.95 },
+  { from: 'funding raised', rel: 'indicates', to: 'customer acquisition', weight: 0.90 },
+  { from: 'series a', rel: 'indicates', to: 'growth marketing', weight: 0.95 },
+  { from: 'series a', rel: 'indicates', to: 'lead generation', weight: 0.90 },
+  { from: 'seed round', rel: 'indicates', to: 'growth marketing', weight: 0.90 },
+  { from: 'scaling', rel: 'indicates', to: 'demand generation', weight: 0.90 },
+  { from: 'scaling', rel: 'indicates', to: 'pipeline generation', weight: 0.85 },
+  { from: 'expanding team', rel: 'indicates', to: 'growth marketing', weight: 0.85 },
+  { from: 'market expansion', rel: 'indicates', to: 'brand awareness', weight: 0.90 },
+  { from: 'market expansion', rel: 'indicates', to: 'customer acquisition', weight: 0.90 },
+
+  // Need ← fulfills ← Service
+  { from: 'growth marketing agency', rel: 'fulfills', to: 'growth marketing', weight: 0.95 },
+  { from: 'growth marketing agency', rel: 'fulfills', to: 'demand generation', weight: 0.90 },
+  { from: 'demand gen agency', rel: 'fulfills', to: 'demand generation', weight: 0.95 },
+  { from: 'demand gen agency', rel: 'fulfills', to: 'lead generation', weight: 0.90 },
+  { from: 'lead gen agency', rel: 'fulfills', to: 'lead generation', weight: 0.95 },
+  { from: 'lead gen agency', rel: 'fulfills', to: 'pipeline generation', weight: 0.90 },
+  { from: 'marketing consulting', rel: 'fulfills', to: 'growth marketing', weight: 0.90 },
+  { from: 'marketing consulting', rel: 'fulfills', to: 'brand awareness', weight: 0.85 },
+  { from: 'digital marketing agency', rel: 'fulfills', to: 'customer acquisition', weight: 0.90 },
+  { from: 'digital marketing agency', rel: 'fulfills', to: 'demand generation', weight: 0.85 },
+  { from: 'content marketing agency', rel: 'fulfills', to: 'brand awareness', weight: 0.90 },
+  { from: 'fractional cmo', rel: 'fulfills', to: 'growth marketing', weight: 0.90 },
+
+  // Related equivalences
+  { from: 'series a', rel: 'equivalent', to: 'series b', weight: 0.95 },
+  { from: 'series b', rel: 'equivalent', to: 'series c', weight: 0.95 },
+  { from: 'demand generation', rel: 'equivalent', to: 'demand gen', weight: 1.0 },
+  { from: 'lead generation', rel: 'equivalent', to: 'lead gen need', weight: 1.0 },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 7 EDGES: COMPLIANCE/REGULATORY SIGNALS → LEGAL SERVICES
+// -----------------------------------------------------------------------------
+
+const TIER_7_EDGES: ManualCoreEdgeDef[] = [
+  // Signal → indicates → Need
+  { from: 'gdpr', rel: 'indicates', to: 'privacy compliance', weight: 0.95 },
+  { from: 'ccpa', rel: 'indicates', to: 'privacy compliance', weight: 0.95 },
+  { from: 'privacy regulation', rel: 'indicates', to: 'privacy compliance', weight: 0.95 },
+  { from: 'regulatory audit', rel: 'indicates', to: 'compliance preparation', weight: 0.95 },
+  { from: 'regulatory audit', rel: 'indicates', to: 'regulatory compliance', weight: 0.90 },
+  { from: 'licensing requirement', rel: 'indicates', to: 'legal advisory', weight: 0.90 },
+  { from: 'soc2', rel: 'indicates', to: 'compliance preparation', weight: 0.95 },
+  { from: 'hipaa', rel: 'indicates', to: 'regulatory compliance', weight: 0.95 },
+  { from: 'pci dss', rel: 'indicates', to: 'regulatory compliance', weight: 0.95 },
+
+  // Need ← fulfills ← Service
+  { from: 'privacy law firm', rel: 'fulfills', to: 'privacy compliance', weight: 0.95 },
+  { from: 'privacy law firm', rel: 'fulfills', to: 'legal advisory', weight: 0.90 },
+  { from: 'compliance consultant', rel: 'fulfills', to: 'regulatory compliance', weight: 0.95 },
+  { from: 'compliance consultant', rel: 'fulfills', to: 'compliance preparation', weight: 0.95 },
+  { from: 'regulatory advisor', rel: 'fulfills', to: 'regulatory compliance', weight: 0.95 },
+  { from: 'corporate law firm', rel: 'fulfills', to: 'legal advisory', weight: 0.90 },
+  { from: 'corporate law firm', rel: 'fulfills', to: 'contract review', weight: 0.90 },
+  { from: 'legal consulting', rel: 'fulfills', to: 'legal advisory', weight: 0.95 },
+  { from: 'fractional gc', rel: 'fulfills', to: 'legal advisory', weight: 0.90 },
+
+  // Equivalences
+  { from: 'gdpr', rel: 'equivalent', to: 'gdpr compliance', weight: 1.0 },
+  { from: 'ccpa', rel: 'equivalent', to: 'ccpa compliance', weight: 1.0 },
+  { from: 'soc2', rel: 'equivalent', to: 'soc 2', weight: 1.0 },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 8 EDGES: PRODUCT/LAUNCH SIGNALS → GTM SERVICES
+// -----------------------------------------------------------------------------
+
+const TIER_8_EDGES: ManualCoreEdgeDef[] = [
+  // Signal → indicates → Need
+  { from: 'product launch', rel: 'indicates', to: 'go-to-market strategy', weight: 0.95 },
+  { from: 'product launch', rel: 'indicates', to: 'launch strategy', weight: 0.95 },
+  { from: 'product launch', rel: 'indicates', to: 'product marketing', weight: 0.90 },
+  { from: 'beta launch', rel: 'indicates', to: 'go-to-market strategy', weight: 0.90 },
+  { from: 'beta launch', rel: 'indicates', to: 'product marketing', weight: 0.85 },
+  { from: 'product announcement', rel: 'indicates', to: 'messaging strategy', weight: 0.90 },
+  { from: 'rebranding', rel: 'indicates', to: 'brand strategy', weight: 0.95 },
+  { from: 'rebranding', rel: 'indicates', to: 'market positioning', weight: 0.90 },
+  { from: 'market entry', rel: 'indicates', to: 'go-to-market strategy', weight: 0.95 },
+  { from: 'market entry', rel: 'indicates', to: 'market positioning', weight: 0.90 },
+  { from: 'pivoting', rel: 'indicates', to: 'market positioning', weight: 0.90 },
+  { from: 'pivoting', rel: 'indicates', to: 'messaging strategy', weight: 0.85 },
+
+  // Need ← fulfills ← Service
+  { from: 'gtm consultant', rel: 'fulfills', to: 'go-to-market strategy', weight: 0.95 },
+  { from: 'gtm consultant', rel: 'fulfills', to: 'launch strategy', weight: 0.90 },
+  { from: 'product marketing agency', rel: 'fulfills', to: 'product marketing', weight: 0.95 },
+  { from: 'product marketing agency', rel: 'fulfills', to: 'messaging strategy', weight: 0.90 },
+  { from: 'brand agency', rel: 'fulfills', to: 'brand strategy', weight: 0.95 },
+  { from: 'brand agency', rel: 'fulfills', to: 'market positioning', weight: 0.85 },
+  { from: 'launch advisor', rel: 'fulfills', to: 'launch strategy', weight: 0.95 },
+  { from: 'positioning consultant', rel: 'fulfills', to: 'market positioning', weight: 0.95 },
+  { from: 'positioning consultant', rel: 'fulfills', to: 'messaging strategy', weight: 0.90 },
+  { from: 'fractional cpo', rel: 'fulfills', to: 'product marketing', weight: 0.85 },
+
+  // Equivalences
+  { from: 'go-to-market strategy', rel: 'equivalent', to: 'gtm strategy', weight: 1.0 },
+  { from: 'product marketing', rel: 'equivalent', to: 'pmm', weight: 1.0 },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 9 EDGES: TECHNICAL/ENGINEERING SIGNALS → ENGINEERING SERVICES
+// -----------------------------------------------------------------------------
+
+const TIER_9_EDGES: ManualCoreEdgeDef[] = [
+  // Signal → indicates → Need (Technical)
+  { from: 'technical debt', rel: 'indicates', to: 'engineering consulting', weight: 0.95 },
+  { from: 'technical debt', rel: 'indicates', to: 'architecture consulting', weight: 0.90 },
+  { from: 'modernization', rel: 'indicates', to: 'engineering consulting', weight: 0.90 },
+  { from: 'modernization', rel: 'indicates', to: 'architecture consulting', weight: 0.95 },
+  { from: 'migration', rel: 'indicates', to: 'platform engineering', weight: 0.90 },
+  { from: 'migration', rel: 'indicates', to: 'architecture consulting', weight: 0.85 },
+  { from: 'scalability issues', rel: 'indicates', to: 'architecture consulting', weight: 0.95 },
+  { from: 'scalability issues', rel: 'indicates', to: 'platform engineering', weight: 0.90 },
+  { from: 'architecture review', rel: 'indicates', to: 'architecture consulting', weight: 0.95 },
+  { from: 'architecture review', rel: 'indicates', to: 'technical advisory', weight: 0.90 },
+
+  // Signal → indicates → Need (Security)
+  { from: 'security incident', rel: 'indicates', to: 'security consulting', weight: 0.95 },
+  { from: 'security incident', rel: 'indicates', to: 'security assessment', weight: 0.95 },
+  { from: 'vulnerability', rel: 'indicates', to: 'security consulting', weight: 0.90 },
+  { from: 'vulnerability', rel: 'indicates', to: 'security assessment', weight: 0.95 },
+  { from: 'penetration test', rel: 'indicates', to: 'security assessment', weight: 0.95 },
+  { from: 'security audit', rel: 'indicates', to: 'security consulting', weight: 0.95 },
+
+  // Need ← fulfills ← Service (Technical)
+  { from: 'engineering consultant', rel: 'fulfills', to: 'engineering consulting', weight: 0.95 },
+  { from: 'engineering consultant', rel: 'fulfills', to: 'technical advisory', weight: 0.90 },
+  { from: 'architecture consultant', rel: 'fulfills', to: 'architecture consulting', weight: 0.95 },
+  { from: 'cto advisor', rel: 'fulfills', to: 'technical advisory', weight: 0.95 },
+  { from: 'cto advisor', rel: 'fulfills', to: 'architecture consulting', weight: 0.85 },
+  { from: 'devops consulting', rel: 'fulfills', to: 'platform engineering', weight: 0.95 },
+  { from: 'fractional cto', rel: 'fulfills', to: 'technical advisory', weight: 0.90 },
+
+  // Need ← fulfills ← Service (Security)
+  { from: 'security consultant', rel: 'fulfills', to: 'security consulting', weight: 0.95 },
+  { from: 'security consultant', rel: 'fulfills', to: 'security assessment', weight: 0.90 },
+  { from: 'penetration testing firm', rel: 'fulfills', to: 'security assessment', weight: 0.95 },
+  { from: 'fractional ciso', rel: 'fulfills', to: 'security consulting', weight: 0.90 },
+
+  // Equivalences
+  { from: 'technical debt', rel: 'equivalent', to: 'tech debt', weight: 1.0 },
+  { from: 'penetration test', rel: 'equivalent', to: 'pentest', weight: 1.0 },
+];
+
+// -----------------------------------------------------------------------------
+// TIER 10 EDGES: OPERATIONS/SCALING SIGNALS → OPS SERVICES
+// -----------------------------------------------------------------------------
+
+const TIER_10_EDGES: ManualCoreEdgeDef[] = [
+  // Signal → indicates → Need
+  { from: 'operational challenges', rel: 'indicates', to: 'operations consulting', weight: 0.95 },
+  { from: 'operational challenges', rel: 'indicates', to: 'process optimization', weight: 0.90 },
+  { from: 'scaling operations', rel: 'indicates', to: 'scaling advisory', weight: 0.95 },
+  { from: 'scaling operations', rel: 'indicates', to: 'operations consulting', weight: 0.90 },
+  { from: 'process inefficiency', rel: 'indicates', to: 'process optimization', weight: 0.95 },
+  { from: 'supply chain issues', rel: 'indicates', to: 'supply chain consulting', weight: 0.95 },
+  { from: 'cost optimization', rel: 'indicates', to: 'operations consulting', weight: 0.90 },
+  { from: 'cost optimization', rel: 'indicates', to: 'process optimization', weight: 0.85 },
+
+  // Need ← fulfills ← Service
+  { from: 'operations consultant', rel: 'fulfills', to: 'operations consulting', weight: 0.95 },
+  { from: 'operations consultant', rel: 'fulfills', to: 'scaling advisory', weight: 0.90 },
+  { from: 'management consulting', rel: 'fulfills', to: 'operations consulting', weight: 0.90 },
+  { from: 'management consulting', rel: 'fulfills', to: 'process optimization', weight: 0.85 },
+  { from: 'process consultant', rel: 'fulfills', to: 'process optimization', weight: 0.95 },
+  { from: 'supply chain consultant', rel: 'fulfills', to: 'supply chain consulting', weight: 0.95 },
+  { from: 'fractional coo', rel: 'fulfills', to: 'operations consulting', weight: 0.90 },
+  { from: 'fractional coo', rel: 'fulfills', to: 'scaling advisory', weight: 0.90 },
+
+  // Equivalences
+  { from: 'operations consulting', rel: 'equivalent', to: 'ops consulting', weight: 1.0 },
+];
+
 // =============================================================================
 // COMBINE ALL EDGES
 // =============================================================================
@@ -344,6 +1064,11 @@ export const MANUAL_CORE_EDGE_DEFS: ManualCoreEdgeDef[] = [
   ...TIER_3_EDGES,
   ...TIER_4_EDGES,
   ...TIER_5_EDGES,
+  ...TIER_6_EDGES,
+  ...TIER_7_EDGES,
+  ...TIER_8_EDGES,
+  ...TIER_9_EDGES,
+  ...TIER_10_EDGES,
 ];
 
 // =============================================================================

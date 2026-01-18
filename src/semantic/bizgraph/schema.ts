@@ -16,7 +16,9 @@ export type TagType =
   | 'role'      // Job role (recruiter, SDR, VP Engineering)
   | 'industry'  // Industry vertical (fintech, web3, biotech)
   | 'intent'    // Business intent (hiring, scaling, funding)
-  | 'activity'; // Business activity (outbound, team building)
+  | 'activity'  // Business activity (outbound, team building)
+  | 'signal'    // Business signal (funding raised, compliance issue, product launch)
+  | 'need';     // Business need (growth marketing, legal advisory, GTM strategy)
 
 // =============================================================================
 // DOMAIN TYPES
@@ -27,6 +29,11 @@ export type Domain =
   | 'sales'     // Sales / Business Development
   | 'tech'      // Technology / Engineering
   | 'finance'   // Finance / Fintech
+  | 'marketing' // Marketing / Growth / Brand
+  | 'legal'     // Legal / Compliance / Regulatory
+  | 'ops'       // Operations / Scaling / Process
+  | 'product'   // Product / GTM / Launch
+  | 'security'  // Security / Cybersecurity / InfoSec
   | 'general';  // General / Cross-domain
 
 // =============================================================================
@@ -38,7 +45,8 @@ export type EdgeRelation =
   | 'specializes'   // A is a specialization of B (technical recruiting → recruiting)
   | 'related'       // General semantic relationship
   | 'fulfills'      // A fulfills/serves B (recruiting fulfills hiring)
-  | 'role_variant'; // Role variant (VP Engineering ↔ Head of Engineering)
+  | 'role_variant'  // Role variant (VP Engineering ↔ Head of Engineering)
+  | 'indicates';    // Signal indicates need (funding raised → growth marketing need)
 
 // =============================================================================
 // CONCEPT STRUCTURE
