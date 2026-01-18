@@ -202,8 +202,11 @@ export async function matchRecords(
   // Sort by score descending
   allMatches.sort((a, b) => b.score - a.score);
 
-  // DEMAND SIDE: Each demand gets their best supply match
-  const demandMatches = getBestMatchPerDemand(allMatches);
+  // DEMAND SIDE: Distribute demand across supply using round-robin
+  // (Replaces winner-takes-all getBestMatchPerDemand)
+  const demandMatches = distributeMatchesRoundRobin(allMatches, {
+    maxCandidatesPerDemand: 3
+  });
 
   // SUPPLY SIDE: Aggregate all matches per supplier
   const supplyAggregates = aggregateBySupply(allMatches);
@@ -280,8 +283,11 @@ export function matchRecordsSync(
   // Sort by score descending
   allMatches.sort((a, b) => b.score - a.score);
 
-  // DEMAND SIDE: Each demand gets their best supply match
-  const demandMatches = getBestMatchPerDemand(allMatches);
+  // DEMAND SIDE: Distribute demand across supply using round-robin
+  // (Replaces winner-takes-all getBestMatchPerDemand)
+  const demandMatches = distributeMatchesRoundRobin(allMatches, {
+    maxCandidatesPerDemand: 3
+  });
 
   // SUPPLY SIDE: Aggregate all matches per supplier
   const supplyAggregates = aggregateBySupply(allMatches);
@@ -1043,6 +1049,7 @@ function getDemandKey(demand: NormalizedRecord): string {
 
 /**
  * Get best match for each demand company.
+ * @deprecated Use distributeMatchesRoundRobin for better supply distribution
  */
 function getBestMatchPerDemand(matches: Match[]): Match[] {
   const seen = new Set<string>();
@@ -1055,6 +1062,86 @@ function getBestMatchPerDemand(matches: Match[]): Match[] {
       result.push(match);
     }
   }
+
+  return result;
+}
+
+/**
+ * Distribute demand across supply using round-robin allocation.
+ *
+ * DOCTRINE: Preserves scoring order while ensuring fair distribution.
+ * - Each demand gets one supply (from its top K candidates)
+ * - Supplies are selected based on lowest current usage
+ * - Deterministic: same input → same output
+ * - No mutation of original match objects
+ *
+ * @param matches - All matches, pre-sorted by score descending
+ * @param options.maxCandidatesPerDemand - Top K supplies to consider per demand (default: 3)
+ */
+function distributeMatchesRoundRobin(
+  matches: Match[],
+  options?: { maxCandidatesPerDemand: number }
+): Match[] {
+  const K = options?.maxCandidatesPerDemand ?? 3;
+
+  // Step 1: Group matches by demandKey
+  const matchesByDemand = new Map<string, Match[]>();
+  const demandOrder: string[] = []; // Preserve demand order for determinism
+
+  for (const match of matches) {
+    const demandKey = getDemandKey(match.demand);
+    if (!matchesByDemand.has(demandKey)) {
+      matchesByDemand.set(demandKey, []);
+      demandOrder.push(demandKey);
+    }
+    matchesByDemand.get(demandKey)!.push(match);
+  }
+
+  // Step 2: For each demand, keep top K candidates (matches already sorted by score)
+  const candidatesByDemand = new Map<string, Match[]>();
+  for (const [demandKey, demandMatches] of matchesByDemand) {
+    // Clamp K to available candidates
+    const topK = demandMatches.slice(0, Math.min(K, demandMatches.length));
+    candidatesByDemand.set(demandKey, topK);
+  }
+
+  // Step 3: Track supply usage for round-robin distribution
+  const supplyUsage = new Map<string, number>();
+
+  // Step 4: Assign each demand to least-used eligible supply
+  const result: Match[] = [];
+
+  for (const demandKey of demandOrder) {
+    const candidates = candidatesByDemand.get(demandKey);
+    if (!candidates || candidates.length === 0) continue;
+
+    // Find candidate with lowest supply usage (greedy round-robin)
+    let bestCandidate: Match | null = null;
+    let minUsage = Infinity;
+
+    for (const candidate of candidates) {
+      const supplyKey = getSupplyKey(candidate.supply);
+      const usage = supplyUsage.get(supplyKey) ?? 0;
+
+      // Pick least-used supply; tie-break by score (first in list = highest score)
+      if (usage < minUsage) {
+        minUsage = usage;
+        bestCandidate = candidate;
+      }
+    }
+
+    if (bestCandidate) {
+      result.push(bestCandidate);
+      const supplyKey = getSupplyKey(bestCandidate.supply);
+      supplyUsage.set(supplyKey, (supplyUsage.get(supplyKey) ?? 0) + 1);
+    }
+  }
+
+  // Log distribution stats
+  const uniqueSupplies = supplyUsage.size;
+  const maxUsage = Math.max(...supplyUsage.values(), 0);
+  const minUsageVal = Math.min(...supplyUsage.values(), 0);
+  console.log(`[distributeMatchesRoundRobin] ${result.length} matches across ${uniqueSupplies} supplies (usage range: ${minUsageVal}-${maxUsage})`);
 
   return result;
 }
