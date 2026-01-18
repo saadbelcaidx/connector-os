@@ -368,13 +368,21 @@ export function detectSchema(sample: any): Schema | null {
   // =========================================================================
   // 4. B2B CONTACTS (most flexible — LAST to avoid false positives)
   // Requires PERSON-specific fields (first_name OR email), not just 'name'
+  // Also supports CSV field names: "Full Name", "Email", "Domain", etc.
   // =========================================================================
   const hasPersonName = 'first_name' in sample || 'firstName' in sample ||
-                        'full_name' in sample || 'fullName' in sample;
-  const hasEmail = 'email' in sample || 'personal_email' in sample || 'personalEmail' in sample || 'work_email' in sample || 'workEmail' in sample || 'contact_email' in sample || 'contactEmail' in sample;
-  const hasDomain = 'company_domain' in sample || 'domain' in sample || 'companyDomain' in sample;
-  const hasCompany = 'company' in sample || 'company_name' in sample || 'companyName' in sample || 'organization' in sample;
-  const hasJobTitle = 'job_title' in sample || 'title' in sample || 'position' in sample;
+                        'full_name' in sample || 'fullName' in sample ||
+                        'Full Name' in sample || 'Name' in sample;
+  const hasEmail = 'email' in sample || 'Email' in sample ||
+                   'personal_email' in sample || 'personalEmail' in sample ||
+                   'work_email' in sample || 'workEmail' in sample ||
+                   'contact_email' in sample || 'contactEmail' in sample;
+  const hasDomain = 'company_domain' in sample || 'domain' in sample || 'companyDomain' in sample ||
+                    'Domain' in sample || 'Website' in sample;
+  const hasCompany = 'company' in sample || 'company_name' in sample || 'companyName' in sample ||
+                     'organization' in sample || 'Company Name' in sample || 'Company' in sample;
+  const hasJobTitle = 'job_title' in sample || 'title' in sample || 'position' in sample ||
+                      'Title' in sample || 'Position' in sample || 'Role' in sample;
 
   // B2B Contacts: has person-specific name OR email, plus company context
   if ((hasPersonName || hasEmail) && (hasDomain || hasCompany || hasJobTitle)) {
@@ -479,8 +487,10 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   // B2B Contacts: Flexible field extraction (different scrapers use different names)
   let rawDomain: string = '';
   if (isLeadsFinder) {
-    const d = record.company_domain || record.domain || record.companyDomain ||
-              record.company_url || record.website || record.company_website || '';
+    // Check all possible domain field names including CSV formats
+    const d = record.company_domain || record.domain || record.Domain ||
+              record.companyDomain || record.company_url || record.website ||
+              record.Website || record.company_website || '';
     rawDomain = typeof d === 'string' ? d : (d?.value || d?.url || String(d || ''));
   } else {
     const nested = getNestedValue(record, fields.domain);
@@ -556,28 +566,29 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   }
 
   // B2B Contacts: Flexible field extraction for all fields
+  // Supports both API formats (snake_case, camelCase) and CSV formats ("Full Name", "Email")
   const b2bFirstName = isLeadsFinder
-    ? (record.first_name || record.firstName || record.name?.split(' ')[0] || '')
+    ? (record.first_name || record.firstName || record['First Name'] || record.name?.split(' ')[0] || record['Full Name']?.split(' ')[0] || '')
     : (getNestedValue(record, fields.firstName) || '');
   const b2bLastName = isLeadsFinder
-    ? (record.last_name || record.lastName || record.name?.split(' ').slice(1).join(' ') || '')
+    ? (record.last_name || record.lastName || record['Last Name'] || record.name?.split(' ').slice(1).join(' ') || record['Full Name']?.split(' ').slice(1).join(' ') || '')
     : (getNestedValue(record, fields.lastName) || '');
   const b2bFullName = isLeadsFinder
-    ? (record.full_name || record.fullName || record.name || `${b2bFirstName} ${b2bLastName}`.trim() || '')
+    ? (record.full_name || record.fullName || record['Full Name'] || record.name || record.Name || `${b2bFirstName} ${b2bLastName}`.trim() || '')
     : (getNestedValue(record, fields.fullName) || '');
-  // Email extraction — check ALL possible email field names (different Leads Finder variants use different names)
+  // Email extraction — check ALL possible email field names (different Leads Finder variants + CSV use different names)
   // MUST match SignalsClient.extractJobLikeFields() to avoid silent email loss
   const b2bEmail = isLeadsFinder
-    ? (record.email || record.personal_email || record.personalEmail || record.work_email || record.workEmail || record.contact_email || record.contactEmail || record.business_email || record.existingContact?.email || null)
+    ? (record.email || record.Email || record.personal_email || record.personalEmail || record.work_email || record.workEmail || record.contact_email || record.contactEmail || record.business_email || record.existingContact?.email || null)
     : (record.existingContact?.email || getNestedValue(record, fields.email) || null);
   const b2bTitle = isLeadsFinder
-    ? (record.job_title || record.title || record.position || record.role || '')
+    ? (record.job_title || record.title || record.Title || record.position || record.Position || record.role || record.Role || '')
     : (getNestedValue(record, fields.title) || '');
   const b2bLinkedin = isLeadsFinder
-    ? (record.linkedin || record.linkedin_url || record.linkedinUrl || record.person_linkedin_url || null)
+    ? (record.linkedin || record['LinkedIn URL'] || record.linkedin_url || record.linkedinUrl || record.person_linkedin_url || null)
     : (getNestedValue(record, fields.linkedin) || null);
   const b2bCompany = isLeadsFinder
-    ? (record.company_name || record.company || record.companyName || record.organization || '')
+    ? (record.company_name || record['Company Name'] || record.company || record.Company || record.companyName || record.organization || '')
     : (getNestedValue(record, fields.company) || '');
 
   // ==========================================================================
@@ -665,11 +676,11 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
     company: finalCompany,
     domain,
     domainSource,  // PHILEMON: Track domain provenance for proof-based enrichment
-    industry: isCrunchbase ? crunchbaseIndustry : (getNestedValue(record, fields.industry) || null),
+    industry: isCrunchbase ? crunchbaseIndustry : (getNestedValue(record, fields.industry) || record['Target Industries'] || record.industry || record.Industry || null),
     size: getNestedValue(record, fields.size) || null,
-    // Company description/funding - schema-aware
+    // Company description/funding - schema-aware (includes CSV "Service Description")
     companyDescription: isLeadsFinder
-      ? (record.company_description || null)
+      ? (record.company_description || record['Service Description'] || record.description || record.Description || null)
       : isCrunchbase
         ? (record.short_description || null)
         : (wellfoundCompany?.description || wellfoundCompany?.tagline || null),

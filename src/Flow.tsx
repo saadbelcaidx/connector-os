@@ -41,6 +41,9 @@ import type { Counterparty } from './schemas/IntroOutput';
 // AI Config type
 import { AIConfig } from './services/AIService';
 
+// CSV Data Support
+import { getCsvData } from './services/SignalsClient';
+
 // 3-Step AI Intro Generation (user.txt contract)
 import { generateIntrosAI, IntroAIConfig } from './services/IntroAI';
 
@@ -1193,11 +1196,25 @@ export default function Flow() {
       console.log(`[Flow] Demand: ${demandRecords.length} records (${demandValidation.schema.name})`);
       console.log('[Flow] Normalized demand sample:', demandRecords[0] ? { email: demandRecords[0].email, firstName: demandRecords[0].firstName, company: demandRecords[0].company, domain: demandRecords[0].domain, signal: demandRecords[0].signal } : 'empty');
 
-      // Fetch supply dataset
+      // Fetch supply dataset (CSV takes priority over Apify)
       let supplyRecords: NormalizedRecord[] = [];
       let supplySchema: Schema | null = null;
 
-      if (settings.supplyDatasetId) {
+      const csvSupplyData = getCsvData('supply');
+      if (csvSupplyData && csvSupplyData.length > 0) {
+        // CSV supply data exists - use it
+        console.log('[Flow] Using CSV supply data:', csvSupplyData.length, 'records');
+        console.log('[Flow] CSV supply sample:', csvSupplyData[0]);
+        setState(prev => ({ ...prev, progress: { ...prev.progress, current: 50, message: 'Loading supply from CSV...' } }));
+
+        const supplyValidation = validateSupplyDataset(csvSupplyData);
+        console.log('[Flow] CSV Supply validation:', { valid: supplyValidation.valid, schema: supplyValidation.schema?.name, error: supplyValidation.error });
+        if (supplyValidation.valid && supplyValidation.schema) {
+          supplyRecords = normalizeDataset(csvSupplyData, supplyValidation.schema);
+          supplySchema = supplyValidation.schema;
+          console.log(`[Flow] CSV Supply: ${supplyRecords.length} records (${supplyValidation.schema.name})`);
+        }
+      } else if (settings.supplyDatasetId) {
         setState(prev => ({ ...prev, progress: { ...prev.progress, current: 50, message: 'Loading supply...' } }));
         const supplyData = await fetchApifyDataset(settings.supplyDatasetId, settings.apifyToken);
         console.log('[Flow] Raw supply data sample:', supplyData[0]);
@@ -1212,7 +1229,7 @@ export default function Flow() {
           console.log('[Flow] Normalized supply sample:', supplyRecords[0] ? { email: supplyRecords[0].email, firstName: supplyRecords[0].firstName, company: supplyRecords[0].company, domain: supplyRecords[0].domain, title: supplyRecords[0].title } : 'empty');
         }
       } else {
-        console.log('[Flow] No supply dataset configured');
+        console.log('[Flow] No supply dataset configured (no CSV, no Apify dataset ID)');
       }
 
       setState(prev => ({
