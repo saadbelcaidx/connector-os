@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload } from 'lucide-react';
+import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload, Download } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useAuth } from './AuthContext';
 import Dock from './Dock';
@@ -697,23 +697,42 @@ export default function Settings() {
                   {/* CSV Upload Option */}
                   <div className="ml-11 mt-3 pt-3 border-t border-white/[0.04]">
                     {!showDemandCsv ? (
-                      <button
-                        onClick={() => setShowDemandCsv(true)}
-                        className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
-                      >
-                        <Upload size={12} />
-                        <span>Or upload CSV</span>
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setShowDemandCsv(true)}
+                          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                        >
+                          <Upload size={12} />
+                          <span>Or upload CSV</span>
+                        </button>
+                        <a
+                          href="/csv-template-demand.csv"
+                          download="demand-template.csv"
+                          className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                        >
+                          <Download size={10} />
+                          <span>Template</span>
+                        </a>
+                      </div>
                     ) : (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-white/50">Upload demand CSV</span>
-                          <button
-                            onClick={() => setShowDemandCsv(false)}
-                            className="text-[10px] text-white/30 hover:text-white/50"
-                          >
-                            Cancel
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <a
+                              href="/csv-template-demand.csv"
+                              download="demand-template.csv"
+                              className="text-[10px] text-white/30 hover:text-white/50"
+                            >
+                              Template
+                            </a>
+                            <button
+                              onClick={() => setShowDemandCsv(false)}
+                              className="text-[10px] text-white/30 hover:text-white/50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                         <CsvUpload
                           side="demand"
@@ -766,23 +785,42 @@ export default function Settings() {
                   {/* CSV Upload Option */}
                   <div className="ml-11 mt-3 pt-3 border-t border-white/[0.04]">
                     {!showSupplyCsv ? (
-                      <button
-                        onClick={() => setShowSupplyCsv(true)}
-                        className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
-                      >
-                        <Upload size={12} />
-                        <span>Or upload CSV</span>
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setShowSupplyCsv(true)}
+                          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                        >
+                          <Upload size={12} />
+                          <span>Or upload CSV</span>
+                        </button>
+                        <a
+                          href="/csv-template-supply.csv"
+                          download="supply-template.csv"
+                          className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                        >
+                          <Download size={10} />
+                          <span>Template</span>
+                        </a>
+                      </div>
                     ) : (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-white/50">Upload supply CSV</span>
-                          <button
-                            onClick={() => setShowSupplyCsv(false)}
-                            className="text-[10px] text-white/30 hover:text-white/50"
-                          >
-                            Cancel
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <a
+                              href="/csv-template-supply.csv"
+                              download="supply-template.csv"
+                              className="text-[10px] text-white/30 hover:text-white/50"
+                            >
+                              Template
+                            </a>
+                            <button
+                              onClick={() => setShowSupplyCsv(false)}
+                              className="text-[10px] text-white/30 hover:text-white/50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                         <CsvUpload
                           side="supply"
