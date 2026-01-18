@@ -23,3 +23,6 @@ dist-ssr
 .env
 
 .vercel
+
+# ConceptNet cache (large download, don't commit)
+.cache

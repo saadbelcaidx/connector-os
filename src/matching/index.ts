@@ -13,6 +13,12 @@
 import { NormalizedRecord } from '../schemas';
 import type { ConnectorMode } from '../services/SupplyFilterBuilder';
 import { validateMatch } from './buyerSellerTypes';
+import {
+  SEMANTIC_MATCHING_ENABLED,
+  expandSemanticSignals,
+  extractTokens,
+  computeSemanticOverlap
+} from './semantic';
 
 // =============================================================================
 // TYPE SAFETY UTILITIES
@@ -813,7 +819,63 @@ export function scoreMatch(
   }
 
   // ==========================================================================
-  // STEP 4: Calculate total score
+  // STEP 4: Semantic expansion & overlap (MATCH-1)
+  // Purely additive - expands tokens before computing overlap bonus
+  // ==========================================================================
+  let semanticBonus = 0;
+
+  if (SEMANTIC_MATCHING_ENABLED) {
+    // Build demand text from all relevant fields
+    const demandText = [
+      toStringSafe(demand.signal),
+      toStringSafe(demand.title),
+      toStringSafe(demand.companyDescription),
+      toStringSafe(demand.industry)
+    ].join(' ');
+
+    // Build supply text from all relevant fields
+    const supplyText = [
+      toStringSafe(supply.title),
+      toStringSafe(supply.companyDescription),
+      toStringSafe(supply.company),
+      toStringSafe(supply.industry)
+    ].join(' ');
+
+    // Extract and expand tokens
+    const demandTokens = extractTokens(demandText);
+    const supplyTokens = extractTokens(supplyText);
+
+    const expandedDemand = expandSemanticSignals(demandTokens, {
+      side: 'demand',
+      text: demandText
+    });
+
+    const expandedSupply = expandSemanticSignals(supplyTokens, {
+      side: 'supply',
+      text: supplyText
+    });
+
+    // Compute semantic overlap
+    const { overlapCount, matchedTokens } = computeSemanticOverlap(
+      expandedDemand.expanded,
+      expandedSupply.expanded
+    );
+
+    // Bonus based on semantic overlap (max 30 points)
+    // Key insight: recruiting/hiring overlap now possible via expansion
+    if (overlapCount >= 5) {
+      semanticBonus = 30;
+      reasons.push(`Semantic match: ${matchedTokens.slice(0, 3).join(', ')}`);
+    } else if (overlapCount >= 3) {
+      semanticBonus = 20;
+      reasons.push('Semantic overlap');
+    } else if (overlapCount >= 1) {
+      semanticBonus = 10;
+    }
+  }
+
+  // ==========================================================================
+  // STEP 5: Calculate total score
   // WEIGHTS: Can be replaced by learned weights in Option B
   // ==========================================================================
   const WEIGHTS = {
@@ -831,13 +893,14 @@ export function scoreMatch(
     (signalScore * WEIGHTS.signal) +
     (sizeScore * WEIGHTS.size) +
     (alignmentScore * WEIGHTS.alignment) +
-    (baseScore * WEIGHTS.base);
+    (baseScore * WEIGHTS.base) +
+    semanticBonus;  // MATCH-1: Semantic expansion bonus
 
-  // Normalize to 0-100
-  totalScore = Math.round(totalScore);
+  // Normalize to 0-100 (cap at 100)
+  totalScore = Math.min(100, Math.round(totalScore));
 
   // ==========================================================================
-  // STEP 5: Buyer-seller validation (mode-specific, tags don't kill)
+  // STEP 6: Buyer-seller validation (mode-specific, tags don't kill)
   // ==========================================================================
   let buyerSellerValid: boolean | undefined;
 
@@ -865,7 +928,7 @@ export function scoreMatch(
   }
 
   // ==========================================================================
-  // STEP 6: Determine confidence tier
+  // STEP 7: Determine confidence tier
   // ==========================================================================
   const { tier, tierReason } = determineTier(totalScore, needProfile, capabilityProfile, demand.signalMeta?.label);
 
