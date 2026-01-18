@@ -243,6 +243,7 @@ export async function enrichBatch(
   onProgress?: (current: number, total: number) => void,
   runId?: string
 ): Promise<Map<string, EnrichmentResult>> {
+  const batchStart = performance.now();
   const results = new Map<string, EnrichmentResult>();
   const rid = runId || `run-${Date.now()}`;
 
@@ -303,7 +304,17 @@ export async function enrichBatch(
     onProgress?.(completed, records.length);
   }
 
-  console.log(`[Enrichment] batch=${rid} total=${records.length} enriched=${enrichedCount} verified=${verifiedCount}`);
+  const batchDuration = performance.now() - batchStart;
+  const batchSuccess = enrichedCount + verifiedCount;
+  const batchFailures = records.length - batchSuccess;
+
+  console.log('[Enrichment] BATCH_COMPLETE', {
+    total: records.length,
+    success: batchSuccess,
+    failures: batchFailures,
+    durationMs: Math.round(batchDuration),
+    avgLatencyMs: records.length === 0 ? 0 : Math.round(batchDuration / records.length),
+  });
 
   return results;
 }
