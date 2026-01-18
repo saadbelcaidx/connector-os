@@ -21,7 +21,7 @@ import { useState, useRef } from 'react';
 import { Upload, Download, FileText, AlertCircle, CheckCircle, AlertTriangle, X } from 'lucide-react';
 import { validateCsv, generateErrorsCsv, generateWarningsCsv } from '../utils/csvValidation';
 import { normalizeCsvRecords } from '../normalization/csv';
-import { checkCsvDuplicates, persistCsvStableKeys } from '../db/csvStableKeys';
+import { checkCsvDuplicates, persistCsvStableKeys, clearCsvStableKeys } from '../db/csvStableKeys';
 import { CsvDedupPrompt } from './CsvDedupPrompt';
 import type { NormalizedRecord } from '../schemas';
 
@@ -305,6 +305,33 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
     setDedupResult(null);
   };
 
+  /**
+   * Phase 2: User clears upload history to re-import all records.
+   */
+  const handleClearHistory = async () => {
+    if (!userId) return;
+
+    const result = await clearCsvStableKeys({ userId, side });
+
+    if (result.success) {
+      // Re-run dedup check — should now show all as new
+      const dedup = await checkCsvDuplicates({
+        userId,
+        stableKeys,
+        side,
+      });
+
+      setDedupResult(dedup);
+
+      // If all are now new, proceed directly
+      if (dedup.totalDuplicates === 0) {
+        setState('complete');
+        onNormalized?.(normalizedRecords);
+        await persistCsvStableKeys({ userId, stableKeys, side });
+      }
+    }
+  };
+
   const sideLabel = side === 'demand' ? 'Demand' : 'Supply';
 
   return (
@@ -391,6 +418,7 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
           duplicateRecords={dedupResult.totalDuplicates}
           onConfirm={handleDedupConfirm}
           onCancel={handleDedupCancel}
+          onClearHistory={handleClearHistory}
         />
       )}
 

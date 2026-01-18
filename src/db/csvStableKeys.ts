@@ -167,3 +167,46 @@ export async function persistCsvStableKeys(params: {
     console.warn('[CsvDedup] Persist error:', err);
   }
 }
+
+// =============================================================================
+// CLEAR STABLEKEYS (DELETE)
+// =============================================================================
+
+/**
+ * Clear all stableKeys for a user and side.
+ * Allows user to re-upload previously uploaded CSVs.
+ *
+ * @param userId - User's UUID
+ * @param side - 'demand' or 'supply' (optional - clears both if not specified)
+ */
+export async function clearCsvStableKeys(params: {
+  userId: string;
+  side?: CsvSide;
+}): Promise<{ success: boolean; error?: string }> {
+  const { userId, side } = params;
+
+  try {
+    let query = supabase
+      .from('csv_stable_keys')
+      .delete()
+      .eq('user_id', userId);
+
+    if (side) {
+      query = query.eq('source_side', side);
+    }
+
+    const { error } = await query;
+
+    if (error) {
+      console.warn('[CsvDedup] Clear failed:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    console.log(`[CsvDedup] Cleared stableKeys for ${side || 'all sides'}`);
+    return { success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    console.warn('[CsvDedup] Clear error:', message);
+    return { success: false, error: message };
+  }
+}
