@@ -1514,7 +1514,7 @@ export default function Flow() {
     });
 
     // Enrich demand side with bounded concurrency
-    const TEST_LIMIT = 100; // TODO: Remove before deploy — saves enrichment credits during testing
+    const TEST_LIMIT = import.meta.env.DEV ? 100 : Infinity; // Dev = 100 (saves credits), Prod = unlimited
     const demandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT);
     console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5) [TEST MODE: ${TEST_LIMIT}]`);
 
