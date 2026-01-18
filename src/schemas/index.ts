@@ -211,7 +211,7 @@ export const STARTUP_JOBS: Schema = {
     company: 'company.name',
     domain: 'company.url',
     industry: 'company.category',
-    size: 'company.team_members',
+    size: 'company.size',  // "11-50", "51-200", etc.
 
     // Signal — event-only, no enrichment in signalDetail
     signal: 'job_title',
