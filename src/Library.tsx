@@ -3882,6 +3882,252 @@ const sections: DocSection[] = [
       </article>
     ),
   },
+
+  // ---------------------------------------------------------------------------
+  // FULFILLMENT MODE - Activate Partners at Scale
+  // ---------------------------------------------------------------------------
+  {
+    id: 'fulfillment-mode',
+    title: 'Fulfillment Mode',
+    icon: <Zap size={16} />,
+    category: 'getstarted',
+    content: (
+      <article>
+        <p className="lead">
+          Close one partner. Activate them with hundreds of opportunities. This is how you turn a single relationship into a revenue machine.
+        </p>
+
+        {/* Hero Visual - The Math */}
+        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-violet-500/[0.12] to-blue-500/[0.05] border border-violet-500/20">
+          <div className="text-center mb-6">
+            <div className="text-[11px] text-violet-400/60 uppercase tracking-wider mb-2">The Activation Math</div>
+          </div>
+          <div className="flex items-center justify-center gap-4 flex-wrap">
+            <div className="text-center">
+              <div className="text-[36px] font-bold text-violet-400">1</div>
+              <div className="text-[11px] text-white/40">Partner</div>
+            </div>
+            <div className="text-[24px] text-white/20">×</div>
+            <div className="text-center">
+              <div className="text-[36px] font-bold text-blue-400">500</div>
+              <div className="text-[11px] text-white/40">Signals</div>
+            </div>
+            <div className="text-[24px] text-white/20">=</div>
+            <div className="text-center">
+              <div className="text-[36px] font-bold text-emerald-400">500</div>
+              <div className="text-[11px] text-white/40">Intros</div>
+            </div>
+          </div>
+        </div>
+
+        <h3>The situation</h3>
+        <p>
+          You just closed a partner. A recruiting agency. A consulting firm. A service provider. They're good at what they do — but they don't have deal flow. They need clients.
+        </p>
+        <p>
+          You have signal access. You can see which companies are hiring, scaling, raising, struggling. You can see who needs help right now.
+        </p>
+        <p>
+          The question: how do you activate this partner with opportunities?
+        </p>
+
+        <h3>The old way (slow, manual, doesn't scale)</h3>
+        <div className="p-4 rounded-xl bg-red-500/[0.06] border border-red-500/20 my-6">
+          <ul className="space-y-2 text-[13px] text-white/60 list-none p-0 m-0">
+            <li className="flex items-start gap-2">
+              <span className="text-red-400/60">✗</span>
+              <span>Manually search for companies that might need them</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-red-400/60">✗</span>
+              <span>Write individual intros one by one</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-red-400/60">✗</span>
+              <span>Hope the timing is right</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-red-400/60">✗</span>
+              <span>Send 10-20 per day if you're fast</span>
+            </li>
+          </ul>
+        </div>
+
+        <h3>The new way (Fulfillment Mode)</h3>
+        <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
+          <ul className="space-y-2 text-[13px] text-white/60 list-none p-0 m-0">
+            <li className="flex items-start gap-2">
+              <span className="text-emerald-400">✓</span>
+              <span>Upload your partner as a 1-row CSV</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-emerald-400">✓</span>
+              <span>Load hundreds of demand signals</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-emerald-400">✓</span>
+              <span>System matches ALL demand to your partner</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-emerald-400">✓</span>
+              <span>Generate 500 personalized intros in minutes</span>
+            </li>
+          </ul>
+        </div>
+
+        <h3>Step-by-step: Activate a partner</h3>
+
+        {/* Step 1 */}
+        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-[14px] font-semibold text-violet-400">1</div>
+            <div className="text-[15px] font-medium text-white/90">Upload your partner</div>
+          </div>
+          <p className="text-[13px] text-white/60 mb-4">
+            Go to Settings → Data Sources → Supply. Click "Upload CSV" and add your partner's info. Just one row:
+          </p>
+          <div className="p-3 rounded-lg bg-black/40 border border-white/[0.06] font-mono text-[11px] text-white/50 overflow-x-auto">
+            company,name,email,title<br/>
+            Apex Recruiting,Sarah Chen,sarah@apex.io,Managing Partner
+          </div>
+          <p className="text-[12px] text-white/40 mt-3 italic">
+            That's it. One row. One partner. Ready to activate.
+          </p>
+        </div>
+
+        {/* Step 2 */}
+        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-[14px] font-semibold text-blue-400">2</div>
+            <div className="text-[15px] font-medium text-white/90">Load demand signals</div>
+          </div>
+          <p className="text-[13px] text-white/60 mb-3">
+            Two options:
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06]">
+              <div className="text-[12px] font-medium text-white/70 mb-1">Apify Dataset</div>
+              <div className="text-[11px] text-white/40">Paste your dataset ID. Thousands of companies with live signals.</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06]">
+              <div className="text-[12px] font-medium text-white/70 mb-1">CSV Upload</div>
+              <div className="text-[11px] text-white/40">Your own list. Companies you've researched. Warm leads.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 3 */}
+        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-[14px] font-semibold text-cyan-400">3</div>
+            <div className="text-[15px] font-medium text-white/90">Go to Flow</div>
+          </div>
+          <p className="text-[13px] text-white/60">
+            Open Flow. The system loads your 1 supply partner and all your demand signals. Every demand company gets matched to your partner. No manual work.
+          </p>
+        </div>
+
+        {/* Step 4 */}
+        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-[14px] font-semibold text-emerald-400">4</div>
+            <div className="text-[15px] font-medium text-white/90">Generate and send</div>
+          </div>
+          <p className="text-[13px] text-white/60 mb-3">
+            Enrich contacts. Generate intros. Every intro pitches your partner to a company that needs them right now:
+          </p>
+          <div className="p-4 rounded-lg bg-emerald-500/[0.04] border border-emerald-500/20">
+            <p className="text-[12px] text-white/50 italic m-0">
+              "Hey [Name] — noticed [Company] is scaling the engineering team. I know someone who places senior engineers in Series B+ companies. Worth an intro?"
+            </p>
+          </div>
+        </div>
+
+        <h3>The reverse: Find providers for a client</h3>
+        <p>
+          Works both directions. If you land a client who needs help, flip the model:
+        </p>
+
+        <div className="p-5 rounded-xl bg-blue-500/[0.06] border border-blue-500/20 my-6">
+          <div className="grid grid-cols-4 gap-2 text-center text-[12px]">
+            <div className="p-3 rounded-lg bg-white/[0.04]">
+              <div className="text-blue-400 font-medium">1. Upload client</div>
+              <div className="text-[10px] text-white/40 mt-1">as Demand (1 row)</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white/[0.04]">
+              <div className="text-blue-400 font-medium">2. Load providers</div>
+              <div className="text-[10px] text-white/40 mt-1">as Supply (many)</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white/[0.04]">
+              <div className="text-blue-400 font-medium">3. Match</div>
+              <div className="text-[10px] text-white/40 mt-1">all to your client</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white/[0.04]">
+              <div className="text-blue-400 font-medium">4. Send</div>
+              <div className="text-[10px] text-white/40 mt-1">pitch each provider</div>
+            </div>
+          </div>
+        </div>
+
+        <h3>Why this prints money</h3>
+        <div className="p-6 rounded-xl bg-gradient-to-br from-amber-500/[0.08] to-transparent border border-amber-500/20 my-6">
+          <div className="space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="text-amber-400">→</div>
+              <div>
+                <div className="text-[13px] text-white/80 font-medium">Speed</div>
+                <div className="text-[12px] text-white/50">500 intros in the time it takes to write 5 manually</div>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="text-amber-400">→</div>
+              <div>
+                <div className="text-[13px] text-white/80 font-medium">Timing</div>
+                <div className="text-[12px] text-white/50">Every intro hits companies showing live signals — they need help now</div>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="text-amber-400">→</div>
+              <div>
+                <div className="text-[13px] text-white/80 font-medium">Leverage</div>
+                <div className="text-[12px] text-white/50">Your partner pays you for access. Demand pays you for the intro. Both sides.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>The scenario</h3>
+        <p>
+          You sign a recruiting agency for $15K upfront (access fee to your deal flow). You load 500 companies hiring. Generate 500 intros. 2% reply. 10 conversations. 3 close. Each placement: $50K fee. Your cut: 20%.
+        </p>
+
+        <div className="p-6 rounded-xl bg-white/[0.03] border border-white/[0.08] my-6">
+          <div className="grid grid-cols-2 gap-6 text-center">
+            <div>
+              <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2">You collected</div>
+              <div className="text-[28px] font-bold text-emerald-400">$45K</div>
+              <div className="text-[11px] text-white/40 mt-1">$15K access + $30K (20% of 3 × $50K)</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2">Time spent</div>
+              <div className="text-[28px] font-bold text-white/80">&lt;1hr</div>
+              <div className="text-[11px] text-white/40 mt-1">Upload, load, generate, send</div>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-center my-8">
+          <a
+            href="/flow"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white text-black font-medium text-[14px] hover:bg-white/90 transition-colors no-underline"
+          >
+            Open Flow →
+          </a>
+        </p>
+
+      </article>
+    ),
+  },
 ];
 
 // =============================================================================

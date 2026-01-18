@@ -95,6 +95,42 @@ Think like: AWS IAM, Stripe API, Postgres, Unix, TCP/IP.
 
 ---
 
+## PRE-DEPLOY INVARIANT — HARD GATE (NOT A SUGGESTION)
+
+**NO FILE MAY BE IMPORTED UNLESS IT IS TRACKED IN GIT**
+
+Before ANY deploy or "done" claim, run this checklist:
+
+### Step 1: Check untracked files
+```bash
+git status --porcelain
+```
+**If output is NOT empty → STOP. Do not proceed.**
+
+### Step 2: Verify ALL imports resolve to tracked files
+```bash
+# Check for any imports pointing to untracked files
+git ls-files --error-unmatch <path>
+```
+For every new import introduced in the session, verify the target file is tracked.
+
+### Step 3: Only then build
+```bash
+npm run build
+```
+
+### The Gate
+
+| Check | Action |
+|-------|--------|
+| Untracked files exist | **STOP** — commit or remove imports |
+| Import points to untracked file | **STOP** — report missing files |
+| Build fails | **STOP** — fix before claiming done |
+
+**This is not optional. This is not a suggestion. This is a hard gate.**
+
+---
+
 ## CLAUDE BEHAVIORAL CONTRACT — ASK FIRST
 
 **These are NON-NEGOTIABLE. Violating these = user frustration.**
