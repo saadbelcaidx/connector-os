@@ -8,9 +8,13 @@
  * 1. Check cache before Apollo
  * 2. If found → skip Apollo, just verify email
  * 3. If not found → call Apollo, save to cache
+ *
+ * FIX #3: Uses recordKey for stable storage/retrieval (supports domainless records)
+ * BACKWARD COMPATIBILITY: Reads attempt recordKey first, then fallback to domain lookup
  */
 
 import { supabase } from '../lib/supabase';
+import { recordKey as computeRecordKey } from '../enrichment/recordKey';
 
 export interface CachedContact {
   domain: string;
@@ -37,14 +41,39 @@ export function isVerificationStale(contact: CachedContact): boolean {
 }
 
 /**
- * Check if we have a cached contact for this domain
+ * Check if we have a cached contact for this domain or record
  * Returns the best contact (verified first, newest first)
  * Also indicates if re-verification is needed (stale > 30 days)
+ *
+ * FIX #3: BACKWARD COMPATIBILITY
+ * - First attempts lookup by recordKey (new storage format)
+ * - Falls back to domain lookup if recordKey miss (legacy data)
+ * - Works for domainless records (Crunchbase People)
  */
-export async function getCachedContact(domain: string): Promise<CachedContact | null> {
+export async function getCachedContact(domain: string, record?: { company?: string; fullName?: string; raw?: { uuid?: string } }): Promise<CachedContact | null> {
   try {
     const cleanDomain = domain.toLowerCase().replace(/^www\./, '');
 
+    // FIX #3: Try recordKey lookup first if record provided
+    if (record) {
+      const key = computeRecordKey({ domain: cleanDomain, ...record });
+      const { data: keyData, error: keyError } = await supabase
+        .from('enriched_contacts')
+        .select('*')
+        .eq('domain', key.toLowerCase())  // 'domain' column stores recordKey
+        .order('verified', { ascending: false })
+        .order('enriched_at', { ascending: false })
+        .limit(1);
+
+      if (!keyError && keyData && keyData.length > 0) {
+        const contact = keyData[0] as CachedContact;
+        const stale = isVerificationStale(contact);
+        console.log(`[ContactCache] ✓ HIT (recordKey) for ${domain}: ${contact.email}${stale ? ' (STALE)' : ''}`);
+        return contact;
+      }
+    }
+
+    // Fallback: Try domain lookup (backward compatibility with legacy data)
     const { data, error } = await supabase
       .from('enriched_contacts')
       .select('*')
@@ -77,6 +106,8 @@ export async function getCachedContact(domain: string): Promise<CachedContact | 
 /**
  * Save a contact to the shared cache
  * Called after successful Apollo/Anymail enrichment
+ *
+ * FIX #3: Uses recordKey for storage (supports domainless records)
  */
 export async function saveToCache(contact: {
   domain: string;
@@ -87,9 +118,21 @@ export async function saveToCache(contact: {
   companyName?: string;
   source: 'apollo' | 'anymailfinder' | 'apify';
   verificationStatus?: 'verified' | 'risky' | 'invalid' | 'unverified';
+  // Optional fields for recordKey generation (domainless records)
+  fullName?: string;
+  company?: string;
+  raw?: { uuid?: string };
 }): Promise<void> {
   try {
     const cleanDomain = contact.domain.toLowerCase().replace(/^www\./, '');
+
+    // FIX #3: Compute recordKey for storage (supports domainless records)
+    const key = computeRecordKey({
+      domain: cleanDomain || undefined,
+      company: contact.companyName || contact.company,
+      fullName: contact.fullName || contact.name,
+      raw: contact.raw,
+    });
 
     // Parse name into first/last (table schema uses separate columns)
     let firstName: string | undefined;
@@ -110,7 +153,7 @@ export async function saveToCache(contact: {
     const { error } = await supabase
       .from('enriched_contacts')
       .upsert({
-        domain: cleanDomain,
+        domain: key.toLowerCase(),  // FIX #3: Store recordKey (not domain)
         email: contact.email.toLowerCase(),
         first_name: firstName,
         last_name: lastName,
@@ -124,7 +167,7 @@ export async function saveToCache(contact: {
     if (error) {
       console.warn('[ContactCache] Save error:', error);
     } else {
-      console.log(`[ContactCache] ✓ SAVED ${contact.email} for ${cleanDomain}`);
+      console.log(`[ContactCache] ✓ SAVED ${contact.email} for key=${key}`);
     }
   } catch (err) {
     console.warn('[ContactCache] Save error:', err);

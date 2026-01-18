@@ -1023,11 +1023,16 @@ function parseSize(size: unknown): number {
 
 /**
  * Get stable demand record key.
- * DOCTRINE: Never rely on domain for people records.
- * Domain is optional metadata, not identity.
- * Identity must survive missing enrichment.
+ * DOCTRINE: Use recordKey from normalization — single source of truth.
+ * recordKey is guaranteed non-null by normalize() function.
+ * Falls back to raw identifiers only if recordKey missing (legacy data).
  */
 function getDemandKey(demand: NormalizedRecord): string {
+  // Priority 0: Use recordKey from normalization (canonical)
+  if (demand.recordKey) {
+    return demand.recordKey;
+  }
+  // Fallback for legacy records without recordKey
   return (
     demand.raw?.identifier ||
     demand.raw?.uuid ||
@@ -1056,9 +1061,19 @@ function getBestMatchPerDemand(matches: Match[]): Match[] {
 
 /**
  * Get stable supply record key.
- * DOCTRINE: Same principle as demand — identity survives missing data.
+ * DOCTRINE: Use recordKey from normalization — single source of truth.
+ * recordKey is guaranteed non-null by normalize() function.
+ * Falls back to domain/raw identifiers only if recordKey missing (legacy data).
+ *
+ * FIX #1: Prevents data loss when multiple supply records have null domain
+ * but same company+title — each gets unique key via recordKey.
  */
 function getSupplyKey(supply: NormalizedRecord): string {
+  // Priority 0: Use recordKey from normalization (canonical)
+  if (supply.recordKey) {
+    return supply.recordKey;
+  }
+  // Fallback for legacy records without recordKey
   return (
     supply.domain ||
     supply.raw?.identifier ||

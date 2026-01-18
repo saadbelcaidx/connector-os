@@ -3228,10 +3228,8 @@ export default function Flow() {
                 const totalNeedEmail = demandNeedEmail.length + supplyNeedEmail.length;
 
                 // Build message previews — 2 per side, dedupe supply
-                const demandMessages = demandReady.slice(0, 2).map(m => ({
-                  company: m.demand.company,
-                  intro: state.demandIntros.get(recordKey(m.demand)) || '',
-                }));
+                // FIX #5: Use match slices directly for stable keys (getDemandReactKey exists at line 2394)
+                const demandPreview = demandReady.slice(0, 2);
                 // Dedupe supply by company name
                 const seenSupply = new Set<string>();
                 const uniqueSupply: typeof demandReady = [];
@@ -3241,10 +3239,7 @@ export default function Flow() {
                     uniqueSupply.push(m);
                   }
                 }
-                const supplyMessages = uniqueSupply.slice(0, 2).map(m => ({
-                  company: m.supply.company,
-                  intro: state.supplyIntros.get(recordKey(m.supply)) || '',
-                }));
+                const supplyPreview = uniqueSupply.slice(0, 2);
 
                 return (
                   <div className="text-center">
@@ -3280,19 +3275,19 @@ export default function Flow() {
                           <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Demand</span>
                           <span className="text-[10px] text-white/20">({demandReady.length})</span>
                         </div>
-                        {demandMessages.map((msg, i) => (
+                        {demandPreview.map((match, i) => (
                           <motion.div
-                            key={i}
+                            key={getDemandReactKey(match.demand)}
                             initial={{ opacity: 0, x: -10 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: 0.3 + i * 0.08 }}
                           >
                             <div className="h-[130px] rounded-xl rounded-tl-sm bg-blue-500/[0.05] border border-blue-500/[0.10] text-left flex flex-col">
                               <div className="px-3 pt-2.5 pb-1.5 border-b border-blue-500/[0.06]">
-                                <p className="text-[10px] text-blue-400/70 font-medium">→ {msg.company}</p>
+                                <p className="text-[10px] text-blue-400/70 font-medium">→ {match.demand.company}</p>
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
-                                <p className="text-[11px] text-white/60 leading-[1.55]">{msg.intro || '...'}</p>
+                                <p className="text-[11px] text-white/60 leading-[1.55]">{state.demandIntros.get(recordKey(match.demand)) || '...'}</p>
                               </div>
                             </div>
                           </motion.div>
@@ -3316,19 +3311,19 @@ export default function Flow() {
                             <span className="text-[9px] font-bold text-violet-400">S</span>
                           </div>
                         </div>
-                        {supplyMessages.map((msg, i) => (
+                        {supplyPreview.map((match, i) => (
                           <motion.div
-                            key={i}
+                            key={recordKey(match.supply)}
                             initial={{ opacity: 0, x: 10 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: 0.35 + i * 0.08 }}
                           >
                             <div className="h-[130px] rounded-xl rounded-tr-sm bg-violet-500/[0.05] border border-violet-500/[0.10] text-left flex flex-col">
                               <div className="px-3 pt-2.5 pb-1.5 border-b border-violet-500/[0.06]">
-                                <p className="text-[10px] text-violet-400/70 font-medium">→ {msg.company}</p>
+                                <p className="text-[10px] text-violet-400/70 font-medium">→ {match.supply.company}</p>
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
-                                <p className="text-[11px] text-white/60 leading-[1.55]">{msg.intro || '...'}</p>
+                                <p className="text-[11px] text-white/60 leading-[1.55]">{state.supplyIntros.get(recordKey(match.supply)) || '...'}</p>
                               </div>
                             </div>
                           </motion.div>

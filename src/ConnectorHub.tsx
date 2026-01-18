@@ -55,6 +55,38 @@ const DATA_SOURCES: { value: DataSource; label: string; count: string }[] = [
   { value: 'google_maps', label: 'Google Maps', count: '39K' },
 ];
 
+/**
+ * FIX #4: Generate stable key for contact (NEVER use index)
+ * Priority: email → fullName+company → company+title → company+name hash
+ * Prevents selection state jumping on list reorder
+ */
+function getStableContactKey(contact: Contact): string {
+  // Priority 1: email (unique, stable)
+  if (contact.email) {
+    return `e:${contact.email.toLowerCase()}`;
+  }
+  // Priority 2: fullName + company (deterministic)
+  const fullName = `${contact.first_name || ''} ${contact.last_name || ''}`.trim();
+  if (fullName && contact.company) {
+    return `p:${fullName.toLowerCase()}|${contact.company.toLowerCase()}`;
+  }
+  // Priority 3: company + title + name (deterministic, no index)
+  if (contact.company && contact.title) {
+    return `c:${contact.company.toLowerCase()}|${contact.title.toLowerCase()}|${fullName.toLowerCase()}`;
+  }
+  // Priority 4: company + fullName (fallback)
+  if (contact.company && fullName) {
+    return `c:${contact.company.toLowerCase()}|${fullName.toLowerCase()}`;
+  }
+  // Priority 5: company only
+  if (contact.company) {
+    return `c:${contact.company.toLowerCase()}`;
+  }
+  // Ultimate fallback: hash from all available fields (deterministic, no index)
+  const hash = `${contact.first_name || ''}|${contact.last_name || ''}|${contact.title || ''}|${contact.city || ''}`;
+  return `x:${hash.toLowerCase()}`;
+}
+
 type SelectionMode = 'demand' | 'supply';
 
 // =============================================================================
@@ -740,7 +772,7 @@ export default function ConnectorHub() {
                       const isSelected = selectedEmails.has(contact.email);
                       return (
                         <tr
-                          key={contact.email || i}
+                          key={getStableContactKey(contact)}
                           onClick={() => contact.email && toggleContact(contact.email)}
                           className={`
                             cursor-pointer transition-colors
