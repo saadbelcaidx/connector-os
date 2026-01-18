@@ -15,7 +15,20 @@ const crypto = require('crypto');
 const path = require('path');
 
 // Web extraction module for crawling company websites
-const { extractEmailsForPerson } = require('./webExtractor');
+// DISABLED on Railway (Puppeteer needs too much memory)
+// Set DISABLE_WEB_EXTRACTOR=true to skip loading
+let extractEmailsForPerson = null;
+if (process.env.DISABLE_WEB_EXTRACTOR !== 'true') {
+  try {
+    const webExtractor = require('./webExtractor');
+    extractEmailsForPerson = webExtractor.extractEmailsForPerson;
+    console.log('[WebExtractor] Loaded successfully');
+  } catch (err) {
+    console.warn('[WebExtractor] Failed to load (Puppeteer issue?):', err.message);
+  }
+} else {
+  console.log('[WebExtractor] Disabled via DISABLE_WEB_EXTRACTOR=true');
+}
 
 const app = express();
 const PORT = process.env.PORT || 8000;
