@@ -24,14 +24,19 @@ const PORT = process.env.PORT || 8000;
 // DATABASE SETUP
 // ============================================================
 
-const dbPath = path.join(__dirname, '..', 'data', 'connector-agent.db');
+// Data directory can be overridden via environment variable for Railway persistent volumes
+// Railway: Set DATA_DIR=/data and mount a volume at /data
+const dataDir = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const dbPath = path.join(dataDir, 'connector-agent.db');
 
 // Ensure data directory exists
 const fs = require('fs');
-const dataDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
+
+console.log(`[Database] Using data directory: ${dataDir}`);
+console.log(`[Database] Database path: ${dbPath}`);
 
 const db = new Database(dbPath);
 
@@ -1894,12 +1899,21 @@ app.use((err, req, res, next) => {
 // ============================================================
 
 app.listen(PORT, () => {
+  // Check existing API keys count to diagnose persistence
+  const keyCount = db.prepare(`SELECT COUNT(*) as count FROM api_keys WHERE status = 'active'`).get();
+  const dbFileExists = fs.existsSync(dbPath);
+  const dbStats = dbFileExists ? fs.statSync(dbPath) : null;
+
   console.log('');
   console.log('============================================');
   console.log('  CONNECTOR AGENT BACKEND');
   console.log('============================================');
   console.log(`  Server running on http://localhost:${PORT}`);
   console.log(`  Database: ${dbPath}`);
+  console.log(`  DB File Exists: ${dbFileExists}`);
+  console.log(`  DB Size: ${dbStats ? Math.round(dbStats.size / 1024) + ' KB' : 'N/A'}`);
+  console.log(`  Active API Keys: ${keyCount.count}`);
+  console.log(`  DATA_DIR env: ${process.env.DATA_DIR || '(not set, using default)'}`);
   console.log('');
   console.log('  Endpoints:');
   console.log('  - POST /api/keys/generate');
