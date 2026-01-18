@@ -371,7 +371,7 @@ export function detectSchema(sample: any): Schema | null {
   // =========================================================================
   const hasPersonName = 'first_name' in sample || 'firstName' in sample ||
                         'full_name' in sample || 'fullName' in sample;
-  const hasEmail = 'email' in sample || 'work_email' in sample || 'contact_email' in sample;
+  const hasEmail = 'email' in sample || 'personal_email' in sample || 'personalEmail' in sample || 'work_email' in sample || 'workEmail' in sample || 'contact_email' in sample || 'contactEmail' in sample;
   const hasDomain = 'company_domain' in sample || 'domain' in sample || 'companyDomain' in sample;
   const hasCompany = 'company' in sample || 'company_name' in sample || 'companyName' in sample || 'organization' in sample;
   const hasJobTitle = 'job_title' in sample || 'title' in sample || 'position' in sample;
@@ -565,9 +565,10 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   const b2bFullName = isLeadsFinder
     ? (record.full_name || record.fullName || record.name || `${b2bFirstName} ${b2bLastName}`.trim() || '')
     : (getNestedValue(record, fields.fullName) || '');
-  // Email extraction — check both direct fields AND existingContact (from SignalsClient extraction)
+  // Email extraction — check ALL possible email field names (different Leads Finder variants use different names)
+  // MUST match SignalsClient.extractJobLikeFields() to avoid silent email loss
   const b2bEmail = isLeadsFinder
-    ? (record.email || record.work_email || record.contact_email || record.business_email || record.existingContact?.email || null)
+    ? (record.email || record.personal_email || record.personalEmail || record.work_email || record.workEmail || record.contact_email || record.contactEmail || record.business_email || record.existingContact?.email || null)
     : (record.existingContact?.email || getNestedValue(record, fields.email) || null);
   const b2bTitle = isLeadsFinder
     ? (record.job_title || record.title || record.position || record.role || '')
