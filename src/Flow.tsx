@@ -126,6 +126,13 @@ import {
   type SupplyExportInput,
 } from './export/exportReceipt';
 
+// CSV Phase 3 — Intro Quality Signaling (additive, CSV-only)
+import {
+  analyzeCsvBatchQuality,
+  isCsvRecord,
+} from './intro-generation';
+import { CsvBatchQualityWarning } from './components/CsvIntroQualityBadge';
+
 // =============================================================================
 // BUTTON STYLES — Stripe-grade design system
 // =============================================================================
@@ -2170,6 +2177,16 @@ export default function Flow() {
   };
 
   // =============================================================================
+  // HELPERS (stable across renders)
+  // =============================================================================
+
+  // DOCTRINE: Stable React key — use recordKey from normalization
+  // recordKey is stable, non-null, never domain-based (set in normalize())
+  const getDemandReactKey = (demand: NormalizedRecord): string => {
+    return demand.recordKey || `fallback:${demand.company}:${demand.fullName}`;
+  };
+
+  // =============================================================================
   // RENDER
   // =============================================================================
 
@@ -2388,12 +2405,6 @@ export default function Flow() {
                 const strongCount = matches.filter(m => m.tier === 'strong').length;
                 const goodCount = matches.filter(m => m.tier === 'good').length;
                 const exploratoryCount = matches.filter(m => m.tier === 'open').length;
-
-                // DOCTRINE: Stable React key — use recordKey from normalization
-                // recordKey is stable, non-null, never domain-based (set in normalize())
-                const getDemandReactKey = (demand: NormalizedRecord): string => {
-                  return demand.recordKey || `fallback:${demand.company}:${demand.fullName}`;
-                };
 
                 // DOCTRINE: 4 separate counters — Matching ≠ Quality ≠ Sendability
                 // Raw emails: emails that came with the dataset (Leads Finder) — need verification
@@ -3228,7 +3239,7 @@ export default function Flow() {
                 const totalNeedEmail = demandNeedEmail.length + supplyNeedEmail.length;
 
                 // Build message previews — 2 per side, dedupe supply
-                // FIX #5: Use match slices directly for stable keys (getDemandReactKey exists at line 2394)
+                // FIX #5: Use match slices directly for stable keys (getDemandReactKey defined at component level)
                 const demandPreview = demandReady.slice(0, 2);
                 // Dedupe supply by company name
                 const seenSupply = new Set<string>();
@@ -3258,6 +3269,30 @@ export default function Flow() {
                       </div>
                       <p className="text-[12px] text-white/40 mt-0.5">intros ready</p>
                     </motion.div>
+
+                    {/* CSV QUALITY WARNING — Phase 3 (additive, CSV-only) */}
+                    {(() => {
+                      const demandRecords = demandMatches.map(m => m.demand);
+                      const csvQuality = analyzeCsvBatchQuality(demandRecords);
+                      if (csvQuality.totalCsv > 0 && csvQuality.hasBasicTier) {
+                        return (
+                          <motion.div
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.15 }}
+                            className="max-w-md mx-auto mb-4"
+                          >
+                            <CsvBatchQualityWarning
+                              t1Count={csvQuality.t1Count}
+                              t2Count={csvQuality.t2Count}
+                              t3Count={csvQuality.t3Count}
+                              totalCsv={csvQuality.totalCsv}
+                            />
+                          </motion.div>
+                        );
+                      }
+                      return null;
+                    })()}
 
                     {/* SPLIT SCREEN */}
                     <div className="grid grid-cols-2 gap-4 mb-5">
