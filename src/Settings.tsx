@@ -737,7 +737,12 @@ export default function Settings() {
                         <CsvUpload
                           side="demand"
                           userId={user?.id}
-                          onNormalized={() => setShowDemandCsv(false)}
+                          onNormalized={(records) => {
+                            // Store to localStorage for Flow.tsx to read
+                            localStorage.setItem('csv_demand_data', JSON.stringify(records));
+                            console.log('[Settings] Stored CSV demand data:', records.length, 'records');
+                            setShowDemandCsv(false);
+                          }}
                         />
                       </div>
                     )}
@@ -825,7 +830,12 @@ export default function Settings() {
                         <CsvUpload
                           side="supply"
                           userId={user?.id}
-                          onNormalized={() => setShowSupplyCsv(false)}
+                          onNormalized={(records) => {
+                            // Store to localStorage for Flow.tsx to read
+                            localStorage.setItem('csv_supply_data', JSON.stringify(records));
+                            console.log('[Settings] Stored CSV supply data:', records.length, 'records');
+                            setShowSupplyCsv(false);
+                          }}
                         />
                       </div>
                     )}
