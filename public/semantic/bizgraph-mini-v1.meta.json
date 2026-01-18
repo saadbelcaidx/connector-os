@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "built_at": "2026-01-18T21:32:07.965Z",
+  "build_hash": "f573910e431bdb8e",
+  "concept_count": 33,
+  "edge_count": 43,
+  "label_count": 81,
+  "sources": [
+    "manual_core"
+  ],
+  "json_size_bytes": 11808,
+  "gz_size_bytes": 1502,
+  "json_size_kb": "11.53",
+  "gz_size_kb": "1.47"
+}

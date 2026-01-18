@@ -25,9 +25,22 @@ import {
   computeSemanticOverlapV2,
   isBundleLoaded
 } from './semanticV2';
+import {
+  BIZGRAPH_ENABLED,
+  preloadBizGraph,
+  getCachedBizGraph,
+  isBizGraphLoaded,
+  tokenizeBusinessText,
+  expandBusinessSignalsSync,
+} from '../semantic/bizgraph';
 
 // Preload ConceptNet bundle on module load (if V2 enabled)
 preloadSemanticBundle();
+
+// Preload BIZGRAPH bundle on module load (if enabled)
+if (BIZGRAPH_ENABLED) {
+  preloadBizGraph();
+}
 
 // =============================================================================
 // TYPE SAFETY UTILITIES
@@ -923,6 +936,83 @@ export function scoreMatch(
   }
 
   // ==========================================================================
+  // STEP 4C: BIZGRAPH (Business Domain Semantic Graph)
+  // Purpose-built for business matching: recruiting↔hiring, SDR↔BDR, fintech↔payments
+  // KEY FIX: Semantic equivalence should DOMINATE scoring, not just add bonus
+  // ==========================================================================
+  let bizgraphAlignmentBoost = 0;
+
+  if (BIZGRAPH_ENABLED && isBizGraphLoaded()) {
+    const graph = getCachedBizGraph();
+    if (graph) {
+      // Build text for tokenization
+      const demandText = [
+        toStringSafe(demand.signal),
+        toStringSafe(demand.title),
+        toStringSafe(demand.companyDescription),
+      ].join(' ');
+
+      const supplyText = [
+        toStringSafe(supply.title),
+        toStringSafe(supply.companyDescription),
+        toStringSafe(supply.company),
+      ].join(' ');
+
+      // Tokenize
+      const demandTokens = tokenizeBusinessText(demandText);
+      const supplyTokens = tokenizeBusinessText(supplyText);
+
+      // Expand with BIZGRAPH
+      const expandedDemand = expandBusinessSignalsSync(graph, demandTokens, { side: 'demand' });
+      const expandedSupply = expandBusinessSignalsSync(graph, supplyTokens, { side: 'supply' });
+
+      // Compute overlap
+      const demandSet = new Set(expandedDemand.expanded);
+      const overlap = expandedSupply.expanded.filter(t => demandSet.has(t));
+
+      // Check for STRONG semantic equivalence (w >= 0.9)
+      // These are the key business relationships: recruiting↔hiring, SDR↔BDR, etc.
+      const strongEvidence = [
+        ...expandedDemand.evidence,
+        ...expandedSupply.evidence,
+      ].filter(e => e.w >= 0.9 && (e.rel === 'equivalent' || e.rel === 'fulfills'));
+
+      const hasStrongEquivalence = strongEvidence.length > 0;
+      const equivalenceCount = overlap.length;
+
+      // BIZGRAPH scoring: semantic equivalence should DOMINATE
+      if (hasStrongEquivalence && equivalenceCount >= 2) {
+        // STRONG semantic match: recruiting agency matching hiring company
+        // This is the KEY fix: boost alignment significantly
+        bizgraphAlignmentBoost = 40; // Boost alignment to near-max
+        semanticBonus = Math.max(semanticBonus, 35); // Ensure high semantic score
+
+        const evidenceTerms = strongEvidence.slice(0, 2).map(e => `${e.from}↔${e.to}`);
+        reasons.push(`Semantic match: ${evidenceTerms.join(', ')}`);
+      } else if (equivalenceCount >= 3) {
+        // Good semantic overlap
+        bizgraphAlignmentBoost = 25;
+        semanticBonus = Math.max(semanticBonus, 25);
+
+        const evidenceTerms = [...new Set([
+          ...expandedDemand.evidence.map(e => `${e.from}→${e.to}`),
+          ...expandedSupply.evidence.map(e => `${e.from}→${e.to}`),
+        ])].slice(0, 2);
+        if (evidenceTerms.length > 0) {
+          reasons.push(`BizGraph: ${evidenceTerms.join(', ')}`);
+        } else {
+          reasons.push(`BizGraph overlap: ${overlap.slice(0, 2).join(', ')}`);
+        }
+      } else if (equivalenceCount >= 1) {
+        // Weak connection
+        bizgraphAlignmentBoost = 10;
+        semanticBonus = Math.max(semanticBonus, 15);
+        reasons.push('Business domain connection');
+      }
+    }
+  }
+
+  // ==========================================================================
   // STEP 5: Calculate total score
   // WEIGHTS: Can be replaced by learned weights in Option B
   // ==========================================================================
@@ -936,13 +1026,17 @@ export function scoreMatch(
 
   const baseScore = 10; // Everyone gets 10 points base
 
+  // BIZGRAPH boost: If semantic equivalence detected, boost effective alignment
+  // This ensures recruiting↔hiring gets high score even when category extraction differs
+  const effectiveAlignment = Math.min(100, alignmentScore + bizgraphAlignmentBoost);
+
   let totalScore =
     (industryScore * WEIGHTS.industry) +
     (signalScore * WEIGHTS.signal) +
     (sizeScore * WEIGHTS.size) +
-    (alignmentScore * WEIGHTS.alignment) +
+    (effectiveAlignment * WEIGHTS.alignment) +  // Use boosted alignment
     (baseScore * WEIGHTS.base) +
-    semanticBonus;  // MATCH-1: Semantic expansion bonus
+    semanticBonus;  // Semantic expansion bonus (MATCH-1 + BIZGRAPH)
 
   // Normalize to 0-100 (cap at 100)
   totalScore = Math.min(100, Math.round(totalScore));
