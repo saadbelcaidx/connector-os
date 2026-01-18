@@ -19,6 +19,15 @@ import {
   extractTokens,
   computeSemanticOverlap
 } from './semantic';
+import {
+  SEMANTIC_V2_ENABLED,
+  preloadSemanticBundle,
+  computeSemanticOverlapV2,
+  isBundleLoaded
+} from './semanticV2';
+
+// Preload ConceptNet bundle on module load (if V2 enabled)
+preloadSemanticBundle();
 
 // =============================================================================
 // TYPE SAFETY UTILITIES
@@ -871,6 +880,45 @@ export function scoreMatch(
       reasons.push('Semantic overlap');
     } else if (overlapCount >= 1) {
       semanticBonus = 10;
+    }
+  }
+
+  // ==========================================================================
+  // STEP 4B: SemanticV2 (ConceptNet-powered) - MATCH-2
+  // Uses pre-built knowledge graph for universal niche-agnostic expansion
+  // ==========================================================================
+  if (SEMANTIC_V2_ENABLED && isBundleLoaded()) {
+    const demandText = [
+      toStringSafe(demand.signal),
+      toStringSafe(demand.title),
+      toStringSafe(demand.companyDescription),
+    ].join(' ');
+
+    const supplyText = [
+      toStringSafe(supply.title),
+      toStringSafe(supply.companyDescription),
+      toStringSafe(supply.company),
+    ].join(' ');
+
+    const demandTokens = demandText.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+    const supplyTokens = supplyText.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+
+    const v2Overlap = computeSemanticOverlapV2(demandTokens, supplyTokens, {
+      maxDepth: 1,
+      maxExpansionsPerTerm: 5,
+      useGuardrails: true,
+    });
+
+    // V2 bonus (additive to V1, but capped)
+    if (v2Overlap.score >= 60) {
+      const v2Bonus = Math.min(15, 30 - semanticBonus); // Cap total semantic bonus at 30
+      semanticBonus += v2Bonus;
+      if (v2Bonus > 0) {
+        reasons.push(`ConceptNet: ${v2Overlap.matchedTerms.slice(0, 2).join(', ')}`);
+      }
+    } else if (v2Overlap.score >= 30 && semanticBonus < 20) {
+      semanticBonus += 10;
+      reasons.push('Semantic graph connection');
     }
   }
 
