@@ -1539,6 +1539,13 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
   const keyId = apiKey ? apiKey.id : '';
   const mode = getMode();
 
+  // Check quota BEFORE processing (worst case: 1 token per item)
+  const usage = getOrCreateUsage(userId, keyId);
+  const MONTHLY_LIMIT = 10000;
+  if (usage.tokens_used + items.length > MONTHLY_LIMIT) {
+    return res.status(429).json({ success: false, error: 'Quota exceeded' });
+  }
+
   const results = [];
   let found = 0;
   let tokensUsed = 0;
