@@ -1931,12 +1931,28 @@ app.get('/health', (req, res) => {
     mailtesterStatus = mode === 'RESTRICTED' ? 'throttled' : 'reachable';
   }
 
+  // Database stats for diagnostics (safe - no key values exposed)
+  let dbStats = { api_keys: 0, active_keys: 0, email_cache: 0 };
+  try {
+    const keyCount = db.prepare(`SELECT COUNT(*) as count FROM api_keys`).get();
+    const activeKeyCount = db.prepare(`SELECT COUNT(*) as count FROM api_keys WHERE status = 'active'`).get();
+    const cacheCount = db.prepare(`SELECT COUNT(*) as count FROM email_cache`).get();
+    dbStats = {
+      api_keys: keyCount?.count || 0,
+      active_keys: activeKeyCount?.count || 0,
+      email_cache: cacheCount?.count || 0,
+    };
+  } catch (e) {
+    dbStats.error = e.message;
+  }
+
   res.json({
     status: 'ok',
     mode,
     mailtester: mailtesterStatus,
     mailtester_keys: MAILTESTER_API_KEYS.length,
     queue_depth: 0,
+    db: dbStats,
     timestamp: new Date().toISOString(),
   });
 });
