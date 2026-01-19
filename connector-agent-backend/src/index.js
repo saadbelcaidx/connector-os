@@ -320,11 +320,28 @@ function verifyApiKey(authHeader) {
   }
 
   const key = authHeader.replace('Bearer ', '');
+
+  // Check for placeholder value (common user error)
+  if (key === 'YOUR_API_KEY' || key === 'YOUR_KEY' || key.length < 10) {
+    console.log(`[Auth] Invalid key value: looks like placeholder or too short`);
+    return null;
+  }
+
   const keyHash = hashKey(key);
 
   const apiKey = db.prepare(`
     SELECT * FROM api_keys WHERE key_hash = ? AND status = 'active'
   `).get(keyHash);
+
+  if (!apiKey) {
+    // Check if key exists but is revoked
+    const revokedKey = db.prepare(`SELECT * FROM api_keys WHERE key_hash = ?`).get(keyHash);
+    if (revokedKey) {
+      console.log(`[Auth] Key found but status=${revokedKey.status} (not active)`);
+    } else {
+      console.log(`[Auth] Key not found in database (prefix: ${key.slice(0,8)}...)`);
+    }
+  }
 
   return apiKey;
 }
@@ -1222,12 +1239,21 @@ app.get('/api/email/v2/quota', (req, res) => {
  * - RESTRICTED: Return NOT_FOUND immediately (no API calls)
  */
 app.post('/api/email/v2/find', async (req, res) => {
-  const apiKey = verifyApiKey(req.headers['authorization']);
+  const authHeader = req.headers['authorization'];
+  const apiKey = verifyApiKey(authHeader);
   const userId = req.headers['x-user-id'];
 
   // Allow API key OR user headers (for UI usage without stored key)
   if (!apiKey && !userId) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+    // Diagnostic error message for automation users
+    const hasAuthHeader = !!authHeader;
+    const authFormat = hasAuthHeader ? (authHeader.startsWith('Bearer ') ? 'Bearer format OK' : 'Missing "Bearer " prefix') : 'No Authorization header';
+    console.log(`[Auth] 401 on /find: auth=${authFormat}, x-user-id=${!!userId}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Set header: Authorization: Bearer YOUR_API_KEY',
+      hint: hasAuthHeader && !authHeader.startsWith('Bearer ') ? 'Header must start with "Bearer " (with space)' : undefined
+    });
   }
 
   const effectiveUserId = apiKey ? apiKey.user_id : userId;
@@ -1453,12 +1479,20 @@ app.post('/api/email/v2/find', async (req, res) => {
  */
 app.post('/api/email/v2/verify', async (req, res) => {
   const VERIFY_DEADLINE_MS = 8000; // 8 second deadline for single verify
-  const apiKey = verifyApiKey(req.headers['authorization']);
+  const authHeader = req.headers['authorization'];
+  const apiKey = verifyApiKey(authHeader);
   const userId = req.headers['x-user-id'];
 
   // Allow API key OR user headers (for UI usage without stored key)
   if (!apiKey && !userId) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+    const hasAuthHeader = !!authHeader;
+    const authFormat = hasAuthHeader ? (authHeader.startsWith('Bearer ') ? 'Bearer format OK' : 'Missing "Bearer " prefix') : 'No Authorization header';
+    console.log(`[Auth] 401 on /verify: auth=${authFormat}, x-user-id=${!!userId}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Set header: Authorization: Bearer YOUR_API_KEY',
+      hint: hasAuthHeader && !authHeader.startsWith('Bearer ') ? 'Header must start with "Bearer " (with space)' : undefined
+    });
   }
 
   const effectiveUserId = apiKey ? apiKey.user_id : userId;
@@ -1534,12 +1568,20 @@ app.post('/api/email/v2/verify', async (req, res) => {
  * - Degradation modes apply
  */
 app.post('/api/email/v2/find-bulk', async (req, res) => {
-  const apiKey = verifyApiKey(req.headers['authorization']);
+  const authHeader = req.headers['authorization'];
+  const apiKey = verifyApiKey(authHeader);
   const userIdHeader = req.headers['x-user-id'];
 
   // Allow API key OR user headers (same as single endpoints)
   if (!apiKey && !userIdHeader) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+    const hasAuthHeader = !!authHeader;
+    const authFormat = hasAuthHeader ? (authHeader.startsWith('Bearer ') ? 'Bearer format OK' : 'Missing "Bearer " prefix') : 'No Authorization header';
+    console.log(`[Auth] 401 on /find-bulk: auth=${authFormat}, x-user-id=${!!userIdHeader}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Set header: Authorization: Bearer YOUR_API_KEY',
+      hint: hasAuthHeader && !authHeader.startsWith('Bearer ') ? 'Header must start with "Bearer " (with space)' : undefined
+    });
   }
 
   const { items } = req.body;
@@ -1642,12 +1684,20 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
  * Bulk verify emails - 1 token per email
  */
 app.post('/api/email/v2/verify-bulk', async (req, res) => {
-  const apiKey = verifyApiKey(req.headers['authorization']);
+  const authHeader = req.headers['authorization'];
+  const apiKey = verifyApiKey(authHeader);
   const userIdHeader = req.headers['x-user-id'];
 
   // Allow API key OR user headers (same as single endpoints)
   if (!apiKey && !userIdHeader) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+    const hasAuthHeader = !!authHeader;
+    const authFormat = hasAuthHeader ? (authHeader.startsWith('Bearer ') ? 'Bearer format OK' : 'Missing "Bearer " prefix') : 'No Authorization header';
+    console.log(`[Auth] 401 on /verify-bulk: auth=${authFormat}, x-user-id=${!!userIdHeader}`);
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required. Set header: Authorization: Bearer YOUR_API_KEY',
+      hint: hasAuthHeader && !authHeader.startsWith('Bearer ') ? 'Header must start with "Bearer " (with space)' : undefined
+    });
   }
 
   const userId = apiKey ? apiKey.user_id : userIdHeader;
