@@ -174,10 +174,18 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
 
       setValidationResult(result);
       setParsedRows(rows);
-      setState('results');
 
       // Callback for parent component
       onValidated?.(result, rows);
+
+      // Stripe pattern: Auto-proceed when valid, show results only for errors
+      if (result.status === 'valid' && rows.length > 0) {
+        // Skip 'results' state — go straight to normalization
+        await proceedWithNormalization(rows);
+      } else {
+        // Invalid CSV — show results so user can download error report
+        setState('results');
+      }
     } catch (err) {
       setError('Failed to read file. Please try again.');
       setState('idle');
@@ -213,13 +221,10 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
   };
 
   /**
-   * Phase 2: Proceed button handler.
-   * 1. Normalize CSV rows
-   * 2. Check for duplicates (if userId available)
-   * 3. Show dedup prompt OR forward records
+   * Core normalization logic — called by auto-proceed and manual proceed.
    */
-  const handleProceed = async () => {
-    if (parsedRows.length === 0) return;
+  const proceedWithNormalization = async (rows: Record<string, string>[]) => {
+    if (rows.length === 0) return;
 
     setState('normalizing');
     setError(null);
@@ -227,7 +232,7 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
     try {
       // Step 1: Normalize CSV rows
       const { records, stableKeys: keys } = normalizeCsvRecords({
-        rows: parsedRows as any, // Type assertion for CSV validated rows
+        rows: rows as any,
         side,
         uploadId,
       });
@@ -246,7 +251,6 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
         setDedupResult(dedup);
 
         if (dedup.totalDuplicates > 0) {
-          // Show dedup prompt
           setState('dedup');
           return;
         }
@@ -270,6 +274,11 @@ export function CsvUpload({ side, userId, onValidated, onNormalized }: CsvUpload
       setState('results'); // Go back to results state
     }
   };
+
+  /**
+   * Manual proceed button handler (for invalid CSVs that user fixes).
+   */
+  const handleProceed = () => proceedWithNormalization(parsedRows);
 
   /**
    * Phase 2: User confirms importing new records only.
