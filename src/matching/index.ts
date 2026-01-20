@@ -87,22 +87,42 @@ export type ConfidenceTier = 'strong' | 'good' | 'open';
 
 /**
  * Need profile extracted from demand signals.
+ *
+ * SCHEMA-AWARE CATEGORIES:
+ * - JOB DATA: engineering, sales, marketing, recruiting, finance, operations, growth, general
+ * - CONTACT DATA: biotech, healthcare, tech, fintech, finance_co, company (industry-based)
  */
 export interface NeedProfile {
-  category: 'engineering' | 'sales' | 'marketing' | 'recruiting' | 'finance' | 'operations' | 'growth' | 'general';
-  specifics: string[];     // e.g., ["ML", "backend", "senior"]
+  category:
+    // Job-based needs (hiring for X)
+    | 'engineering' | 'sales' | 'marketing' | 'recruiting' | 'finance' | 'operations' | 'growth' | 'general'
+    // Industry-based needs (contact data - company is in X industry)
+    | 'biotech' | 'healthcare' | 'tech' | 'fintech' | 'finance_co' | 'company';
+  specifics: string[];     // e.g., ["ML", "backend", "senior"] or ["funded"]
   confidence: number;      // 0-1
-  source: string;          // What data it came from
+  source: string;          // 'job_signal', 'industry', 'funding_signal', 'none'
 }
 
 /**
  * Capability profile extracted from supply data.
+ *
+ * SCHEMA-AWARE CATEGORIES:
+ * - SERVICE PROVIDERS: recruiting, marketing, engineering (dev shop), consulting, fractional
+ * - CONTACTS AT COMPANIES: biotech_contact, healthcare_contact, tech_contact, finance_contact
+ * - CONNECTORS: bd_professional, executive, professional
  */
 export interface CapabilityProfile {
-  category: 'engineering' | 'sales' | 'marketing' | 'recruiting' | 'finance' | 'operations' | 'growth' | 'general';
+  category:
+    // Service providers (can fulfill needs)
+    | 'recruiting' | 'marketing' | 'engineering' | 'consulting' | 'fractional'
+    | 'sales' | 'finance' | 'operations' | 'growth' | 'general'
+    // Contacts at companies (potential partners/connectors)
+    | 'biotech_contact' | 'healthcare_contact' | 'tech_contact' | 'finance_contact'
+    // Professional connectors
+    | 'bd_professional' | 'executive' | 'professional';
   specifics: string[];     // e.g., ["tech recruiting", "startups"]
   confidence: number;      // 0-1
-  source: string;          // What data it came from
+  source: string;          // 'description', 'title', 'company_name', 'industry', 'none'
 }
 
 /**
@@ -362,19 +382,110 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
   const title = toStringSafe(demand.title).toLowerCase();
   const description = toStringSafe(demand.companyDescription).toLowerCase();
   const funding = toStringSafe(demand.companyFunding).toLowerCase();
+  const industry = toStringSafe(demand.industry).toLowerCase();
+  const company = toStringSafe(demand.company).toLowerCase();
 
-  // Check job title/signal first (strongest signal)
+  // ==========================================================================
+  // SCHEMA DETECTION — Is this JOB DATA or CONTACT DATA?
+  // ==========================================================================
+  // Job data: schemaId contains 'job', has jobUrl/applyUrl
+  // Contact data: Leads Finder, Crunchbase, B2B contacts (signal = person's title)
+  const isJobData =
+    demand.schemaId?.includes('job') ||
+    demand.schemaId?.includes('wellfound') ||
+    Boolean(demand.raw?.jobUrl || demand.raw?.job_url || demand.raw?.applyUrl);
+
+  // ==========================================================================
+  // CONTACT DATA — Analyze by INDUSTRY, not person's title
+  // ==========================================================================
+  if (!isJobData) {
+    const industryAndDesc = `${industry} ${company} ${description}`;
+
+    // Biotech/Pharma companies
+    if (/biotech|pharma|therapeutic|clinical|life science|drug|medical device|biopharma/i.test(industryAndDesc)) {
+      return {
+        category: 'biotech',
+        specifics: funding ? ['funded'] : [],
+        confidence: 0.85,
+        source: 'industry'
+      };
+    }
+
+    // Healthcare companies
+    if (/health|medical|hospital|patient|clinic/i.test(industryAndDesc) && !/biotech|pharma/i.test(industryAndDesc)) {
+      return {
+        category: 'healthcare',
+        specifics: [],
+        confidence: 0.8,
+        source: 'industry'
+      };
+    }
+
+    // Tech/Software companies (NOT hiring for tech roles)
+    if (/\bsoftware\b|saas|\bcloud\b|platform|digital|ai company|tech company/i.test(industryAndDesc) &&
+        !/biotech|fintech|healthtech/i.test(industryAndDesc)) {
+      return {
+        category: 'tech',
+        specifics: [],
+        confidence: 0.8,
+        source: 'industry'
+      };
+    }
+
+    // Fintech companies
+    if (/fintech|financial technology/i.test(industryAndDesc)) {
+      return {
+        category: 'fintech',
+        specifics: [],
+        confidence: 0.8,
+        source: 'industry'
+      };
+    }
+
+    // Finance companies
+    if (/financ|banking|insurance|invest|capital|asset/i.test(industryAndDesc) && !/fintech/i.test(industryAndDesc)) {
+      return {
+        category: 'finance_co',
+        specifics: [],
+        confidence: 0.75,
+        source: 'industry'
+      };
+    }
+
+    // Check for funding signal (general growth)
+    if (funding || /raised|funding|series|seed|round/i.test(description)) {
+      return {
+        category: 'growth',
+        specifics: ['post-funding', 'scaling'],
+        confidence: 0.7,
+        source: 'funding_signal'
+      };
+    }
+
+    // General company (no specific industry detected)
+    return {
+      category: 'company',
+      specifics: [],
+      confidence: 0.4,
+      source: 'industry'
+    };
+  }
+
+  // ==========================================================================
+  // JOB DATA — Analyze by role type (what they're hiring for)
+  // ==========================================================================
   const combined = `${signal} ${title}`;
 
-  // Engineering need
-  if (/engineer|developer|software|tech|cto|devops|backend|frontend|fullstack|ml|ai\b|data scientist/.test(combined)) {
+  // Engineering hiring (fixed: removed greedy 'tech', added word boundaries)
+  if (/engineer|developer|\bsoftware\b|devops|backend|frontend|fullstack|ml\b|ai\b|data scientist/i.test(combined) &&
+      !/recruit/i.test(combined)) {
     const specifics: string[] = [];
-    if (/senior|staff|lead|principal/.test(combined)) specifics.push('senior');
-    if (/ml|machine learning|ai\b/.test(combined)) specifics.push('ML/AI');
-    if (/backend|server/.test(combined)) specifics.push('backend');
-    if (/frontend|react|ui/.test(combined)) specifics.push('frontend');
-    if (/fullstack|full-stack/.test(combined)) specifics.push('fullstack');
-    if (/devops|infra|platform/.test(combined)) specifics.push('infrastructure');
+    if (/senior|staff|lead|principal/i.test(combined)) specifics.push('senior');
+    if (/ml|machine learning|ai\b/i.test(combined)) specifics.push('ML/AI');
+    if (/backend|server/i.test(combined)) specifics.push('backend');
+    if (/frontend|react|ui/i.test(combined)) specifics.push('frontend');
+    if (/fullstack|full-stack/i.test(combined)) specifics.push('fullstack');
+    if (/devops|infra|platform/i.test(combined)) specifics.push('infrastructure');
 
     return {
       category: 'engineering',
@@ -384,12 +495,12 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // Sales need
-  if (/sales|account executive|ae\b|sdr|bdr|revenue|business development|closer/.test(combined)) {
+  // Sales hiring
+  if (/\bsales\b|account executive|\bae\b|\bsdr\b|\bbdr\b|revenue|business development|closer/i.test(combined)) {
     const specifics: string[] = [];
-    if (/vp|head|director/.test(combined)) specifics.push('leadership');
-    if (/enterprise/.test(combined)) specifics.push('enterprise');
-    if (/smb|small/.test(combined)) specifics.push('SMB');
+    if (/vp|head|director/i.test(combined)) specifics.push('leadership');
+    if (/enterprise/i.test(combined)) specifics.push('enterprise');
+    if (/smb|small/i.test(combined)) specifics.push('SMB');
 
     return {
       category: 'sales',
@@ -399,13 +510,13 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // Marketing need
-  if (/marketing|growth|brand|content|seo|paid|demand gen|cmg|gtm/.test(combined)) {
+  // Marketing hiring
+  if (/marketing|growth|brand|content|\bseo\b|paid|demand gen|gtm/i.test(combined)) {
     const specifics: string[] = [];
-    if (/head|vp|director/.test(combined)) specifics.push('leadership');
-    if (/content/.test(combined)) specifics.push('content');
-    if (/paid|performance/.test(combined)) specifics.push('paid');
-    if (/brand/.test(combined)) specifics.push('brand');
+    if (/head|vp|director/i.test(combined)) specifics.push('leadership');
+    if (/content/i.test(combined)) specifics.push('content');
+    if (/paid|performance/i.test(combined)) specifics.push('paid');
+    if (/brand/i.test(combined)) specifics.push('brand');
 
     return {
       category: 'marketing',
@@ -415,8 +526,8 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // Finance need
-  if (/finance|cfo|accounting|controller|fp&a|bookkeep/.test(combined)) {
+  // Finance hiring
+  if (/\bfinance\b|\bcfo\b|accounting|controller|fp&a|bookkeep/i.test(combined)) {
     return {
       category: 'finance',
       specifics: [],
@@ -425,8 +536,8 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // Operations need
-  if (/operations|ops|coo|chief operating|supply chain|logistics/.test(combined)) {
+  // Operations hiring
+  if (/operations|\bops\b|\bcoo\b|chief operating|supply chain|logistics/i.test(combined)) {
     return {
       category: 'operations',
       specifics: [],
@@ -435,8 +546,8 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // Recruiting/HR need
-  if (/recruiter|talent|hr\b|human resources|people ops/.test(combined)) {
+  // Recruiting/HR hiring
+  if (/recruiter|talent|\bhr\b|human resources|people ops/i.test(combined)) {
     return {
       category: 'recruiting',
       specifics: [],
@@ -445,8 +556,8 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // Funding signal = general growth need (matches many capabilities)
-  if (funding || /raised|funding|series|seed|round/.test(combined + ' ' + description)) {
+  // Funding signal = general growth need
+  if (funding || /raised|funding|series|seed|round/i.test(combined + ' ' + description)) {
     return {
       category: 'growth',
       specifics: ['post-funding', 'scaling'],
@@ -455,7 +566,7 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
     };
   }
 
-  // No clear signal - general/exploratory
+  // No clear signal
   return {
     category: 'general',
     specifics: [],
@@ -465,14 +576,16 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
 }
 
 /**
- * Extract CAPABILITY from supply data.
- * What does this provider actually do?
+ * Extract CAPABILITY from supply data — SCHEMA-AWARE.
  *
- * Sources (in priority order):
- * 1. Company description (strongest)
- * 2. Job title of contact
- * 3. Company name
- * 4. Industry field
+ * SERVICE PROVIDERS (agencies, recruiters, consultants):
+ *   → Detect what service they offer
+ *
+ * CONTACTS AT COMPANIES (Leads Finder, B2B contacts):
+ *   → These are potential PARTNERS/CONNECTORS, not service providers
+ *   → Return industry-based capability for proper matching
+ *
+ * STRIPE-LEVEL: Distinguish between "who provides services" vs "who works at companies"
  */
 function extractCapabilityFromSupply(supply: NormalizedRecord): CapabilityProfile {
   const description = toStringSafe(supply.companyDescription).toLowerCase();
@@ -484,14 +597,18 @@ function extractCapabilityFromSupply(supply: NormalizedRecord): CapabilityProfil
 
   const combined = `${description} ${title} ${company} ${industry}`;
 
-  // Recruiting capability
-  if (/recruit|staffing|talent|headhunt|placement|hiring/.test(combined)) {
+  // ==========================================================================
+  // FIRST: Check if this is clearly a SERVICE PROVIDER
+  // ==========================================================================
+
+  // Recruiting/Staffing — CLEAR service provider
+  if (/recruit|staffing|talent acquisition|headhunt|placement|hiring agency|staffing agency/.test(combined)) {
     const specifics: string[] = [];
-    if (/tech|engineer|software/.test(combined)) specifics.push('tech');
-    if (/executive|c-suite|leadership/.test(combined)) specifics.push('executive');
-    if (/sales/.test(combined)) specifics.push('sales');
-    if (/marketing/.test(combined)) specifics.push('marketing');
-    if (/finance/.test(combined)) specifics.push('finance');
+    if (/engineer|\bsoftware\b/i.test(combined)) specifics.push('tech');
+    if (/executive|c-suite|leadership/i.test(combined)) specifics.push('executive');
+    if (/sales/i.test(combined)) specifics.push('sales');
+    if (/marketing/i.test(combined)) specifics.push('marketing');
+    if (/finance/i.test(combined)) specifics.push('finance');
 
     const confidence = description.includes('recruit') ? 0.95 :
       title.includes('recruit') ? 0.85 : 0.7;
@@ -505,88 +622,133 @@ function extractCapabilityFromSupply(supply: NormalizedRecord): CapabilityProfil
     };
   }
 
-  // Marketing capability
-  if (/marketing|agency|growth|brand|advertising|pr\b|communications|creative|media|seo|paid/.test(combined)) {
+  // Marketing Agency — CLEAR service provider
+  if (/marketing agency|ad agency|advertising agency|creative agency|pr agency|communications agency|media agency/i.test(combined) ||
+      (company.includes('agency') && /marketing|creative|media|brand/i.test(combined))) {
     const specifics: string[] = [];
-    if (/startup|series|venture/.test(combined)) specifics.push('startups');
-    if (/enterprise|b2b/.test(combined)) specifics.push('enterprise');
-    if (/content/.test(combined)) specifics.push('content');
-    if (/paid|performance/.test(combined)) specifics.push('performance');
-    if (/brand/.test(combined)) specifics.push('brand');
-
-    const confidence = description.includes('marketing') || description.includes('agency') ? 0.9 :
-      company.includes('marketing') ? 0.8 : 0.6;
+    if (/startup|venture/i.test(combined)) specifics.push('startups');
+    if (/enterprise|b2b/i.test(combined)) specifics.push('enterprise');
+    if (/content/i.test(combined)) specifics.push('content');
+    if (/paid|performance/i.test(combined)) specifics.push('performance');
 
     return {
       category: 'marketing',
       specifics,
-      confidence,
-      source: description ? 'description' : 'company_name'
+      confidence: 0.9,
+      source: 'description'
     };
   }
 
-  // Engineering/Dev capability
-  if (/software|development|engineering|dev shop|tech|app|web|mobile|saas/.test(combined) &&
-    !/recruit/.test(combined)) {
+  // Dev Shop/Software Agency — CLEAR service provider (fixed: specific patterns, not greedy 'tech')
+  if (/dev shop|development agency|software agency|software consultancy|app development|web development|software development company/i.test(combined) ||
+      (company.includes('agency') && /\bsoftware\b|\bdevelopment\b|\bweb\b|\bapp\b/i.test(combined))) {
     const specifics: string[] = [];
-    if (/startup/.test(combined)) specifics.push('startups');
-    if (/enterprise/.test(combined)) specifics.push('enterprise');
-    if (/mobile|ios|android/.test(combined)) specifics.push('mobile');
-    if (/web|frontend/.test(combined)) specifics.push('web');
+    if (/startup/i.test(combined)) specifics.push('startups');
+    if (/enterprise/i.test(combined)) specifics.push('enterprise');
+    if (/mobile|ios|android/i.test(combined)) specifics.push('mobile');
+    if (/web|frontend/i.test(combined)) specifics.push('web');
 
     return {
       category: 'engineering',
       specifics,
-      confidence: 0.7,
+      confidence: 0.8,
       source: 'description'
     };
   }
 
-  // Sales capability
-  if (/sales training|sales enablement|revenue|business development|lead gen/.test(combined)) {
+  // Consulting/Advisory firm — CLEAR service provider
+  if (/consulting firm|advisory firm|management consulting|strategy consulting|consultancy/i.test(combined) ||
+      (title.includes('consultant') && /strategy|management|operations/i.test(combined))) {
     return {
-      category: 'sales',
+      category: 'consulting',
       specifics: [],
-      confidence: 0.7,
+      confidence: 0.75,
       source: 'description'
     };
   }
 
-  // Finance capability
-  if (/cfo|fractional|accounting|bookkeep|finance/.test(combined) && !/recruit/.test(combined)) {
+  // Fractional/Interim executives — CLEAR service provider
+  if (/fractional|interim|outsourced cfo|outsourced coo|part-time executive/i.test(combined)) {
     return {
-      category: 'finance',
+      category: 'fractional',
       specifics: [],
-      confidence: 0.7,
-      source: 'description'
-    };
-  }
-
-  // Operations capability
-  if (/operations|consulting|strategy|advisory/.test(combined)) {
-    return {
-      category: 'operations',
-      specifics: [],
-      confidence: 0.5,
-      source: 'description'
-    };
-  }
-
-  // Growth - general consultants/agencies
-  if (/consultant|advisor|partner|agency/.test(combined)) {
-    return {
-      category: 'growth',
-      specifics: [],
-      confidence: 0.4,
+      confidence: 0.8,
       source: 'title'
     };
   }
 
-  // Unknown capability
+  // ==========================================================================
+  // FALLBACK: This is a CONTACT at a company, not a service provider
+  // Detect their INDUSTRY for proper matching
+  // ==========================================================================
+
+  // Biotech/Pharma contact
+  if (/biotech|pharma|therapeutic|clinical|life science|biopharma/i.test(combined)) {
+    return {
+      category: 'biotech_contact',
+      specifics: [],
+      confidence: 0.7,
+      source: 'industry'
+    };
+  }
+
+  // Healthcare contact
+  if (/health|medical|hospital/i.test(combined) && !/biotech|pharma/i.test(combined)) {
+    return {
+      category: 'healthcare_contact',
+      specifics: [],
+      confidence: 0.65,
+      source: 'industry'
+    };
+  }
+
+  // Tech company contact (NOT a dev shop — just works at a tech company)
+  if (/\bsoftware\b|saas|\bcloud\b|platform/i.test(combined) &&
+      !/agency|shop|development company|consultancy/i.test(combined) &&
+      !/biotech|fintech|healthtech/i.test(combined)) {
+    return {
+      category: 'tech_contact',
+      specifics: [],
+      confidence: 0.6,
+      source: 'industry'
+    };
+  }
+
+  // Finance contact
+  if (/financ|banking|investment|capital/i.test(combined) && !/recruit/i.test(combined)) {
+    return {
+      category: 'finance_contact',
+      specifics: [],
+      confidence: 0.6,
+      source: 'industry'
+    };
+  }
+
+  // BD/Licensing professional (valuable connector)
+  if (/business development|licensing|partnerships|bd\b/i.test(title)) {
+    return {
+      category: 'bd_professional',
+      specifics: [],
+      confidence: 0.7,
+      source: 'title'
+    };
+  }
+
+  // Executive (CEO, CTO, etc.) — potential connector
+  if (/ceo|cto|cfo|coo|founder|co-founder|president|chief/i.test(title)) {
+    return {
+      category: 'executive',
+      specifics: [],
+      confidence: 0.5,
+      source: 'title'
+    };
+  }
+
+  // General professional
   return {
-    category: 'general',
+    category: 'professional',
     specifics: [],
-    confidence: 0.2,
+    confidence: 0.3,
     source: 'none'
   };
 }
@@ -594,56 +756,131 @@ function extractCapabilityFromSupply(supply: NormalizedRecord): CapabilityProfil
 /**
  * Calculate alignment score between need and capability.
  * Returns 0-50 points based on how well they match.
+ *
+ * STRIPE-LEVEL: Schema-aware alignment.
+ * - Industry-to-industry matching (contact data): biotech → biotech_contact
+ * - Service provider matching (job data): hiring engineers → recruiter
+ * - BD/exec connectors work across industries
  */
 function scoreAlignment(need: NeedProfile, capability: CapabilityProfile): number {
-  // Direct category match = strong alignment
-  if (need.category === capability.category) {
-    return 50;
+  const needCat = need.category;
+  const capCat = capability.category;
+
+  // ==========================================================================
+  // INDUSTRY-TO-INDUSTRY MATCHING (Contact data → Contact at similar company)
+  // This is the KEY FIX for Ritvik's use case: biotech demand → biotech supply
+  // ==========================================================================
+  const industryMatches: Record<string, string[]> = {
+    biotech: ['biotech_contact', 'bd_professional'],         // Biotech → Biotech BD/Licensing
+    healthcare: ['healthcare_contact', 'biotech_contact'],   // Healthcare → Healthcare or Biotech
+    tech: ['tech_contact', 'engineering'],                   // Tech company → Tech contact or Dev shop
+    fintech: ['finance_contact', 'tech_contact'],            // Fintech → Finance or Tech contacts
+    finance_co: ['finance_contact', 'consulting'],           // Finance co → Finance contacts or consultants
+  };
+
+  if (industryMatches[needCat]) {
+    if (industryMatches[needCat][0] === capCat) return 50;  // Primary match
+    if (industryMatches[needCat].includes(capCat)) return 40;  // Secondary match
   }
 
-  // Growth need matches most capabilities (funding = needs everything)
-  if (need.category === 'growth') {
-    // Better match for marketing/recruiting (common post-funding needs)
-    if (capability.category === 'marketing' || capability.category === 'recruiting') {
-      return 40;
+  // ==========================================================================
+  // SERVICE PROVIDER MATCHING (Job data → Service provider)
+  // ==========================================================================
+
+  // Recruiting capability can serve most hiring needs
+  if (capCat === 'recruiting') {
+    if (['engineering', 'sales', 'marketing', 'finance', 'operations', 'recruiting'].includes(needCat)) {
+      return 45;  // High score - recruiters fulfill hiring needs
     }
-    // Still decent match for others
-    if (capability.category !== 'general') {
-      return 30;
-    }
-    return 20;
   }
 
-  // Recruiting capability can serve many needs (they find the people)
-  if (capability.category === 'recruiting') {
-    if (['engineering', 'sales', 'marketing', 'finance', 'operations'].includes(need.category)) {
+  // Dev shop can serve tech hiring (outsourcing vs hiring in-house)
+  if (capCat === 'engineering' && needCat === 'engineering') {
+    return 40;  // Dev shops can help with engineering needs
+  }
+
+  // Marketing agency serves marketing needs
+  if (capCat === 'marketing' && needCat === 'marketing') {
+    return 50;  // Direct match
+  }
+
+  // Consulting can serve operations/strategy needs
+  if (capCat === 'consulting') {
+    if (['operations', 'growth', 'finance_co', 'company'].includes(needCat)) {
       return 35;
     }
   }
 
-  // Cross-functional matches
-  const crossMatches: Record<string, string[]> = {
-    'engineering': ['recruiting', 'operations'],
-    'sales': ['marketing', 'recruiting'],
-    'marketing': ['sales', 'growth'],
-    'finance': ['operations', 'recruiting'],
-  };
-
-  if (crossMatches[need.category]?.includes(capability.category)) {
-    return 25;
+  // Fractional execs serve scaling companies
+  if (capCat === 'fractional') {
+    if (['growth', 'finance', 'operations'].includes(needCat)) {
+      return 40;
+    }
   }
 
-  // General matches general
-  if (need.category === 'general' || capability.category === 'general') {
+  // ==========================================================================
+  // BD/EXEC CONNECTORS — Work across industries
+  // ==========================================================================
+  if (capCat === 'bd_professional') {
+    // BD professionals are valuable connectors for funded/scaling companies
+    if (['growth', 'biotech', 'healthcare', 'tech', 'fintech'].includes(needCat)) {
+      return 35;
+    }
+    return 20;  // Still somewhat useful
+  }
+
+  if (capCat === 'executive') {
+    // Executives are potential connectors, but less specific
+    if (needCat === 'growth') return 30;  // Funded companies need networks
+    return 15;  // Generic connection
+  }
+
+  // ==========================================================================
+  // GROWTH NEED (Funding signal) — Matches many capabilities
+  // ==========================================================================
+  if (needCat === 'growth') {
+    if (capCat === 'marketing' || capCat === 'recruiting') return 40;
+    if (capCat === 'consulting' || capCat === 'fractional') return 35;
+    if (capCat !== 'general' && capCat !== 'professional') return 25;
     return 15;
   }
 
+  // ==========================================================================
+  // CROSS-FUNCTIONAL MATCHES
+  // ==========================================================================
+  const crossMatches: Record<string, string[]> = {
+    engineering: ['recruiting', 'consulting'],
+    sales: ['marketing', 'recruiting'],
+    marketing: ['sales', 'growth'],
+    finance: ['consulting', 'fractional'],
+  };
+
+  if (crossMatches[needCat]?.includes(capCat)) {
+    return 25;
+  }
+
+  // ==========================================================================
+  // FALLBACK — General/Professional matches
+  // ==========================================================================
+  if (needCat === 'general' || needCat === 'company') {
+    if (capCat === 'consulting' || capCat === 'bd_professional') return 20;
+    return 15;
+  }
+
+  if (capCat === 'general' || capCat === 'professional') {
+    return 10;
+  }
+
   // Poor alignment
-  return 10;
+  return 5;
 }
 
 /**
  * Determine confidence tier based on score and profiles.
+ *
+ * STRIPE-LEVEL: Labels are schema-aware.
+ * - Job data: "Hiring engineers" → "Tech recruiter"
+ * - Contact data: "Biotech company" → "Biotech BD contact"
  */
 function determineTier(
   score: number,
@@ -651,21 +888,58 @@ function determineTier(
   capability: CapabilityProfile,
   demandSignalLabel?: string  // From signalMeta.label — truth from normalization
 ): { tier: ConfidenceTier; tierReason: string } {
-  // Build human-readable reason — use signalMeta.label if available
-  const needLabel = demandSignalLabel || (
-    need.category === 'growth' ? 'Raised funding' :
-    need.category === 'general' ? 'Active company' :
-    need.category  // Just use category, no "Hiring" prefix
-  );
+  // ==========================================================================
+  // NEED LABEL — What does demand need?
+  // ==========================================================================
+  const needLabels: Record<NeedProfile['category'], string> = {
+    // Job-based needs (hiring for X)
+    engineering: 'Hiring engineers',
+    sales: 'Hiring sales',
+    marketing: 'Hiring marketing',
+    recruiting: 'Hiring recruiters',
+    finance: 'Hiring finance',
+    operations: 'Hiring operations',
+    growth: 'Raised funding',
+    general: 'Active company',
+    // Industry-based needs (contact data - company is in X industry)
+    biotech: 'Biotech company',
+    healthcare: 'Healthcare company',
+    tech: 'Tech company',
+    fintech: 'Fintech company',
+    finance_co: 'Finance company',
+    company: 'Company',
+  };
 
-  const capLabel = capability.category === 'general' ? 'Provider' :
-    capability.category === 'recruiting' ? 'Recruiter' :
-      capability.category === 'marketing' ? 'Marketing agency' :
-        capability.category === 'engineering' ? 'Dev shop' :
-          capability.category === 'sales' ? 'Sales consultant' :
-            capability.category === 'finance' ? 'Finance consultant' :
-              capability.category === 'growth' ? 'Growth partner' :
-                'Consultant';
+  // Use signalMeta.label if available (from normalization), otherwise use category label
+  const needLabel = demandSignalLabel || needLabels[need.category] || need.category;
+
+  // ==========================================================================
+  // CAPABILITY LABEL — What can supply do?
+  // ==========================================================================
+  const capLabels: Record<CapabilityProfile['category'], string> = {
+    // Service providers
+    recruiting: 'Recruiter',
+    marketing: 'Marketing agency',
+    engineering: 'Dev shop',
+    consulting: 'Consultant',
+    fractional: 'Fractional exec',
+    sales: 'Sales consultant',
+    finance: 'Finance consultant',
+    operations: 'Ops consultant',
+    growth: 'Growth partner',
+    general: 'Provider',
+    // Contacts at companies (potential partners/connectors)
+    biotech_contact: 'Biotech BD contact',
+    healthcare_contact: 'Healthcare contact',
+    tech_contact: 'Tech contact',
+    finance_contact: 'Finance contact',
+    // Professional connectors
+    bd_professional: 'BD professional',
+    executive: 'Executive',
+    professional: 'Professional',
+  };
+
+  const capLabel = capLabels[capability.category] || 'Provider';
 
   const tierReason = `${needLabel} → ${capLabel}`;
 
