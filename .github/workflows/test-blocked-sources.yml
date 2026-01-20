@@ -1,0 +1,76 @@
+name: Test Blocked Sources
+
+on:
+  workflow_dispatch:  # Manual trigger only - this is a test
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test RemoteOK
+        run: |
+          echo "=== Testing RemoteOK ==="
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "https://remoteok.com/api" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_CODE:")
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response length: $(echo "$BODY" | wc -c) bytes"
+          echo "First 500 chars:"
+          echo "$BODY" | head -c 500
+
+      - name: Test Arbeitnow
+        run: |
+          echo "=== Testing Arbeitnow ==="
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "https://www.arbeitnow.com/api/job-board-api" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_CODE:")
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response length: $(echo "$BODY" | wc -c) bytes"
+          echo "First 500 chars:"
+          echo "$BODY" | head -c 500
+
+      - name: Test WeWorkRemotely RSS
+        run: |
+          echo "=== Testing WeWorkRemotely ==="
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "https://weworkremotely.com/remote-jobs.rss" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_CODE:")
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response length: $(echo "$BODY" | wc -c) bytes"
+          echo "First 500 chars:"
+          echo "$BODY" | head -c 500
+
+      - name: Test Indeed RSS
+        run: |
+          echo "=== Testing Indeed RSS ==="
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "https://www.indeed.com/rss?q=software+engineer&l=remote" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_CODE:")
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response length: $(echo "$BODY" | wc -c) bytes"
+          if echo "$BODY" | grep -q "Cloudflare"; then
+            echo "❌ BLOCKED BY CLOUDFLARE"
+          else
+            echo "First 500 chars:"
+            echo "$BODY" | head -c 500
+          fi
+
+      - name: Test Jobicy
+        run: |
+          echo "=== Testing Jobicy ==="
+          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" "https://jobicy.com/api/v2/remote-jobs" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_CODE:")
+          echo "HTTP Code: $HTTP_CODE"
+          echo "Response length: $(echo "$BODY" | wc -c) bytes"
+          echo "First 500 chars:"
+          echo "$BODY" | head -c 500
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "========================================="
+          echo "TEST COMPLETE - Check logs above"
+          echo "========================================="
+          echo "If you see JSON data → GitHub IPs work"
+          echo "If you see Cloudflare HTML → Still blocked"
