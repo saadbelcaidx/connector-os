@@ -124,7 +124,7 @@ export const BLOCKS = {
     title: 'No supply dataset',
     detail: 'No supply dataset ID configured.',
     next_step: 'Add a supply dataset ID in Settings.',
-    severity: 'error' as const,
+    severity: 'warning' as const,
   },
 
   // Data loading

@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info, CheckCircle2, Key, Clock, CreditCard, User, Building2, Settings, AlertCircle, Search } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -17,6 +17,7 @@ import { supabase } from './lib/supabase';
 // New architecture
 import { validateDataset, validateSupplyDataset, normalizeDataset, NormalizedRecord, Schema, getSchemaById, renderSignal, getNarration } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
+import { filterDemandBySupplyCapability, type FilterResult } from './services/matching';
 import {
   enrichRecord,
   enrichBatch,
@@ -708,8 +709,254 @@ function toUserError(code: ErrorCode, detail?: string): string {
 // TYPES
 // =============================================================================
 
+// =============================================================================
+// DATA PREVIEW — Stripe-style transparency (show what system sees before matching)
+// =============================================================================
+
+interface CategoryBreakdown {
+  category: string;
+  count: number;
+  percentage: number;
+}
+
+interface DataPreview {
+  demandBreakdown: CategoryBreakdown[];
+  supplyBreakdown: CategoryBreakdown[];
+  detectedMatchType: string;
+  demandTotal: number;
+  supplyTotal: number;
+}
+
+/**
+ * STRIPE-LEVEL: Safe string coercion for any data type.
+ * Handles objects, arrays, null, undefined, numbers — everything.
+ */
+function safeString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(safeString).join(' ');
+  if (typeof value === 'object') {
+    // Try common string fields
+    const obj = value as Record<string, unknown>;
+    if (obj.name) return safeString(obj.name);
+    if (obj.value) return safeString(obj.value);
+    if (obj.label) return safeString(obj.label);
+    if (obj.title) return safeString(obj.title);
+    return '';
+  }
+  return '';
+}
+
+/**
+ * Analyze demand records — SCHEMA-AWARE.
+ *
+ * JOB POSTINGS (startup-jobs, wellfound-jobs):
+ *   → signal = what they're hiring for (Engineering, Sales, etc.)
+ *
+ * CONTACT/COMPANY DATA (b2b-contacts, crunchbase-orgs, leads-finder):
+ *   → signal = person's title (NOT what company needs!)
+ *   → Analyze by INDUSTRY instead
+ *
+ * STRIPE-LEVEL: Detect data type, show correct breakdown.
+ */
+function analyzeDemandNeeds(records: NormalizedRecord[]): CategoryBreakdown[] {
+  const categories: Record<string, number> = {};
+
+  // Detect if this is JOB POSTING data or CONTACT data
+  // Job postings: schemaId contains 'job' or records have job-specific fields
+  const isJobData = records.some(r =>
+    r.schemaId?.includes('job') ||
+    r.schemaId?.includes('wellfound') ||
+    (r.raw?.jobUrl || r.raw?.job_url || r.raw?.applyUrl)
+  );
+
+  for (const record of records) {
+    let category = 'General';
+
+    if (isJobData) {
+      // JOB POSTINGS — analyze by role type (what they're hiring for)
+      const signal = safeString(record.signal || record.title).toLowerCase();
+
+      if (/engineer|developer|software|tech lead|architect|devops|sre|full.?stack|front.?end|back.?end|data scientist|ml|machine learning/i.test(signal)) {
+        category = 'Engineering';
+      } else if (/sales|account executive|ae|sdr|bdr|business development|revenue/i.test(signal)) {
+        category = 'Sales';
+      } else if (/marketing|growth|brand|content|seo|sem|demand gen|product marketing/i.test(signal)) {
+        category = 'Marketing';
+      } else if (/operations|ops|coo|chief operating|supply chain|logistics|procurement/i.test(signal)) {
+        category = 'Operations';
+      } else if (/finance|cfo|controller|fp&a|accounting|treasury/i.test(signal)) {
+        category = 'Finance';
+      } else if (/hr|human resources|people|talent|recruiting|recruiter/i.test(signal)) {
+        category = 'HR/People';
+      } else if (/product|pm|product manager|product owner/i.test(signal)) {
+        category = 'Product';
+      } else if (/design|ux|ui|creative|graphic/i.test(signal)) {
+        category = 'Design';
+      } else if (/legal|counsel|attorney|compliance/i.test(signal)) {
+        category = 'Legal';
+      } else if (/ceo|founder|president|chief executive|managing director|general manager/i.test(signal)) {
+        category = 'Executive';
+      }
+    } else {
+      // CONTACT/COMPANY DATA — analyze by INDUSTRY (what kind of companies)
+      const industry = safeString(record.industry).toLowerCase();
+      const company = safeString(record.company).toLowerCase();
+      const description = safeString(record.description || record.companyDescription).toLowerCase();
+      const combined = `${industry} ${company} ${description}`;
+
+      if (/biotech|pharma|therapeutic|clinical|life science|drug|medical device/i.test(combined)) {
+        category = 'Biotech/Pharma';
+      } else if (/tech|software|saas|cloud|platform|digital|app|cyber|ai|machine learning/i.test(combined)) {
+        category = 'Tech/Software';
+      } else if (/health|medical|hospital|healthcare/i.test(combined)) {
+        category = 'Healthcare';
+      } else if (/financ|banking|insurance|invest|capital|fintech/i.test(combined)) {
+        category = 'Finance';
+      } else if (/retail|ecommerce|e-commerce|consumer|brand/i.test(combined)) {
+        category = 'Retail/E-commerce';
+      } else if (/manufactur|industrial|supply chain|logistics/i.test(combined)) {
+        category = 'Manufacturing';
+      } else if (/real estate|property|construction/i.test(combined)) {
+        category = 'Real Estate';
+      } else if (/media|entertainment|gaming|content/i.test(combined)) {
+        category = 'Media';
+      } else if (/energy|oil|gas|renewable|clean/i.test(combined)) {
+        category = 'Energy';
+      } else if (/consult|professional service|agency/i.test(combined)) {
+        category = 'Services';
+      }
+    }
+
+    categories[category] = (categories[category] || 0) + 1;
+  }
+
+  return Object.entries(categories)
+    .map(([category, count]) => ({
+      category,
+      count,
+      percentage: Math.round((count / records.length) * 100),
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4);
+}
+
+/**
+ * Analyze supply records to extract CAPABILITY — what they CAN DO.
+ * STRIPE-LEVEL: Shows WHO CAN SOLVE the demand, not job titles.
+ * A "Founder/CEO" means nothing — we need "Recruitment agency" or "Sales consultants".
+ */
+function analyzeSupplyCapabilities(records: NormalizedRecord[]): CategoryBreakdown[] {
+  const categories: Record<string, number> = {};
+
+  for (const record of records) {
+    const title = safeString(record.title || record.signal).toLowerCase();
+    const company = safeString(record.company).toLowerCase();
+    const industry = safeString(record.industry).toLowerCase();
+    const description = safeString(record.description).toLowerCase();
+
+    // Combine all text to detect CAPABILITY
+    const combined = `${title} ${company} ${industry} ${description}`;
+
+    // Detect CAPABILITY — what service/solution they provide
+    let category = 'Professionals';
+
+    // Recruitment/Staffing — can solve hiring needs
+    if (/recruit|staffing|talent acquisition|headhunt|executive search|hiring|placement/i.test(combined)) {
+      category = 'Recruiters/Staffing';
+    }
+    // Consulting/Advisory — can solve strategy/ops needs
+    else if (/consult|advisor|advisory|fractional|interim|outsourced/i.test(combined)) {
+      category = 'Consultants';
+    }
+    // Agency — can solve marketing/creative/dev needs
+    else if (/agency|studio|creative|design agency|dev shop|development agency|marketing agency/i.test(combined)) {
+      category = 'Agencies';
+    }
+    // Tech/Engineering services
+    else if (/software|development|engineering|tech|saas|platform|solution/i.test(combined) && /service|partner|vendor|provider/i.test(combined)) {
+      category = 'Tech Services';
+    }
+    // Sales/BD services
+    else if (/sales|business development|lead gen|outbound|growth/i.test(combined) && !/hiring|recruit/i.test(combined)) {
+      category = 'Sales/BD Services';
+    }
+    // Finance services
+    else if (/cfo|accounting|bookkeep|finance|tax|audit|cpa/i.test(combined) && /service|consult|firm|partner/i.test(combined)) {
+      category = 'Finance Services';
+    }
+    // HR services
+    else if (/hr |human resource|people ops|payroll|benefits/i.test(combined) && /service|consult|partner/i.test(combined)) {
+      category = 'HR Services';
+    }
+    // Legal services
+    else if (/law|legal|attorney|counsel|compliance/i.test(combined)) {
+      category = 'Legal Services';
+    }
+    // Venture/Investment — can solve funding needs
+    else if (/venture|investor|capital|fund|angel|vc |invest/i.test(combined)) {
+      category = 'Investors/VCs';
+    }
+
+    categories[category] = (categories[category] || 0) + 1;
+  }
+
+  return Object.entries(categories)
+    .map(([category, count]) => ({
+      category,
+      count,
+      percentage: Math.round((count / records.length) * 100),
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 4);
+}
+
+/**
+ * Detect the match type from demand needs and supply capabilities.
+ * SCHEMA-AWARE: Different labels for job data vs company data.
+ */
+function detectMatchType(demandBreakdown: CategoryBreakdown[], supplyBreakdown: CategoryBreakdown[]): string {
+  const topDemand = demandBreakdown[0]?.category || 'General';
+  const topSupply = supplyBreakdown[0]?.category || 'Professionals';
+
+  // Check if demand is industry-based (contact data) or role-based (job data)
+  const isIndustryBased = ['Biotech/Pharma', 'Tech/Software', 'Healthcare', 'Finance', 'Retail/E-commerce', 'Manufacturing', 'Real Estate', 'Media', 'Energy', 'Services'].includes(topDemand);
+
+  let demandLabel: string;
+  if (topDemand === 'General') {
+    demandLabel = 'Companies';
+  } else if (isIndustryBased) {
+    demandLabel = topDemand; // "Biotech/Pharma", "Tech/Software"
+  } else {
+    demandLabel = `${topDemand} hiring`; // "Engineering hiring", "Sales hiring"
+  }
+
+  return `${demandLabel} → ${topSupply}`;
+}
+
+/**
+ * Generate full data preview analysis.
+ */
+function analyzeDataForPreview(demandRecords: NormalizedRecord[], supplyRecords: NormalizedRecord[]): DataPreview {
+  const demandBreakdown = analyzeDemandNeeds(demandRecords);
+  const supplyBreakdown = analyzeSupplyCapabilities(supplyRecords);
+  const detectedMatchType = detectMatchType(demandBreakdown, supplyBreakdown);
+
+  return {
+    demandBreakdown,
+    supplyBreakdown,
+    detectedMatchType,
+    demandTotal: demandRecords.length,
+    supplyTotal: supplyRecords.length,
+  };
+}
+
 interface FlowState {
-  step: 'upload' | 'validating' | 'matching' | 'matches_found' | 'no_matches' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
+  step: 'upload' | 'validating' | 'preview' | 'matching' | 'matches_found' | 'no_matches' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
+
+  // Data Preview — Stripe-style transparency
+  dataPreview: DataPreview | null;
 
   // Source tracking (for UI labels)
   isHubFlow: boolean;
@@ -779,6 +1026,7 @@ interface Settings {
 export default function Flow() {
   const [state, setState] = useState<FlowState>({
     step: 'upload',
+    dataPreview: null,
     isHubFlow: false,
     demandSchema: null,
     supplySchema: null,
@@ -811,6 +1059,12 @@ export default function Flow() {
 
   // Supply Annotations — Operator judgment (render-only, no matching impact)
   const [supplyAnnotations, setSupplyAnnotations] = useState<Map<string, SupplyAnnotation>>(new Map());
+
+  // View mode toggle: demand → supply or supply → demands
+  const [matchViewMode, setMatchViewMode] = useState<'demand' | 'supply'>('demand');
+
+  // Supply-aware filter — shows what % of demand matches supply capability
+  const [supplyAwareFilter, setSupplyAwareFilter] = useState<FilterResult | null>(null);
 
   const abortRef = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
@@ -1007,6 +1261,20 @@ export default function Flow() {
     };
     loadAnnotations();
   }, [isAuthenticated, user?.id]);
+
+  // Compute supply-aware filter when both datasets are loaded
+  useEffect(() => {
+    if (state.demandRecords.length > 0 && state.supplyRecords.length > 0) {
+      console.log('[Flow] Computing supply-aware filter...');
+      const result = filterDemandBySupplyCapability(
+        state.demandRecords,
+        state.supplyRecords
+      );
+      setSupplyAwareFilter(result);
+    } else {
+      setSupplyAwareFilter(null);
+    }
+  }, [state.demandRecords, state.supplyRecords]);
 
   // Handle star/exclude toggle for supply
   const handleToggleStar = useCallback(async (fingerprint: string) => {
@@ -1250,18 +1518,22 @@ export default function Flow() {
         console.log('[Flow] No supply dataset configured (no CSV, no Apify dataset ID)');
       }
 
+      // Analyze data for preview BEFORE matching
+      const dataPreview = analyzeDataForPreview(demandRecords, supplyRecords);
+      console.log('[Flow] Data preview:', dataPreview);
+
       setState(prev => ({
         ...prev,
-        step: 'matching',
+        step: 'preview',
+        dataPreview,
         demandSchema: demandValidation.schema,
         supplySchema,
         demandRecords,
         supplyRecords,
-        progress: { current: 70, total: 100, message: 'Matching...' },
+        progress: { current: 70, total: 100, message: 'Review data...' },
       }));
 
-      // Start matching
-      await runMatching(demandRecords, supplyRecords, demandValidation.schema, supplySchema);
+      // DON'T auto-start matching — wait for user confirmation in preview step
 
     } catch (err) {
       // Handle FlowAbort (guard failures already set flowBlock)
@@ -1297,6 +1569,44 @@ export default function Flow() {
       startFlowRef.current?.();
     }
   }, [settings]);
+
+  // =============================================================================
+  // PREVIEW → MATCHING TRANSITION
+  // =============================================================================
+
+  /**
+   * User confirmed data looks correct — proceed to matching.
+   */
+  const continueFromPreview = useCallback(async () => {
+    const { demandRecords, supplyRecords, demandSchema, supplySchema } = state;
+
+    if (!demandSchema) {
+      console.error('[Flow] Cannot continue from preview: no demand schema');
+      return;
+    }
+
+    setState(prev => ({
+      ...prev,
+      step: 'matching',
+      progress: { current: 70, total: 100, message: 'Matching...' },
+    }));
+
+    await runMatching(demandRecords, supplyRecords, demandSchema, supplySchema);
+  }, [state.demandRecords, state.supplyRecords, state.demandSchema, state.supplySchema]);
+
+  /**
+   * User says "Wrong data" — go back to upload step.
+   */
+  const cancelPreview = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      step: 'upload',
+      dataPreview: null,
+      demandRecords: [],
+      supplyRecords: [],
+      progress: { current: 0, total: 0, message: '' },
+    }));
+  }, []);
 
   // =============================================================================
   // STEP 2: MATCHING
@@ -2184,12 +2494,14 @@ export default function Flow() {
     abortRef.current = true;
     setState({
       step: 'upload',
+      dataPreview: null,
       isHubFlow: false,
       demandSchema: null,
       supplySchema: null,
       demandRecords: [],
       supplyRecords: [],
       matchingResult: null,
+      detectedEdges: new Map(),
       enrichedDemand: new Map(),
       enrichedSupply: new Map(),
       demandIntros: new Map(),
@@ -2253,53 +2565,36 @@ export default function Flow() {
               <h1 className="text-[17px] font-medium text-white/90 mb-2">Flow</h1>
               <p className="text-[13px] text-white/40 mb-6">Match · Enrich · Send</p>
 
-              {/* FlowBlock Banner — Zero Silent Failures (structured errors) */}
+              {/* FlowBlock Banner — Apple iOS style */}
               {state.flowBlock && (
-                <div ref={errorRef} className="mb-8 max-w-lg mx-auto">
-                  <div className={`p-4 rounded-xl border ${
-                    state.flowBlock.severity === 'warning'
-                      ? 'bg-amber-500/[0.06] border-amber-500/20'
-                      : state.flowBlock.severity === 'info'
-                      ? 'bg-blue-500/[0.06] border-blue-500/20'
-                      : 'bg-red-500/[0.06] border-red-500/20'
-                  }`}>
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1">
-                        <p className={`text-[13px] font-medium mb-1 ${
-                          state.flowBlock.severity === 'warning' ? 'text-amber-400' :
-                          state.flowBlock.severity === 'info' ? 'text-blue-400' : 'text-red-400'
-                        }`}>
-                          {state.flowBlock.title}
-                        </p>
-                        <p className="text-[12px] text-white/60 mb-2">{state.flowBlock.detail}</p>
-                        <p className="text-[11px] text-white/40">{state.flowBlock.next_step}</p>
+                <div ref={errorRef} className="mb-8 max-w-sm mx-auto">
+                  <div className="p-5 rounded-2xl bg-white/[0.03] backdrop-blur-sm">
+                    <div className="text-center">
+                      {/* Icon */}
+                      <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
+                        <Settings className="w-5 h-5 text-white/40" />
                       </div>
+
+                      {/* Title */}
+                      <p className="text-[14px] font-medium text-white/90 mb-1">
+                        {state.flowBlock.title}
+                      </p>
+
+                      {/* Detail */}
+                      <p className="text-[13px] text-white/50 mb-4">
+                        {state.flowBlock.detail}
+                      </p>
+
+                      {/* Single CTA */}
                       <button
-                        onClick={() => setFlowBlock(null)}
-                        className="p-1 rounded-lg hover:bg-white/[0.06] text-white/40 hover:text-white/60"
+                        onClick={() => {
+                          navigate('/settings');
+                          setFlowBlock(null);
+                        }}
+                        className="w-full py-2.5 text-[13px] font-medium rounded-xl bg-white/[0.08] hover:bg-white/[0.12] text-white/80 hover:text-white transition-all duration-200"
                       >
-                        <X size={14} />
+                        {state.flowBlock.next_step}
                       </button>
-                    </div>
-                    {/* Actions */}
-                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/[0.06]">
-                      <button
-                        onClick={() => navigate('/settings')}
-                        className="px-3 py-1.5 text-[11px] rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-white/70 hover:text-white/90 transition-colors"
-                      >
-                        Open Settings
-                      </button>
-                      <button
-                        onClick={() => setFlowBlock(null)}
-                        className="px-3 py-1.5 text-[11px] rounded-lg text-white/40 hover:text-white/60 transition-colors"
-                      >
-                        Dismiss
-                      </button>
-                      {isDebugMode && (
-                        <span className="text-[10px] text-white/20 font-mono ml-auto">
-                          {state.flowBlock.code}
-                        </span>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -2358,13 +2653,63 @@ export default function Flow() {
                 );
               })()}
 
-              <button
-                onClick={startFlow}
-                disabled={!settings?.demandDatasetId && !getCsvData('demand')}
-                className={BTN.primary}
-              >
-                {state.error ? 'Retry' : 'Begin Matching'}
-              </button>
+              {/* PRE-FLIGHT GATE: Check enrichment capability BEFORE matching */}
+              {(() => {
+                const hasDataset = !!(settings?.demandDatasetId || getCsvData('demand'));
+                const hasEnrichmentKeys = !!(
+                  settings?.apolloApiKey ||
+                  settings?.anymailApiKey ||
+                  settings?.connectorAgentApiKey
+                );
+                const canStartMatching = hasDataset && hasEnrichmentKeys;
+
+                return (
+                  <>
+                    {/* Warning: No enrichment providers — Apple iOS style */}
+                    {hasDataset && !hasEnrichmentKeys && (
+                      <div className="mb-6 max-w-sm mx-auto">
+                        <div className="p-5 rounded-2xl bg-white/[0.03] backdrop-blur-sm">
+                          <div className="text-center">
+                            <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
+                              <Settings className="w-5 h-5 text-white/40" />
+                            </div>
+                            <p className="text-[14px] font-medium text-white/90 mb-1">
+                              Add an email finder
+                            </p>
+                            <p className="text-[13px] text-white/50 mb-4">
+                              Connect Apollo or Anymail to find decision-maker emails.
+                            </p>
+                            <button
+                              onClick={() => navigate('/settings')}
+                              className="w-full py-2.5 text-[13px] font-medium rounded-xl bg-white/[0.08] hover:bg-white/[0.12] text-white/80 hover:text-white transition-all duration-200"
+                            >
+                              Open Settings
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Begin Matching button - only show if can proceed OR has dataset but no keys */}
+                    {(canStartMatching || !hasDataset) && (
+                      <button
+                        onClick={startFlow}
+                        disabled={!canStartMatching}
+                        className={`${BTN.primary} ${!canStartMatching ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {state.error ? 'Retry' : 'Begin Matching'}
+                      </button>
+                    )}
+
+                    {/* Hint when no dataset */}
+                    {!hasDataset && (
+                      <p className="text-[11px] text-white/30 mt-3 text-center">
+                        Add a dataset in Settings to begin
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
 
             </motion.div>
           )}
@@ -2384,6 +2729,90 @@ export default function Flow() {
                 className="w-10 h-10 mx-auto mb-8 rounded-full border-2 border-white/10 border-t-white/60"
               />
               <p className="text-[13px] text-white/40">{safeRender(state.progress.message)}</p>
+            </motion.div>
+          )}
+
+          {/* PREVIEW — Data Summary before matching (Stripe-style transparency) */}
+          {state.step === 'preview' && state.dataPreview && (
+            <motion.div
+              key="preview"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="w-full max-w-lg mx-auto"
+            >
+              {/* Header */}
+              <div className="text-center mb-8">
+                <h2 className="text-[18px] font-medium text-white/90 mb-2">Review your data</h2>
+                <p className="text-[13px] text-white/40">Here's what the system detected</p>
+              </div>
+
+              {/* Data Summary Card */}
+              <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
+                {/* Two columns */}
+                <div className="grid grid-cols-2 gap-8">
+                  {/* DEMAND — What companies need */}
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Demand</span>
+                      <span className="text-[11px] text-white/30">{state.dataPreview.demandTotal} records</span>
+                    </div>
+                    <div className="space-y-2">
+                      {state.dataPreview.demandBreakdown.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <span className="text-[13px] text-white/70">{item.category}</span>
+                          <span className="text-[13px] text-white/40 tabular-nums">{item.percentage}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* SUPPLY — Who can solve it */}
+                  <div>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Supply</span>
+                      <span className="text-[11px] text-white/30">{state.dataPreview.supplyTotal} records</span>
+                    </div>
+                    <div className="space-y-2">
+                      {state.dataPreview.supplyBreakdown.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <span className="text-[13px] text-white/70">{item.category}</span>
+                          <span className="text-[13px] text-white/40 tabular-nums">{item.percentage}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detected Match Type */}
+                <div className="mt-6 pt-6 border-t border-white/[0.06]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Match</span>
+                    <span className="text-[13px] text-white/70">{state.dataPreview.detectedMatchType}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex gap-3">
+                <button
+                  onClick={cancelPreview}
+                  className="flex-1 h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.06] text-white/60 text-[13px] font-medium transition-all"
+                >
+                  Wrong data
+                </button>
+                <button
+                  onClick={continueFromPreview}
+                  className="flex-1 h-11 rounded-xl bg-white text-black text-[13px] font-medium hover:bg-white/90 transition-all"
+                >
+                  Looks right
+                </button>
+              </div>
+
+              {/* Subtitle */}
+              <p className="text-center text-[11px] text-white/30 mt-4">
+                You can always change your data in Settings
+              </p>
             </motion.div>
           )}
 
@@ -2557,14 +2986,14 @@ export default function Flow() {
                         className={`group p-4 rounded-xl transition-all duration-300
                           ${demandRoutable
                             ? 'bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.03]'
-                            : 'bg-amber-500/[0.05] border border-amber-500/20'
+                            : 'bg-white/[0.02] border border-white/[0.06]'
                           }`}
                         whileHover={{ y: -2 }}
                       >
                         <div className="flex items-center gap-2 mb-1">
                           <p className="text-[11px] text-white/50 font-medium tracking-wide">DEMAND</p>
                           {!demandRoutable && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/40">
                               INCOMPLETE
                             </span>
                           )}
@@ -2592,14 +3021,14 @@ export default function Flow() {
                         className={`group p-4 rounded-xl transition-all duration-300
                           ${supplyRoutable
                             ? 'bg-white/[0.02] border border-white/[0.08] hover:bg-white/[0.03]'
-                            : 'bg-amber-500/[0.05] border border-amber-500/20'
+                            : 'bg-white/[0.02] border border-white/[0.06]'
                           }`}
                         whileHover={{ y: -2 }}
                       >
                         <div className="flex items-center gap-2 mb-1">
                           <p className="text-[11px] text-white/50 font-medium tracking-wide">SUPPLY</p>
                           {!supplyRoutable && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.06] text-white/40">
                               INCOMPLETE
                             </span>
                           )}
@@ -2624,7 +3053,7 @@ export default function Flow() {
                     </motion.div>
 
                     {/* ============================================= */}
-                    {/* HEADING + STATS */}
+                    {/* HEADING + STATS — Apple iOS Style */}
                     {/* ============================================= */}
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
@@ -2632,48 +3061,105 @@ export default function Flow() {
                       transition={{ delay: 0.1 }}
                       className="text-center mb-8"
                     >
-                      <h2 className="text-[32px] font-light text-white/90 mb-2">
-                        {edgeCount > 0 ? 'Matches found' : 'Datasets loaded'}
-                      </h2>
-                      <p className="text-[12px] text-white/40 mb-4">
-                        Scanned {totalScanned} companies · matched with {state.supplyRecords.length} providers
-                      </p>
+                      {/* Hero number — Apple style */}
+                      <div className="mb-6">
+                        <p className="text-[56px] font-light text-white tracking-tight leading-none">
+                          {edgeCount}
+                        </p>
+                        <p className="text-[13px] text-white/40 mt-1">
+                          {edgeCount === 1 ? 'match' : 'matches'}
+                        </p>
+                      </div>
 
-                      {/* DOCTRINE: Quality summary — always show all three tiers */}
+                      {/* Tier breakdown — monochrome, no rainbow */}
                       {edgeCount > 0 && (
-                        <div className="flex items-center justify-center gap-6 text-[13px]">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-violet-400">🟣</span>
-                            <span className="text-white/70">{strongCount} strong</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-blue-400">🔵</span>
-                            <span className="text-white/70">{goodCount} good</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-white/40">⚪</span>
-                            <span className="text-white/70">{exploratoryCount} exploratory</span>
+                        <p className="text-[12px] text-white/50 mb-6">
+                          {strongCount > 0 && <><span className="text-white/70 font-medium">{strongCount}</span> strong</>}
+                          {strongCount > 0 && goodCount > 0 && <span className="text-white/30 mx-1.5">·</span>}
+                          {goodCount > 0 && <><span className="text-white/70 font-medium">{goodCount}</span> good</>}
+                          {(strongCount > 0 || goodCount > 0) && exploratoryCount > 0 && <span className="text-white/30 mx-1.5">·</span>}
+                          {exploratoryCount > 0 && <><span className="text-white/70 font-medium">{exploratoryCount}</span> exploratory</>}
+                        </p>
+                      )}
+
+                      {/* Stats row — clean, integrated */}
+                      <div className="inline-flex items-center gap-6 px-5 py-2.5 rounded-full bg-white/[0.03]">
+                        <div className="text-center">
+                          <p className="text-[15px] font-medium text-white/80">{emailCount}</p>
+                          <p className="text-[10px] text-white/40">emails</p>
+                        </div>
+                        <div className="w-px h-6 bg-white/[0.08]" />
+                        <div className="text-center">
+                          <p className="text-[15px] font-medium text-white/80">{readyToSendCount}</p>
+                          <p className="text-[10px] text-white/40">ready</p>
+                        </div>
+                      </div>
+
+                      {/* Supply filter — Apple style card */}
+                      {supplyAwareFilter && supplyAwareFilter.totalDemand > 0 && (
+                        <div className="mt-6 max-w-xs mx-auto">
+                          <div className="p-4 rounded-2xl bg-white/[0.02]">
+                            <p className="text-[13px] text-white/70">
+                              <span className="text-white font-medium">{supplyAwareFilter.matchableDemand}</span>
+                              <span className="text-white/50"> of {supplyAwareFilter.totalDemand} match your supply</span>
+                            </p>
+
+                            {/* Gaps — collapsible, no scrollbar */}
+                            {supplyAwareFilter.supplyGaps.length > 0 && (
+                              <details className="mt-3 group">
+                                <summary className="text-[11px] text-white/30 cursor-pointer hover:text-white/50 transition-colors flex items-center gap-1">
+                                  <span className="group-open:rotate-90 transition-transform">›</span>
+                                  {supplyAwareFilter.totalDemand - supplyAwareFilter.matchableDemand} filtered
+                                </summary>
+                                <div className="mt-2 pt-2 border-t border-white/[0.04]">
+                                  {supplyAwareFilter.supplyGaps.slice(0, 5).map((gap, i) => (
+                                    <p key={i} className="text-[10px] text-white/25 py-0.5">{gap}</p>
+                                  ))}
+                                  {supplyAwareFilter.supplyGaps.length > 5 && (
+                                    <p className="text-[10px] text-white/20 pt-1">+{supplyAwareFilter.supplyGaps.length - 5} more</p>
+                                  )}
+                                </div>
+                              </details>
+                            )}
                           </div>
                         </div>
                       )}
 
-                      {/* DOCTRINE: 4 canonical counters — always show, never conflate */}
-                      <div className="flex items-center justify-center gap-4 mt-4 text-[12px] text-white/50">
-                        <span>Matches: {edgeCount}</span>
-                        <span>·</span>
-                        <span>Emails: {emailCount}{rawEmailCount > 0 && enrichedEmailCount === 0 ? ' (need verification)' : ''}</span>
-                        <span>·</span>
-                        <span>Ready to send: {readyToSendCount}</span>
-                      </div>
-
-                      {/* DOCTRINE: Exploratory ≠ bad */}
-                      <p className="text-[11px] text-white/40 mt-3">
-                        Exploratory matches are normal. Sending teaches the system.
-                      </p>
+                      {/* iOS Segmented Control */}
+                      {edgeCount > 0 && (
+                        <div className="mt-6 inline-flex p-1 rounded-xl bg-white/[0.04]">
+                          <button
+                            onClick={() => setMatchViewMode('demand')}
+                            className={`px-4 py-1.5 text-[11px] font-medium rounded-lg transition-all duration-200 ${
+                              matchViewMode === 'demand'
+                                ? 'bg-white/[0.12] text-white shadow-sm'
+                                : 'text-white/40 hover:text-white/60'
+                            }`}
+                          >
+                            Companies
+                          </button>
+                          <button
+                            onClick={() => setMatchViewMode('supply')}
+                            className={`px-4 py-1.5 text-[11px] font-medium rounded-lg transition-all duration-200 ${
+                              matchViewMode === 'supply'
+                                ? 'bg-white/[0.12] text-white shadow-sm'
+                                : 'text-white/40 hover:text-white/60'
+                            }`}
+                          >
+                            People
+                          </button>
+                        </div>
+                      )}
                     </motion.div>
 
                     {/* ============================================= */}
-                    {/* COLUMN HEADERS — Strong, with underline */}
+                    {/* VIEW TOGGLE CONTENT */}
+                    {/* ============================================= */}
+
+                    {matchViewMode === 'demand' ? (
+                      <>
+                    {/* ============================================= */}
+                    {/* COLUMN HEADERS — Clean, no jargon */}
                     {/* ============================================= */}
                     <motion.div
                       initial={{ opacity: 0 }}
@@ -2681,15 +3167,15 @@ export default function Flow() {
                       transition={{ delay: 0.15 }}
                       className="grid grid-cols-[1fr_40px_1fr] gap-0 mb-4"
                     >
-                      <div className="border-b border-white/[0.15] pb-2">
-                        <span className="text-[12px] font-medium text-white/60 tracking-wide">
-                          Companies that need help
+                      <div className="border-b border-white/[0.08] pb-2">
+                        <span className="text-[10px] font-medium text-white/40 tracking-wide uppercase">
+                          Company
                         </span>
                       </div>
                       <div /> {/* Spacer for connector */}
-                      <div className="border-b border-white/[0.15] pb-2 text-right">
-                        <span className="text-[12px] font-medium text-white/60 tracking-wide">
-                          People with relevant experience
+                      <div className="border-b border-white/[0.08] pb-2 text-right">
+                        <span className="text-[10px] font-medium text-white/40 tracking-wide uppercase">
+                          Match
                         </span>
                       </div>
                     </motion.div>
@@ -2697,7 +3183,7 @@ export default function Flow() {
                     {/* ============================================= */}
                     {/* MATCH CARDS — 3-line signature, equal columns */}
                     {/* ============================================= */}
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       {previewMatches.map((match, i) => {
                         const edge = state.detectedEdges.get(recordKey(match.demand));
                         const demandSig = getDemandSignature(match, edge);
@@ -2707,103 +3193,139 @@ export default function Flow() {
                         return (
                           <motion.div
                             key={getDemandReactKey(match.demand)}
-                            initial={{ opacity: 0, y: 12 }}
+                            initial={{ opacity: 0, y: 8 }}
                             animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.2 + (i * 0.02), duration: 0.3 }}
-                            className="group"
+                            transition={{ delay: 0.15 + (i * 0.02), duration: 0.25 }}
                           >
-                            <div className="grid grid-cols-[1fr_40px_1fr] gap-0 items-center">
-                              {/* DEMAND CARD — Left */}
-                              <motion.div
-                                className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]
-                                  group-hover:bg-white/[0.05] group-hover:border-white/[0.1]
-                                  transition-all duration-200 overflow-hidden min-w-0"
-                                whileHover={{ y: -2 }}
-                                title={getDemandTooltip(match, edge)}
-                              >
-                                {/* Line 1: Entity + Tier Badge + Info */}
-                                <div className="flex items-center gap-2">
-                                  <p className="text-[14px] font-medium text-white/80 truncate flex-1">
+                            {/* SINGLE CARD — Clean, no jargon */}
+                            <div className="p-4 rounded-2xl bg-white/[0.02] hover:bg-white/[0.03] transition-all duration-200">
+                              {/* Row 1: Company → Person with tier badge */}
+                              <div className="flex items-center gap-3">
+                                {/* Tier indicator */}
+                                <span className="text-[12px]">
+                                  {match.tier === 'strong' ? '🟣' : match.tier === 'good' ? '🔵' : '⚪'}
+                                </span>
+
+                                {/* Company side */}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[14px] font-medium text-white/90 truncate">
                                     {demandSig.company}
                                   </p>
-                                  {/* Tier Badge + Reasoning Icon */}
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                                      match.tier === 'strong'
-                                        ? 'bg-violet-500/20 text-violet-300 border border-violet-500/30'
-                                        : match.tier === 'good'
-                                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                                          : 'bg-white/10 text-white/50 border border-white/20'
-                                    }`}>
-                                      {match.tier === 'strong' ? '🟣' : match.tier === 'good' ? '🔵' : '⚪'}
-                                    </span>
-                                    <MatchReasoningPopover match={match} />
-                                  </div>
+                                  <p className="text-[11px] text-white/40 truncate">
+                                    {demandSig.signal}
+                                  </p>
                                 </div>
-                                {/* Line 2: Signal */}
-                                <p className="text-[12px] text-white/50 mt-1 truncate">
-                                  {demandSig.signal}
-                                </p>
-                                {/* Line 3: Tier Reason (replaces generic context) */}
-                                <p className="text-[11px] text-white/40 mt-0.5 truncate">
-                                  {match.tierReason || demandSig.context}
-                                </p>
-                              </motion.div>
 
-                              {/* CONNECTOR RAIL — Animated on hover */}
-                              <div className="relative flex items-center justify-center h-full">
-                                <div className="absolute w-full h-[1px] bg-white/[0.1] group-hover:bg-white/[0.2] transition-colors" />
-                                <motion.div
-                                  className="absolute left-0 w-2 h-2 rounded-full bg-white/30 group-hover:bg-white/50"
-                                  initial={{ x: 0 }}
-                                  whileHover={{ x: 24 }}
-                                  transition={{ duration: 0.3 }}
-                                />
-                                <div className="absolute right-0 w-0 h-0 border-t-[4px] border-t-transparent
-                                  border-b-[4px] border-b-transparent border-l-[6px] border-l-white/30
-                                  group-hover:border-l-white/50 transition-colors" />
+                                {/* Arrow */}
+                                <span className="text-white/20 text-[12px]">→</span>
+
+                                {/* Person side */}
+                                <div className="flex-1 min-w-0 text-right">
+                                  <p className="text-[14px] font-medium text-white/70 truncate">
+                                    {supplySig.entity}
+                                  </p>
+                                  {supplySig.capability && (
+                                    <p className="text-[11px] text-white/40 truncate">
+                                      {supplySig.capability}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
 
-                              {/* SUPPLY CARD — Right */}
-                              <motion.div
-                                className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]
-                                  group-hover:bg-white/[0.05] group-hover:border-white/[0.1]
-                                  transition-all duration-200 overflow-hidden min-w-0"
-                                whileHover={{ y: -2 }}
-                                title={getSupplyTooltip(match)}
-                              >
-                                {/* Line 1: Entity */}
-                                <p className="text-[14px] font-medium text-white/70 truncate">
-                                  {supplySig.entity}
+                              {/* Row 2: Match reason (if exists) */}
+                              {match.tierReason && (
+                                <p className="text-[11px] text-white/30 mt-2 pl-7">
+                                  {match.tierReason}
                                 </p>
-                                {/* Line 2: Capability */}
-                                <p className="text-[12px] text-white/50 mt-1 truncate">
-                                  {supplySig.capability}
-                                </p>
-                                {/* Line 3: Fit */}
-                                <p className="text-[11px] text-white/30 mt-0.5 truncate">
-                                  {supplySig.fit}
-                                </p>
-                              </motion.div>
+                              )}
                             </div>
 
-                            {/* +X MORE — Attached to last card */}
+                            {/* +X MORE */}
                             {isLast && moreCount > 0 && (
-                              <motion.div
-                                initial={{ opacity: 0, y: 4 }}
-                                animate={{ opacity: 0.6, y: 0 }}
-                                transition={{ delay: 0.5 }}
-                                className="text-center mt-3"
-                              >
-                                <span className="text-[11px] text-white/40">
-                                  +{moreCount} more matches
-                                </span>
-                              </motion.div>
+                              <p className="text-center text-[11px] text-white/30 mt-3">
+                                +{moreCount} more
+                              </p>
                             )}
                           </motion.div>
                         );
                       })}
                     </div>
+                      </>
+                    ) : (
+                      /* ============================================= */
+                      /* SUPPLY LEVERAGE VIEW — Apple Responsive Grid */
+                      /* ============================================= */
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.1 }}
+                      >
+                        {/* People Cards — Responsive Grid, sorted by count */}
+                        {(() => {
+                          const supplyAggregates = state.matchingResult?.supplyAggregates || [];
+                          const leveragedSupplies = supplyAggregates
+                            .filter(agg => agg.matches.length > 1)
+                            .sort((a, b) => b.matches.length - a.matches.length)
+                            .slice(0, 10);
+
+                          if (leveragedSupplies.length === 0) {
+                            return (
+                              <div className="text-center py-12">
+                                <p className="text-[13px] text-white/40">No one matches multiple companies yet</p>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {leveragedSupplies.map((agg, i) => (
+                                <motion.div
+                                  key={recordKey(agg.supply)}
+                                  initial={{ opacity: 0, y: 8 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: 0.04 * i }}
+                                  className="p-4 rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] transition-all duration-200"
+                                >
+                                  {/* Supply Header */}
+                                  <div className="flex items-start justify-between gap-3 mb-3">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-[14px] font-medium text-white/90 truncate">
+                                        {agg.supply.fullName || agg.supply.company}
+                                      </p>
+                                      {agg.supply.title && (
+                                        <p className="text-[11px] text-white/40 truncate">
+                                          {agg.supply.title}
+                                        </p>
+                                      )}
+                                    </div>
+                                    <span className="flex-shrink-0 w-9 h-9 rounded-full bg-white/[0.06] text-white/70 text-[13px] font-medium flex items-center justify-center">
+                                      {agg.matches.length}
+                                    </span>
+                                  </div>
+
+                                  {/* Matching Demands — Inline chips */}
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {agg.matches.slice(0, 3).map((match, j) => (
+                                      <span
+                                        key={recordKey(match.demand)}
+                                        className="px-2 py-0.5 rounded-md bg-white/[0.04] text-[11px] text-white/50 truncate max-w-[120px]"
+                                      >
+                                        {match.demand.company}
+                                      </span>
+                                    ))}
+                                    {agg.matches.length > 3 && (
+                                      <span className="px-2 py-0.5 text-[11px] text-white/30">
+                                        +{agg.matches.length - 3}
+                                      </span>
+                                    )}
+                                  </div>
+                                </motion.div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </motion.div>
+                    )}
 
                     {/* ============================================= */}
                     {/* CTA SECTION — Anchored under cards */}
@@ -2836,15 +3358,17 @@ export default function Flow() {
                           transition={{ delay: 0.4 }}
                           className="mt-8 pt-6 border-t border-white/[0.06] text-center"
                         >
-                          {/* PHILEMON: Block message when dataset is incomplete */}
+                          {/* PHILEMON: Block message when dataset is incomplete — Apple iOS style */}
                           {!canEnrich && blockReason && (
-                            <div className="mb-6 p-4 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
-                              <p className="text-[12px] text-amber-400 font-medium">
-                                Dataset incomplete
-                              </p>
-                              <p className="text-[11px] text-amber-400/70 mt-1">
-                                {blockReason}
-                              </p>
+                            <div className="mb-6 max-w-xs mx-auto">
+                              <div className="p-4 rounded-2xl bg-white/[0.03] backdrop-blur-sm">
+                                <p className="text-[13px] text-white/70 font-medium mb-1">
+                                  Dataset incomplete
+                                </p>
+                                <p className="text-[12px] text-white/40">
+                                  {blockReason}
+                                </p>
+                              </div>
                             </div>
                           )}
 
@@ -3066,24 +3590,120 @@ export default function Flow() {
                 });
 
                 // =============================================================
-                // ENRICHMENT STATUS HELPER — Maps outcome to simple label
+                // ENRICHMENT STATUS HELPER — Maps outcome to specific labels
+                // STRIPE PATTERN: Specific errors, not generic buckets
                 // =============================================================
-                const getEnrichmentStatusLabel = (result: EnrichmentResult | undefined): { label: string; color: string } => {
-                  if (!result) {
-                    return { label: 'Not searched', color: 'text-white/30' };
-                  }
-                  // Use outcome (never collapse to boolean)
-                  if (isSuccessfulEnrichment(result) && result.email) {
-                    return { label: 'Email found', color: 'text-emerald-400/80' };
-                  }
-                  if (result.outcome === 'ERROR' || result.outcome === 'RATE_LIMITED') {
-                    return { label: 'Credits used up', color: 'text-amber-400/70' };
-                  }
-                  // Use human-readable explanation from outcome
-                  return { label: getOutcomeExplanation(result), color: 'text-white/40' };
+                type EnrichmentStatusInfo = {
+                  label: string;
+                  color: string;
+                  icon: React.ReactNode;
+                  action?: string;
+                  actionLink?: string;
+                  outcome: EnrichmentOutcome | 'NOT_SEARCHED';
                 };
 
-                // Build per-company status list
+                const getEnrichmentStatusLabel = (result: EnrichmentResult | undefined): EnrichmentStatusInfo => {
+                  if (!result) {
+                    return {
+                      label: 'Not searched',
+                      color: 'text-white/30',
+                      icon: <Search className="w-3.5 h-3.5" />,
+                      outcome: 'NOT_SEARCHED',
+                    };
+                  }
+
+                  switch (result.outcome) {
+                    case 'ENRICHED':
+                      return {
+                        label: 'Email found',
+                        color: 'text-emerald-400/80',
+                        icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+                        outcome: 'ENRICHED',
+                      };
+                    case 'VERIFIED':
+                      return {
+                        label: 'Email verified',
+                        color: 'text-emerald-400/80',
+                        icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+                        outcome: 'VERIFIED',
+                      };
+                    case 'AUTH_ERROR':
+                      return {
+                        label: 'API key invalid',
+                        color: 'text-red-400/80',
+                        icon: <Key className="w-3.5 h-3.5" />,
+                        action: 'Check API key in Settings',
+                        actionLink: '/settings',
+                        outcome: 'AUTH_ERROR',
+                      };
+                    case 'CREDITS_EXHAUSTED':
+                      return {
+                        label: 'Credits exhausted',
+                        color: 'text-amber-400/80',
+                        icon: <CreditCard className="w-3.5 h-3.5" />,
+                        action: 'Check provider account',
+                        outcome: 'CREDITS_EXHAUSTED',
+                      };
+                    case 'RATE_LIMITED':
+                      return {
+                        label: 'Rate limited',
+                        color: 'text-amber-400/80',
+                        icon: <Clock className="w-3.5 h-3.5" />,
+                        action: 'Wait and retry',
+                        outcome: 'RATE_LIMITED',
+                      };
+                    case 'NO_CANDIDATES':
+                      return {
+                        label: 'No contact found',
+                        color: 'text-white/40',
+                        icon: <User className="w-3.5 h-3.5" />,
+                        action: 'Try adding backup provider',
+                        actionLink: '/settings',
+                        outcome: 'NO_CANDIDATES',
+                      };
+                    case 'NOT_FOUND':
+                      return {
+                        label: 'Not in database',
+                        color: 'text-white/40',
+                        icon: <Building2 className="w-3.5 h-3.5" />,
+                        outcome: 'NOT_FOUND',
+                      };
+                    case 'NO_PROVIDERS':
+                      return {
+                        label: 'No providers configured',
+                        color: 'text-amber-400/80',
+                        icon: <Settings className="w-3.5 h-3.5" />,
+                        action: 'Connect Apollo or Anymail',
+                        actionLink: '/settings',
+                        outcome: 'NO_PROVIDERS',
+                      };
+                    case 'MISSING_INPUT':
+                      return {
+                        label: 'Missing company data',
+                        color: 'text-white/40',
+                        icon: <AlertCircle className="w-3.5 h-3.5" />,
+                        outcome: 'MISSING_INPUT',
+                      };
+                    case 'INVALID':
+                      return {
+                        label: 'Email invalid',
+                        color: 'text-white/40',
+                        icon: <AlertCircle className="w-3.5 h-3.5" />,
+                        outcome: 'INVALID',
+                      };
+                    case 'ERROR':
+                    default:
+                      return {
+                        label: 'Provider error',
+                        color: 'text-red-400/70',
+                        icon: <AlertCircle className="w-3.5 h-3.5" />,
+                        action: 'Check provider status',
+                        outcome: 'ERROR',
+                      };
+                  }
+                };
+
+                // Build per-company status list with full outcome data
                 const enrichmentStatusList = demandMatches.map(m => {
                   const result = state.enrichedDemand.get(recordKey(m.demand));
                   const status = getEnrichmentStatusLabel(result);
@@ -3094,11 +3714,21 @@ export default function Flow() {
                   };
                 });
 
-                // Count by status for summary
+                // Count by ACTUAL outcome — no compression
+                const outcomeCounts = enrichmentStatusList.reduce((acc, s) => {
+                  acc[s.outcome] = (acc[s.outcome] || 0) + 1;
+                  return acc;
+                }, {} as Record<string, number>);
+
+                // For backward compat with existing UI checks
                 const statusCounts = {
-                  found: enrichmentStatusList.filter(s => s.label === 'Email found').length,
-                  notFound: enrichmentStatusList.filter(s => s.label === 'No public email').length,
-                  creditsUsed: enrichmentStatusList.filter(s => s.label === 'Credits used up').length,
+                  found: (outcomeCounts['ENRICHED'] || 0) + (outcomeCounts['VERIFIED'] || 0),
+                  notFound: (outcomeCounts['NO_CANDIDATES'] || 0) + (outcomeCounts['NOT_FOUND'] || 0),
+                  authError: outcomeCounts['AUTH_ERROR'] || 0,
+                  creditsExhausted: outcomeCounts['CREDITS_EXHAUSTED'] || 0,
+                  rateLimited: outcomeCounts['RATE_LIMITED'] || 0,
+                  noProviders: outcomeCounts['NO_PROVIDERS'] || 0,
+                  error: outcomeCounts['ERROR'] || 0,
                 };
 
                 return (
@@ -3148,29 +3778,98 @@ export default function Flow() {
                       )}
                     </motion.div>
 
-                    {/* Enrichment Status Summary — Simple labels, no raw codes */}
+                    {/* Enrichment Status Summary — STRIPE PATTERN: specific outcomes */}
                     {(enrichmentFailed || enrichmentPartial) && (
                       <motion.div
                         initial={{ opacity: 0, y: 5 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.2 }}
-                        className="mb-6 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] max-w-xs"
+                        className="mb-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] max-w-sm"
                       >
-                        <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2 text-center">What happened</p>
-                        <div className="flex justify-center gap-4 text-[11px]">
+                        <p className="text-[10px] text-white/30 uppercase tracking-wider mb-3 text-center">Enrichment results</p>
+                        <div className="space-y-2">
+                          {/* Success */}
                           {statusCounts.found > 0 && (
-                            <span className="text-emerald-400/80">{statusCounts.found} email found</span>
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400/80" />
+                              <span className="text-emerald-400/80">{statusCounts.found} emails found</span>
+                            </div>
                           )}
+                          {/* Not found (normal) */}
                           {statusCounts.notFound > 0 && (
-                            <span className="text-white/40">{statusCounts.notFound} no public email</span>
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <User className="w-3.5 h-3.5 text-white/40" />
+                              <span className="text-white/40">{statusCounts.notFound} no public email</span>
+                            </div>
                           )}
-                          {statusCounts.creditsUsed > 0 && (
-                            <span className="text-amber-400/70">{statusCounts.creditsUsed} credits used up</span>
+                          {/* Auth Error — actionable */}
+                          {statusCounts.authError > 0 && (
+                            <div className="flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <Key className="w-3.5 h-3.5 text-red-400/80" />
+                                <span className="text-red-400/80">{statusCounts.authError} API key invalid</span>
+                              </div>
+                              <button
+                                onClick={() => navigate('/settings')}
+                                className="text-[10px] text-white/50 hover:text-white/80 underline underline-offset-2"
+                              >
+                                Fix in Settings
+                              </button>
+                            </div>
+                          )}
+                          {/* Credits Exhausted — actionable */}
+                          {statusCounts.creditsExhausted > 0 && (
+                            <div className="flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <CreditCard className="w-3.5 h-3.5 text-amber-400/80" />
+                                <span className="text-amber-400/80">{statusCounts.creditsExhausted} credits exhausted</span>
+                              </div>
+                              <span className="text-[10px] text-white/40">Check provider account</span>
+                            </div>
+                          )}
+                          {/* Rate Limited */}
+                          {statusCounts.rateLimited > 0 && (
+                            <div className="flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <Clock className="w-3.5 h-3.5 text-amber-400/80" />
+                                <span className="text-amber-400/80">{statusCounts.rateLimited} rate limited</span>
+                              </div>
+                              <span className="text-[10px] text-white/40">Wait and retry</span>
+                            </div>
+                          )}
+                          {/* No Providers — critical actionable */}
+                          {statusCounts.noProviders > 0 && (
+                            <div className="flex items-center justify-between text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <Settings className="w-3.5 h-3.5 text-amber-400/80" />
+                                <span className="text-amber-400/80">{statusCounts.noProviders} no providers</span>
+                              </div>
+                              <button
+                                onClick={() => navigate('/settings')}
+                                className="text-[10px] text-white/50 hover:text-white/80 underline underline-offset-2"
+                              >
+                                Connect provider
+                              </button>
+                            </div>
+                          )}
+                          {/* Generic Error */}
+                          {statusCounts.error > 0 && (
+                            <div className="flex items-center gap-2 text-[11px]">
+                              <AlertCircle className="w-3.5 h-3.5 text-red-400/70" />
+                              <span className="text-red-400/70">{statusCounts.error} provider errors</span>
+                            </div>
                           )}
                         </div>
-                        <p className="text-[9px] text-white/20 mt-2 text-center">
-                          Some companies don't have public emails. This is normal.
-                        </p>
+                        {/* Only show "normal" message if the only issue is not found */}
+                        {statusCounts.notFound > 0 &&
+                         statusCounts.authError === 0 &&
+                         statusCounts.creditsExhausted === 0 &&
+                         statusCounts.noProviders === 0 &&
+                         statusCounts.error === 0 && (
+                          <p className="text-[9px] text-white/20 mt-3 text-center">
+                            Some companies don't have public emails. This is normal.
+                          </p>
+                        )}
                       </motion.div>
                     )}
 

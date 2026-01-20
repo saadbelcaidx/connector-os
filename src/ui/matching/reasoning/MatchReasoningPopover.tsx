@@ -141,7 +141,7 @@ export const MatchReasoningPopover: React.FC<MatchReasoningPopoverProps> = ({
     >
       <div
         className="
-          p-3 space-y-1
+          p-3 space-y-2
           bg-zinc-900/95 backdrop-blur-sm
           border border-white/10
           rounded-xl
@@ -150,6 +150,44 @@ export const MatchReasoningPopover: React.FC<MatchReasoningPopoverProps> = ({
           animate-in fade-in-0 zoom-in-95 duration-150
         "
       >
+        {/* Score Display */}
+        <div className="flex items-center gap-2 pb-1.5 border-b border-white/10">
+          <span className={`text-lg font-bold tabular-nums ${
+            match.tier === 'strong'
+              ? 'text-violet-400'
+              : match.tier === 'good'
+                ? 'text-blue-400'
+                : 'text-white/60'
+          }`}>
+            {match.score}
+          </span>
+          <span className="text-xs text-white/40">/100 fit score</span>
+        </div>
+
+        {/* Score Breakdown (if available) */}
+        {(match.needProfile || match.capabilityProfile) && (
+          <div className="text-[11px] text-white/50 space-y-0.5 font-mono pb-1.5 border-b border-white/10">
+            {match.needProfile && (
+              <div className="flex justify-between">
+                <span>Need:</span>
+                <span className="text-white/70">{match.needProfile.category}</span>
+              </div>
+            )}
+            {match.capabilityProfile && (
+              <div className="flex justify-between">
+                <span>Capability:</span>
+                <span className="text-white/70">{match.capabilityProfile.category}</span>
+              </div>
+            )}
+            {match.needProfile?.category === match.capabilityProfile?.category && (
+              <div className="flex justify-between text-emerald-400/70">
+                <span>Alignment:</span>
+                <span>Direct match ✓</span>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Line 1: Strategic context */}
         <p className="text-[13px] text-white/70 leading-relaxed">
           {reasoning.line1}

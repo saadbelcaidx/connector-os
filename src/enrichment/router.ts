@@ -49,16 +49,17 @@ export type EnrichmentAction =
  * MUST be preserved end-to-end. Never collapse to boolean.
  */
 export type EnrichmentOutcome =
-  | 'ENRICHED'        // Email found by provider
-  | 'VERIFIED'        // Existing email verified
-  | 'INVALID'         // Existing email failed verification
-  | 'NO_CANDIDATES'   // Providers searched, no email found
-  | 'NOT_FOUND'       // Person/company not in provider DB
-  | 'MISSING_INPUT'   // Inputs insufficient for any action
-  | 'NO_PROVIDERS'    // No providers configured for this action
-  | 'AUTH_ERROR'      // Provider auth failed (401)
-  | 'RATE_LIMITED'    // Provider rate limited (429)
-  | 'ERROR';          // Unexpected error
+  | 'ENRICHED'           // Email found by provider
+  | 'VERIFIED'           // Existing email verified
+  | 'INVALID'            // Existing email failed verification
+  | 'NO_CANDIDATES'      // Providers searched, no email found
+  | 'NOT_FOUND'          // Person/company not in provider DB
+  | 'MISSING_INPUT'      // Inputs insufficient for any action
+  | 'NO_PROVIDERS'       // No providers configured for this action
+  | 'AUTH_ERROR'         // Provider auth failed (401)
+  | 'CREDITS_EXHAUSTED'  // Provider credits exhausted (422)
+  | 'RATE_LIMITED'       // Provider rate limited (429)
+  | 'ERROR';             // Unexpected error
 
 export type ProviderName = 'connectorAgent' | 'anymail' | 'apollo';
 
@@ -489,12 +490,15 @@ async function findWithApollo(
 // HELPER: Parse HTTP errors
 // =============================================================================
 
-function parseHttpError(error: any): 'AUTH_ERROR' | 'RATE_LIMITED' | 'NOT_FOUND' | 'ERROR' {
+function parseHttpError(error: any): 'AUTH_ERROR' | 'CREDITS_EXHAUSTED' | 'RATE_LIMITED' | 'NOT_FOUND' | 'ERROR' {
   const status = error?.status || error?.response?.status;
-  const message = error?.message || String(error);
+  const message = (error?.message || String(error)).toLowerCase();
 
-  if (status === 401 || message.includes('401') || message.includes('Unauthorized')) {
+  if (status === 401 || message.includes('401') || message.includes('unauthorized')) {
     return 'AUTH_ERROR';
+  }
+  if (status === 422 || message.includes('422') || message.includes('credit') || message.includes('quota') || message.includes('limit exceeded')) {
+    return 'CREDITS_EXHAUSTED';
   }
   if (status === 429 || message.includes('429') || message.includes('rate limit')) {
     return 'RATE_LIMITED';
@@ -644,7 +648,7 @@ export async function routeEnrichment(
         providerResults[provider].result = 'error';
         providerResults[provider].reason = errorType;
 
-        if (errorType === 'AUTH_ERROR' || errorType === 'RATE_LIMITED') {
+        if (errorType === 'AUTH_ERROR' || errorType === 'CREDITS_EXHAUSTED' || errorType === 'RATE_LIMITED') {
           continue; // Try next provider
         }
       }
@@ -746,6 +750,9 @@ export async function routeEnrichment(
 
       if (errorType === 'AUTH_ERROR') {
         continue; // Provider dead for session, try next
+      }
+      if (errorType === 'CREDITS_EXHAUSTED') {
+        continue; // Provider out of credits, try next
       }
       if (errorType === 'RATE_LIMITED') {
         continue; // Try next provider
@@ -888,11 +895,13 @@ export function getOutcomeExplanation(result: EnrichmentResult): string {
     case 'NO_PROVIDERS':
       return 'No search providers configured.';
     case 'AUTH_ERROR':
-      return 'Provider authentication failed.';
+      return 'API key invalid.';
+    case 'CREDITS_EXHAUSTED':
+      return 'Provider credits exhausted.';
     case 'RATE_LIMITED':
       return 'Provider temporarily unavailable.';
     case 'ERROR':
-      return 'Something went wrong.';
+      return 'Provider error.';
     default:
       return 'Unknown status.';
   }
