@@ -183,13 +183,43 @@ export async function enrichRecord(
   const key = recordKey(record);
   const cid = correlationId || `enrich-${Date.now()}-${key.replace(/[^a-z0-9.-]/gi, '').slice(0, 30)}`;
 
-  // STEP 1: Check cache (only if no email — if email exists, we need to VERIFY)
+  // STEP 1: Check cache (only if no email)
   // Now works for domainless records too (uses recordKey)
   if (!record.email) {
     const cached = await checkCache(key);
     if (cached) {
       return cached;
     }
+  }
+
+  // STEP 1.5: PRE-ENRICHED — If email already exists (from CSV), trust it
+  // User's data is their responsibility. No verification, no API calls.
+  // This is the Stripe pattern: user provides data, we use it.
+  if (record.email) {
+    console.log(`[Enrichment] cid=${cid} PRE_ENRICHED email=${record.email.slice(0, 3)}***`);
+    return {
+      action: 'VERIFY', // Was going to verify, but we're trusting instead
+      outcome: 'ENRICHED',
+      email: record.email,
+      firstName: record.firstName || '',
+      lastName: record.lastName || '',
+      title: record.title || '',
+      verified: true, // Trust user's data
+      source: 'existing',
+      inputsPresent: {
+        email: true,
+        domain: !!record.domain,
+        person_name: !!(record.firstName || record.lastName),
+        company: !!record.company,
+      },
+      providersAttempted: [],
+      providerResults: {
+        connectorAgent: { attempted: false },
+        anymail: { attempted: false },
+        apollo: { attempted: false },
+      },
+      durationMs: 0,
+    };
   }
 
   // STEP 2: Build router config
@@ -265,11 +295,41 @@ export async function enrichBatch(
     // Use recordKey for stable identification (works for domainless records)
     const key = recordKey(record);
 
-    // Check cache first (only if no email — if email exists, we need to VERIFY)
-    let result: EnrichmentResult | null = null;
-    if (!record.email) {
-      result = await checkCache(key);
+    // PRE-ENRICHED — If email already exists (from CSV), trust it immediately
+    // User's data is their responsibility. No verification, no API calls.
+    if (record.email) {
+      results.set(key, {
+        action: 'VERIFY',
+        outcome: 'ENRICHED',
+        email: record.email,
+        firstName: record.firstName || '',
+        lastName: record.lastName || '',
+        title: record.title || '',
+        verified: true,
+        source: 'existing',
+        inputsPresent: {
+          email: true,
+          domain: !!record.domain,
+          person_name: !!(record.firstName || record.lastName),
+          company: !!record.company,
+        },
+        providersAttempted: [],
+        providerResults: {
+          connectorAgent: { attempted: false },
+          anymail: { attempted: false },
+          apollo: { attempted: false },
+        },
+        durationMs: 0,
+      });
+      enrichedCount++;
+      completed++;
+      onProgress?.(completed, records.length);
+      continue;
     }
+
+    // Check cache first (no email, so we might have cached result)
+    let result: EnrichmentResult | null = null;
+    result = await checkCache(key);
 
     if (!result) {
       // Route enrichment (new signature — no state machine)

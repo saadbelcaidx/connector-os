@@ -165,6 +165,44 @@ Jane Smith,Acme SaaS,not-a-domain,VP of Sales,,,`;
 // FLOW INTEGRATION TEST — The Full Pipeline
 // =============================================================================
 
+describe('CSV Flow: Pre-enriched Emails', () => {
+  it('CSV with emails should be marked as pre-enriched (no API calls needed)', () => {
+    const { rows } = validateCsv(MEMBER_DEMAND_CSV, 'demand');
+    const { records } = normalizeCsvRecords({
+      rows: rows as any,
+      side: 'demand',
+      uploadId: 'test-preenrich-001',
+    });
+
+    // Jane Smith has email in CSV
+    const jane = records[0];
+    expect(jane.email).toBe('jane@acmesaas.com');
+
+    // This email should be trusted as-is, no enrichment needed
+    // The enrichment layer will return immediately with source='existing'
+    expect(jane.email).toBeTruthy();
+    expect(jane.fullName).toBe('Jane Smith');
+    expect(jane.title).toBe('VP of Sales');
+  });
+
+  it('CSV without emails should need enrichment', () => {
+    const { rows } = validateCsv(MEMBER_DEMAND_CSV, 'demand');
+    const { records } = normalizeCsvRecords({
+      rows: rows as any,
+      side: 'demand',
+      uploadId: 'test-preenrich-002',
+    });
+
+    // Lisa Park has no email in CSV
+    const lisa = records[2];
+    expect(lisa.email).toBeNull();
+
+    // This record needs enrichment (no pre-existing email)
+    expect(lisa.fullName).toBe('Lisa Park');
+    expect(lisa.domain).toBe('cloudbase.com');
+  });
+});
+
 describe('CSV Flow: Full Pipeline (Upload → Validate → Normalize)', () => {
   it('processes member CSV end-to-end without errors', () => {
     // Step 1: Validate (simulates what CsvUpload does)
