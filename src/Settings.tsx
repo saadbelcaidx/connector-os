@@ -736,7 +736,6 @@ export default function Settings() {
                         </div>
                         <CsvUpload
                           side="demand"
-                          userId={user?.id}
                           onNormalized={(records) => {
                             // Store to localStorage for Flow.tsx to read
                             localStorage.setItem('csv_demand_data', JSON.stringify(records));
@@ -829,7 +828,6 @@ export default function Settings() {
                         </div>
                         <CsvUpload
                           side="supply"
-                          userId={user?.id}
                           onNormalized={(records) => {
                             // Store to localStorage for Flow.tsx to read
                             localStorage.setItem('csv_supply_data', JSON.stringify(records));

@@ -2360,7 +2360,7 @@ export default function Flow() {
 
               <button
                 onClick={startFlow}
-                disabled={!settings?.demandDatasetId}
+                disabled={!settings?.demandDatasetId && !getCsvData('demand')}
                 className={BTN.primary}
               >
                 {state.error ? 'Retry' : 'Begin Matching'}
