@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info, CheckCircle2, Key, Clock, CreditCard, User, Building2, Settings, AlertCircle, Search } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info, CheckCircle2, Key, Clock, CreditCard, User, Building2, Settings, AlertCircle, Search, Sparkles } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -42,6 +42,9 @@ import type { Counterparty } from './schemas/IntroOutput';
 
 // AI Config type
 import { AIConfig } from './services/AIService';
+
+// Signal Intelligence — AI-powered extraction
+import { extractSignalIntelligence, type ExtractionResult } from './services/SignalIntelligenceService';
 
 // CSV Data Support
 import { getCsvData } from './services/SignalsClient';
@@ -1130,8 +1133,8 @@ export default function Flow() {
               provider: 'azure',
               model: s.azureDeployment || 'gpt-4o-mini',
               apiKey: s.azureApiKey,
-              azureEndpoint: s.azureEndpoint,
-              azureDeployment: s.azureDeployment,
+              endpoint: s.azureEndpoint,
+              deployment: s.azureDeployment,
             };
           } else if (s.openaiApiKey) {
             return {
@@ -1541,7 +1544,55 @@ export default function Flow() {
       }
 
       // Analyze data for preview BEFORE matching
-      const dataPreview = analyzeDataForPreview(demandRecords, supplyRecords);
+      // Use AI extraction if configured, otherwise fall back to keyword analysis
+      let dataPreview: DataPreview;
+
+      if (settings?.aiConfig?.apiKey) {
+        // AI-powered extraction — the intelligence layer
+        console.log('[Flow] Using AI extraction for signal intelligence...');
+        setState(prev => ({ ...prev, progress: { current: 50, total: 100, message: 'Analyzing signals...' } }));
+
+        try {
+          const extractionResult = await extractSignalIntelligence(
+            demandRecords.map(r => ({
+              domain: r.domain,
+              signal: r.signal || r.title || '',
+              company: r.company,
+              title: r.title,
+              companyDescription: r.companyDescription || undefined,
+            })),
+            supplyRecords.map(r => ({
+              domain: r.domain,
+              company: r.company,
+              title: r.title,
+              companyDescription: r.companyDescription || undefined,
+            })),
+            settings.aiConfig,
+            (message, current, total) => {
+              const progress = 50 + Math.round((current / total) * 20);
+              setState(prev => ({ ...prev, progress: { current: progress, total: 100, message } }));
+            }
+          );
+
+          console.log('[Flow] AI extraction complete:', extractionResult);
+          dataPreview = {
+            demandBreakdown: extractionResult.demandBreakdown,
+            supplyBreakdown: extractionResult.supplyBreakdown,
+            detectedMatchType: extractionResult.detectedMatchType,
+            demandTotal: extractionResult.demandTotal,
+            supplyTotal: extractionResult.supplyTotal,
+          };
+        } catch (err) {
+          // Fallback to keyword analysis if AI fails
+          console.warn('[Flow] AI extraction failed, falling back to keyword analysis:', err);
+          dataPreview = analyzeDataForPreview(demandRecords, supplyRecords);
+        }
+      } else {
+        // Keyword-based analysis (fallback — should not happen with AI gate)
+        console.log('[Flow] Using keyword analysis (no AI configured)');
+        dataPreview = analyzeDataForPreview(demandRecords, supplyRecords);
+      }
+
       console.log('[Flow] Data preview:', dataPreview);
 
       setState(prev => ({
@@ -2181,16 +2232,16 @@ export default function Flow() {
           console.log('[COMPOSE] AI Config:', {
             provider: settings.aiConfig.provider,
             hasApiKey: !!settings.aiConfig.apiKey,
-            azureEndpoint: settings.aiConfig.azureEndpoint || 'MISSING',
-            azureDeployment: settings.aiConfig.azureDeployment || 'MISSING',
+            endpoint: settings.aiConfig.endpoint || 'MISSING',
+            deployment: settings.aiConfig.deployment || 'MISSING',
           });
           // Build IntroAIConfig from settings
           const introAIConfig: IntroAIConfig = {
             provider: settings.aiConfig.provider as 'openai' | 'anthropic' | 'azure',
             apiKey: settings.aiConfig.apiKey,
             model: settings.aiConfig.model,
-            azureEndpoint: settings.aiConfig.azureEndpoint,
-            azureDeployment: settings.aiConfig.azureDeployment,
+            azureEndpoint: settings.aiConfig.endpoint,
+            azureDeployment: settings.aiConfig.deployment,
             // LAYER 3: Pass OpenAI fallback key for Azure content filter resilience
             openaiApiKeyFallback: settings.openaiApiKeyFallback,
           };
@@ -2811,7 +2862,7 @@ export default function Flow() {
                 );
               })()}
 
-              {/* PRE-FLIGHT GATE: Check enrichment capability BEFORE matching */}
+              {/* PRE-FLIGHT GATE: Check requirements BEFORE matching */}
               {(() => {
                 const hasDataset = !!(settings?.demandDatasetId || getCsvData('demand'));
                 const hasEnrichmentKeys = !!(
@@ -2819,10 +2870,36 @@ export default function Flow() {
                   settings?.anymailApiKey ||
                   settings?.connectorAgentApiKey
                 );
-                const canStartMatching = hasDataset && hasEnrichmentKeys;
+                const hasAIKey = !!(settings?.aiConfig?.apiKey);
+                const canStartMatching = hasDataset && hasEnrichmentKeys && hasAIKey;
 
                 return (
                   <>
+                    {/* Warning: No AI configured — Apple iOS style */}
+                    {hasDataset && hasEnrichmentKeys && !hasAIKey && (
+                      <div className="mb-6 max-w-sm mx-auto">
+                        <div className="p-5 rounded-2xl bg-white/[0.03] backdrop-blur-sm">
+                          <div className="text-center">
+                            <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-white/[0.06] flex items-center justify-center">
+                              <Sparkles className="w-5 h-5 text-white/40" />
+                            </div>
+                            <p className="text-[14px] font-medium text-white/90 mb-1">
+                              Add AI for matching
+                            </p>
+                            <p className="text-[13px] text-white/50 mb-4">
+                              Matching requires AI to understand signals and find the right fits.
+                            </p>
+                            <button
+                              onClick={() => navigate('/settings')}
+                              className="w-full py-2.5 text-[13px] font-medium rounded-xl bg-white/[0.08] hover:bg-white/[0.12] text-white/80 hover:text-white transition-all duration-200"
+                            >
+                              Open Settings
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Warning: No enrichment providers — Apple iOS style */}
                     {hasDataset && !hasEnrichmentKeys && (
                       <div className="mb-6 max-w-sm mx-auto">
@@ -2848,7 +2925,7 @@ export default function Flow() {
                       </div>
                     )}
 
-                    {/* Begin Matching button - only show if can proceed OR has dataset but no keys */}
+                    {/* Begin Matching button - only show if can proceed OR has dataset but missing keys */}
                     {(canStartMatching || !hasDataset) && (
                       <button
                         onClick={startFlow}
