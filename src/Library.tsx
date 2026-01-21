@@ -159,10 +159,10 @@ const sections: DocSection[] = [
         {/* Winners grid */}
         <div className="grid grid-cols-2 gap-4">
           {[
-            { name: 'Aarón N.', amount: '€43,000', image: '/winners/aaron.png', note: '19 years old', linkedin: 'https://www.linkedin.com/in/aar%C3%B3n-nogueira-bb72692b0' },
-            { name: 'John C.', amount: '$13,974', image: '/winners/john.png', note: 'and more...', linkedin: 'https://www.linkedin.com/in/john-caesar/' },
-            { name: 'Max O.', amount: '$11,331', image: '/winners/max.png', note: 'and more...', linkedin: 'https://www.linkedin.com/in/max-ochocinski/' },
-            { name: 'Joshua D.', amount: '$6,000', image: '/winners/joshua.png', note: 'and more...', linkedin: 'https://www.linkedin.com/in/josh-debayo/' },
+            { name: 'Aarón N.', amount: '€43,000', image: '/winners/aaron.jfif', note: '19 years old', linkedin: 'https://www.linkedin.com/in/aar%C3%B3n-nogueira-bb72692b0' },
+            { name: 'John C.', amount: '$13,974', image: '/winners/john.jpg', note: 'and more...', linkedin: 'https://www.linkedin.com/in/john-caesar/' },
+            { name: 'Max O.', amount: '$11,331', image: '/winners/max.jfif', note: 'and more...', linkedin: 'https://www.linkedin.com/in/max-ochocinski/' },
+            { name: 'Joshua D.', amount: '$6,000', image: '/winners/joshua.jpg', note: 'and more...', linkedin: 'https://www.linkedin.com/in/josh-debayo/' },
           ].map((winner, i) => (
             <div key={i} className="group p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20 hover:border-emerald-500/30 transition-all hover:scale-[1.02]">
               <div className="flex items-center gap-4">

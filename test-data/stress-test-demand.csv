@@ -1,0 +1,11 @@
+Full Name,Company Name,Domain,Title,Signal,Email,LinkedIn URL
+John Smith,Acme Corp,acme.com,CEO,Hiring: eCommerce Director,john@acme.com,https://linkedin.com/in/johnsmith
+John Smith,Acme Corp,acme.com,CTO,Hiring: Senior Engineer,,https://linkedin.com/in/johnsmith2
+Jane Doe,Beta Industries,beta.io,VP Sales,Raised Series B - $50M,jane@beta.io,
+Jane Doe,Beta Industries,beta.io,VP Marketing,Expanding to Europe,,
+Michael Chen,Gamma Tech,,Director,Hiring: ML Engineers,michael@gamma.com,
+Michael Chen,Gamma Tech,,Manager,Hiring: Data Scientists,,
+Sarah Wilson,Delta Labs,delta.com,Founder,Acquired competitor ThetaCo,sarah@delta.com,https://linkedin.com/in/sarahw
+Sarah Wilson,Delta Labs,delta.com,Co-Founder,Launched new product line,,
+Alex Johnson,Epsilon Inc,epsilon.io,Head of Engineering,Hiring: 10 backend engineers,alex@epsilon.io,
+Alex Johnson,Epsilon Inc,epsilon.io,Engineering Lead,Hiring: DevOps team,,https://linkedin.com/in/alexj

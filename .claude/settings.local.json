@@ -54,7 +54,12 @@
       "WebFetch(domain:www.apple.com)",
       "Bash(git status:*)",
       "Bash(git grep:*)",
-      "Bash(npm ci:*)"
+      "Bash(npm ci:*)",
+      "Bash(npx vite build)",
+      "Bash(powershell -Command \"New-Item -ItemType Directory -Force -Path ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners''\")",
+      "Bash(powershell -Command \"Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\aaron.jfif'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\aaron.jfif''; Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\john.jpg'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\john.jpg''; Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\joshua.jpg'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\joshua.jpg''; Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\max.jfif'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\max.jfif''\")",
+      "Bash(powershell -Command \"Get-ChildItem ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners''\")",
+      "Bash(powershell:*)"
     ]
   }
 }
