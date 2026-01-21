@@ -627,7 +627,11 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   // PRIORITY: Explicit Signal column (CSV with "Signal" header) > schema-mapped field
   // This handles cases where user's CSV has separate "Signal" column with hiring intent
   // e.g., CSV: Title="CEO", Signal="Hiring: eCommerce Director" → use Signal, not Title
-  const explicitSignal = record.Signal || record.signal || record['Hiring Signal'] || record.hiring_signal || '';
+  // Check both record-level and record.raw (CSV data may be nested in raw from extractJobLikeFields)
+  const raw = record.raw || {};
+  const explicitSignal =
+    record.Signal || record.signal || record['Hiring Signal'] || record.hiring_signal ||
+    raw.Signal || raw.signal || raw['Hiring Signal'] || raw.hiring_signal || '';
   const rawSignal = explicitSignal || getNestedValue(record, fields.signal) || '';
 
   if (isCrunchbasePeople) {
