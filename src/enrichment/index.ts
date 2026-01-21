@@ -49,8 +49,8 @@ import {
 } from './router';
 
 // Record key for stable storage/retrieval (supports domainless records)
-import { recordKey, domainFromKey } from './recordKey';
-export { recordKey } from './recordKey';
+import { recordKey, domainFromKey, simpleHash } from './recordKey';
+export { recordKey, simpleHash } from './recordKey';
 
 // =============================================================================
 // CONSTANTS

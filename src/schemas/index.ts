@@ -6,6 +6,8 @@
  * "If schemas aren't locked, everything above lies."
  */
 
+import { simpleHash } from '../enrichment/recordKey';
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -597,26 +599,61 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   const finalCompany = isCrunchbasePeople ? crunchbasePeopleCompany : b2bCompany;
   const finalFullName = isCrunchbasePeople ? crunchbasePeopleFullName : b2bFullName;
 
+  // ===========================================================================
+  // RECORD KEY — INVARIANT B: No collisions across distinct records
+  // Each key MUST be unique. Fallbacks use stable hash of distinguishing fields.
+  // ===========================================================================
   let recordKey: string;
   if (isCrunchbasePeople) {
     // Crunchbase People: use identifier.value or uuid
     const cbId = record.identifier?.value || record.uuid || record.id;
-    recordKey = cbId ? `cb_person:${cbId}` : `cb_person:${finalFullName}:${finalCompany}`.toLowerCase().replace(/\s+/g, '_');
+    if (cbId) {
+      recordKey = `cb_person:${cbId}`;
+    } else {
+      // INVARIANT B: Hash includes title for disambiguation (same person, different role)
+      const disambiguator = simpleHash(JSON.stringify({ n: finalFullName, c: finalCompany, t: b2bTitle }));
+      recordKey = `cb_person:${finalFullName}:${finalCompany}:${disambiguator}`.toLowerCase().replace(/\s+/g, '_');
+    }
   } else if (isCrunchbase) {
     // Crunchbase Orgs: use identifier.value or domain
     const cbId = record.identifier?.value || record.uuid || domain;
-    recordKey = cbId ? `cb_org:${cbId}` : `cb_org:${finalCompany}`.toLowerCase().replace(/\s+/g, '_');
+    if (cbId) {
+      recordKey = `cb_org:${cbId}`;
+    } else {
+      // INVARIANT B: Hash includes industry for disambiguation
+      const disambiguator = simpleHash(JSON.stringify({ c: finalCompany, i: record.industries || '' }));
+      recordKey = `cb_org:${finalCompany}:${disambiguator}`.toLowerCase().replace(/\s+/g, '_');
+    }
   } else if (isWellfound) {
     // Wellfound: use job ID or slug
     const jobId = record.id || record.slug || record.job_id;
-    recordKey = jobId ? `job:wellfound:${jobId}` : `job:wellfound:${finalCompany}:${b2bTitle}`.toLowerCase().replace(/\s+/g, '_');
+    if (jobId) {
+      recordKey = `job:wellfound:${jobId}`;
+    } else {
+      // INVARIANT B: Hash includes ALL distinguishing fields to prevent collision
+      // Two jobs at same company with same title must have different keys
+      const location = record.location || record.locations?.[0] || '';
+      const description = (record.description || record.job_description || '').slice(0, 100);
+      const disambiguator = simpleHash(JSON.stringify({ c: finalCompany, t: b2bTitle, l: location, d: description }));
+      recordKey = `job:wellfound:${finalCompany}:${b2bTitle}:${disambiguator}`.toLowerCase().replace(/\s+/g, '_');
+    }
   } else if (isLeadsFinder) {
-    // B2B Contacts: use email or apollo_id
+    // B2B Contacts: use email or apollo_id (email is best unique ID)
     const contactId = b2bEmail || record.apollo_id || record.id;
-    recordKey = contactId ? `contact:${contactId}` : `contact:${finalFullName}:${finalCompany}`.toLowerCase().replace(/\s+/g, '_');
+    if (contactId) {
+      recordKey = `contact:${contactId}`;
+    } else {
+      // INVARIANT B: Hash includes title + linkedin for disambiguation
+      // Two contacts at same company with same name but different roles must differ
+      const linkedin = b2bLinkedin || '';
+      const disambiguator = simpleHash(JSON.stringify({ n: finalFullName, c: finalCompany, t: b2bTitle, l: linkedin }));
+      recordKey = `contact:${finalFullName}:${finalCompany}:${disambiguator}`.toLowerCase().replace(/\s+/g, '_');
+    }
   } else {
-    // Fallback: hash of available fields
-    recordKey = `record:${domain || finalCompany || finalFullName || 'unknown'}:${Date.now()}`.toLowerCase().replace(/\s+/g, '_');
+    // Fallback: hash of ALL available fields (guarantees uniqueness)
+    const allFields = JSON.stringify({ d: domain, c: finalCompany, n: finalFullName, t: b2bTitle, e: b2bEmail });
+    const disambiguator = simpleHash(allFields);
+    recordKey = `record:${domain || finalCompany || finalFullName || 'unknown'}:${disambiguator}`.toLowerCase().replace(/\s+/g, '_');
   }
 
   // ==========================================================================

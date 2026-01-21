@@ -28,6 +28,7 @@ import {
   getOutcomeExplanation,
   getActionExplanation,
   recordKey,
+  simpleHash,
 } from './enrichment';
 import { generateDemandIntro, generateSupplyIntro } from './templates';
 
@@ -997,6 +998,11 @@ interface FlowState {
   // Audit (observability)
   auditData: RunAuditData | null;
   copyValidationFailures: CopyValidationResult[];
+
+  // INVARIANT C: No data loss on resume
+  // If results exceed storage limits, preserve summaries
+  resultsDropped: boolean;
+  droppedCounts: { demand: number; supply: number; intros: number } | null;
 }
 
 interface Settings {
@@ -1046,6 +1052,8 @@ export default function Flow() {
     error: null,
     flowBlock: null,
     auditData: null,
+    resultsDropped: false,
+    droppedCounts: null,
     copyValidationFailures: [],
   });
 
@@ -2188,6 +2196,32 @@ export default function Flow() {
           };
 
           console.log(`[COMPOSE] AI generating: ${match.demand.company} → ${match.supply.company}`);
+
+          // ==========================================================================
+          // FORENSIC LOGGING — INVARIANT F: Per-match observability
+          // Logs must allow forensic reconstruction of any failure
+          // ==========================================================================
+          const demandKey = recordKey(match.demand);
+          const supplyKeyForLog = recordKey(match.supply);
+          const promptFingerprint = simpleHash(JSON.stringify({
+            dc: demandRecord.company,
+            di: demandRecord.industry,
+            ds: demandRecord.signals,
+            ee: edge.evidence,
+            sc: supplyRecord.company,
+            sk: supplyRecord.capability,
+          }));
+
+          console.log('[FORENSIC] Match fingerprint:', {
+            demandRecordKey: demandKey,
+            demandCompany: demandRecord.company,
+            demandSignalMeta: match.demand.signalMeta,
+            edgeEvidence: edge.evidence,
+            supplyRecordKey: supplyKeyForLog,
+            supplyCompany: supplyRecord.company,
+            promptFingerprint,
+          });
+
           // STRIPE-DEBUG: Log exact data being fed to AI (proves invariants)
           console.log('[COMPOSE] demandRecord:', {
             company: demandRecord.company,
@@ -2213,6 +2247,30 @@ export default function Flow() {
           composed++;
         } else {
           // Fallback to deterministic Composer (no AI configured)
+          // ==========================================================================
+          // FORENSIC LOGGING — INVARIANT F: Per-match observability (template path)
+          // ==========================================================================
+          const demandKeyTemplate = recordKey(match.demand);
+          const supplyKeyTemplate = recordKey(match.supply);
+          const promptFingerprintTemplate = simpleHash(JSON.stringify({
+            dc: demandRecord.company,
+            di: demandRecord.industry,
+            ds: demandRecord.signals,
+            ee: edge.evidence,
+            sc: supplyRecord.company,
+            sk: supplyRecord.capability,
+          }));
+
+          console.log('[FORENSIC] Match fingerprint (template):', {
+            demandRecordKey: demandKeyTemplate,
+            demandCompany: demandRecord.company,
+            demandSignalMeta: match.demand.signalMeta,
+            edgeEvidence: edge.evidence,
+            supplyRecordKey: supplyKeyTemplate,
+            supplyCompany: supplyRecord.company,
+            promptFingerprint: promptFingerprintTemplate,
+          });
+
           const counterparty: Counterparty = {
             company: supplyRecord.company,
             contact: supplyRecord.contact,
@@ -2249,10 +2307,25 @@ export default function Flow() {
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
 
+    // INVARIANT C: No data loss on resume
+    // If some intros were dropped (errors, rate limits), preserve the counts
+    const resultsDropped = dropped > 0;
+    const droppedCounts = resultsDropped ? {
+      demand: demandIntros.size,
+      supply: supplyIntros.size,
+      intros: dropped,
+    } : null;
+
+    if (resultsDropped) {
+      console.log(`[COMPOSE] INVARIANT C: ${dropped} intros dropped — preserving summary for resume`);
+    }
+
     setState(prev => ({
       ...prev,
       demandIntros,
       supplyIntros,
+      resultsDropped,
+      droppedCounts,
     }));
   };
 
@@ -4085,6 +4158,24 @@ export default function Flow() {
                       <p className="text-[12px] text-white/40 mt-0.5">intros ready</p>
                     </motion.div>
 
+                    {/* INVARIANT C: Results Dropped Warning */}
+                    {state.resultsDropped && state.droppedCounts && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.1 }}
+                        className="max-w-md mx-auto mb-4 p-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/20"
+                      >
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-amber-400" />
+                          <p className="text-[11px] text-amber-300/90">
+                            {state.droppedCounts.intros} intro{state.droppedCounts.intros !== 1 ? 's' : ''} couldn't be generated.
+                            You can continue with {state.droppedCounts.demand + state.droppedCounts.supply} ready.
+                          </p>
+                        </div>
+                      </motion.div>
+                    )}
+
                     {/* CSV QUALITY WARNING — Phase 3 (additive, CSV-only) */}
                     {(() => {
                       const demandRecords = demandMatches.map(m => m.demand);
@@ -4137,7 +4228,13 @@ export default function Flow() {
                                 <p className="text-[10px] text-blue-400/70 font-medium">→ {match.demand.company}</p>
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
-                                <p className="text-[11px] text-white/60 leading-[1.55]">{state.demandIntros.get(recordKey(match.demand)) || '...'}</p>
+                                {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
+                                <p className="text-[11px] text-white/60 leading-[1.55]">
+                                  {state.demandIntros.get(recordKey(match.demand)) ||
+                                    (state.step === 'generating' ? 'Generating intro...' :
+                                      state.step === 'ready' ? 'Intro pending — click Generate' :
+                                        'Awaiting intro generation')}
+                                </p>
                               </div>
                             </div>
                           </motion.div>
@@ -4173,7 +4270,13 @@ export default function Flow() {
                                 <p className="text-[10px] text-violet-400/70 font-medium">→ {match.supply.company}</p>
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
-                                <p className="text-[11px] text-white/60 leading-[1.55]">{state.supplyIntros.get(recordKey(match.supply)) || '...'}</p>
+                                {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
+                                <p className="text-[11px] text-white/60 leading-[1.55]">
+                                  {state.supplyIntros.get(recordKey(match.supply)) ||
+                                    (state.step === 'generating' ? 'Generating intro...' :
+                                      state.step === 'ready' ? 'Intro pending — click Generate' :
+                                        'Awaiting intro generation')}
+                                </p>
                               </div>
                             </div>
                           </motion.div>
