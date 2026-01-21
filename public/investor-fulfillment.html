@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connector OS — Fulfillment Mode</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #000;
+      color: #fff;
+      min-height: 100vh;
+      overflow-x: hidden;
+      letter-spacing: -0.02em;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 80px 40px;
+    }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      margin-bottom: 120px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 8px 16px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 32px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease forwards;
+    }
+
+    h1 {
+      font-size: 64px;
+      font-weight: 600;
+      line-height: 1.1;
+      margin-bottom: 24px;
+      background: linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.1s forwards;
+    }
+
+    .subtitle {
+      font-size: 20px;
+      color: rgba(255,255,255,0.5);
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.6;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.2s forwards;
+    }
+
+    /* Flow Visualization */
+    .flow-section {
+      margin-bottom: 120px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      color: rgba(255,255,255,0.3);
+      text-transform: uppercase;
+      margin-bottom: 32px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.3s forwards;
+    }
+
+    .flow-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      flex-wrap: wrap;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.4s forwards;
+    }
+
+    .flow-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .flow-box {
+      width: 160px;
+      height: 160px;
+      border-radius: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .flow-box:hover {
+      transform: translateY(-4px);
+    }
+
+    .flow-box.supply {
+      background: linear-gradient(135deg, rgba(139,92,246,0.15) 0%, rgba(139,92,246,0.05) 100%);
+      border: 1px solid rgba(139,92,246,0.3);
+    }
+
+    .flow-box.demand {
+      background: linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.05) 100%);
+      border: 1px solid rgba(59,130,246,0.3);
+    }
+
+    .flow-box.match {
+      background: linear-gradient(135deg, rgba(16,185,129,0.15) 0%, rgba(16,185,129,0.05) 100%);
+      border: 1px solid rgba(16,185,129,0.3);
+    }
+
+    .flow-box.send {
+      background: linear-gradient(135deg, rgba(245,158,11,0.15) 0%, rgba(245,158,11,0.05) 100%);
+      border: 1px solid rgba(245,158,11,0.3);
+    }
+
+    .flow-icon {
+      font-size: 32px;
+    }
+
+    .flow-number {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.5);
+    }
+
+    .flow-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .flow-desc {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      text-align: center;
+    }
+
+    .flow-arrow {
+      font-size: 24px;
+      color: rgba(255,255,255,0.2);
+    }
+
+    /* Scenario Cards */
+    .scenarios {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-bottom: 120px;
+    }
+
+    .scenario-card {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px;
+      padding: 32px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease forwards;
+    }
+
+    .scenario-card:nth-child(1) { animation-delay: 0.5s; }
+    .scenario-card:nth-child(2) { animation-delay: 0.6s; }
+
+    .scenario-card:hover {
+      background: rgba(255,255,255,0.03);
+      border-color: rgba(255,255,255,0.1);
+    }
+
+    .scenario-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+
+    .scenario-card:nth-child(1) .scenario-icon {
+      background: rgba(139,92,246,0.15);
+    }
+
+    .scenario-card:nth-child(2) .scenario-icon {
+      background: rgba(59,130,246,0.15);
+    }
+
+    .scenario-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .scenario-desc {
+      font-size: 14px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .scenario-flow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+    }
+
+    .scenario-flow span {
+      padding: 6px 12px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 6px;
+    }
+
+    .scenario-flow .arrow {
+      background: none;
+      padding: 0;
+    }
+
+    /* Math Section */
+    .math-section {
+      text-align: center;
+      margin-bottom: 120px;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.7s forwards;
+    }
+
+    .math-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 32px;
+    }
+
+    .math-equation {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .math-box {
+      padding: 24px 40px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+    }
+
+    .math-value {
+      font-size: 48px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .math-label {
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+      margin-top: 8px;
+    }
+
+    .math-operator {
+      font-size: 32px;
+      color: rgba(255,255,255,0.2);
+    }
+
+    .math-result .math-value {
+      background: linear-gradient(135deg, #10b981 0%, #3dd68c 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* Live Demo */
+    .demo-section {
+      background: linear-gradient(135deg, rgba(139,92,246,0.05) 0%, rgba(59,130,246,0.05) 100%);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 24px;
+      padding: 48px;
+      text-align: center;
+      opacity: 0;
+      animation: fadeUp 0.6s ease 0.8s forwards;
+    }
+
+    .demo-title {
+      font-size: 24px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .demo-desc {
+      font-size: 14px;
+      color: rgba(255,255,255,0.5);
+      margin-bottom: 32px;
+    }
+
+    .demo-steps {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      margin-bottom: 32px;
+    }
+
+    .demo-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .demo-step-num {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .demo-step-text {
+      font-size: 13px;
+      color: rgba(255,255,255,0.6);
+    }
+
+    .demo-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 28px;
+      background: #fff;
+      color: #000;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .demo-cta:hover {
+      transform: scale(1.02);
+      box-shadow: 0 8px 32px rgba(255,255,255,0.2);
+    }
+
+    /* Animations */
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      h1 { font-size: 40px; }
+      .scenarios { grid-template-columns: 1fr; }
+      .math-equation { flex-direction: column; }
+      .flow-container { flex-direction: column; }
+      .flow-arrow { transform: rotate(90deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Hero -->
+    <div class="hero">
+      <div class="badge">Connector OS — Fulfillment Mode</div>
+      <h1>Close one partner.<br>Activate with hundreds.</h1>
+      <p class="subtitle">Upload a single supply partner, match them to hundreds of demand signals, and generate personalized intros at scale.</p>
+    </div>
+
+    <!-- Flow Visualization -->
+    <div class="flow-section">
+      <div class="section-label">The Flow</div>
+      <div class="flow-container">
+        <div class="flow-step">
+          <div class="flow-box supply">
+            <div class="flow-number">1</div>
+            <div class="flow-icon">📄</div>
+            <div class="flow-title">1 Supply</div>
+          </div>
+          <div class="flow-desc">Your new partner<br>(1 row CSV)</div>
+        </div>
+
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-box demand">
+            <div class="flow-number">2</div>
+            <div class="flow-icon">📊</div>
+            <div class="flow-title">N Demand</div>
+          </div>
+          <div class="flow-desc">Companies with signals<br>(Apify or CSV)</div>
+        </div>
+
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-box match">
+            <div class="flow-number">3</div>
+            <div class="flow-icon">🔗</div>
+            <div class="flow-title">Match</div>
+          </div>
+          <div class="flow-desc">All demand matched<br>to your 1 partner</div>
+        </div>
+
+        <div class="flow-arrow">→</div>
+
+        <div class="flow-step">
+          <div class="flow-box send">
+            <div class="flow-number">4</div>
+            <div class="flow-icon">✉️</div>
+            <div class="flow-title">Send</div>
+          </div>
+          <div class="flow-desc">N personalized intros<br>pitching your partner</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scenarios -->
+    <div class="section-label" style="opacity:0; animation: fadeUp 0.6s ease 0.45s forwards;">Two Directions</div>
+    <div class="scenarios">
+      <div class="scenario-card">
+        <div class="scenario-icon">🏢</div>
+        <div class="scenario-title">Supply → Demand</div>
+        <div class="scenario-desc">You signed a recruiting agency. Now find them clients. Upload the agency as supply, load companies with hiring signals, generate intros pitching the agency to every matching company.</div>
+        <div class="scenario-flow">
+          <span>1 Agency</span>
+          <span class="arrow">→</span>
+          <span>500 Companies</span>
+          <span class="arrow">=</span>
+          <span>500 Intros</span>
+        </div>
+      </div>
+
+      <div class="scenario-card">
+        <div class="scenario-icon">🎯</div>
+        <div class="scenario-title">Demand → Supply</div>
+        <div class="scenario-desc">You landed a client who needs help. Now find them providers. Upload the client as demand, load a supply dataset, generate intros to providers who can fulfill the need.</div>
+        <div class="scenario-flow">
+          <span>1 Client</span>
+          <span class="arrow">→</span>
+          <span>200 Providers</span>
+          <span class="arrow">=</span>
+          <span>200 Intros</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Math -->
+    <div class="math-section">
+      <div class="math-title">The Activation Math</div>
+      <div class="math-equation">
+        <div class="math-box">
+          <div class="math-value">1</div>
+          <div class="math-label">Partner Closed</div>
+        </div>
+        <div class="math-operator">×</div>
+        <div class="math-box">
+          <div class="math-value">500</div>
+          <div class="math-label">Signals Loaded</div>
+        </div>
+        <div class="math-operator">=</div>
+        <div class="math-box math-result">
+          <div class="math-value">500</div>
+          <div class="math-label">Intros Generated</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Demo CTA -->
+    <div class="demo-section">
+      <div class="demo-title">See it live</div>
+      <div class="demo-desc">Watch a 1-row CSV turn into hundreds of personalized intros in under 60 seconds.</div>
+      <div class="demo-steps">
+        <div class="demo-step">
+          <div class="demo-step-num">1</div>
+          <div class="demo-step-text">Upload 1 partner</div>
+        </div>
+        <div class="demo-step">
+          <div class="demo-step-num">2</div>
+          <div class="demo-step-text">Load demand signals</div>
+        </div>
+        <div class="demo-step">
+          <div class="demo-step-num">3</div>
+          <div class="demo-step-text">Generate intros</div>
+        </div>
+      </div>
+      <button class="demo-cta" onclick="window.location.href='https://app.connector-os.com/flow'">
+        Open Connector OS →
+      </button>
+    </div>
+  </div>
+</body>
+</html>

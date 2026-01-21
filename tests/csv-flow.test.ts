@@ -159,6 +159,43 @@ Jane Smith,Acme SaaS,not-a-domain,VP of Sales,,,`;
     expect(rows).toHaveLength(0);
     expect(result.stats.totalRows).toBe(0);
   });
+
+  it('returns human-readable error messages with suggestions and examples', () => {
+    // Missing Domain column
+    const badCsv = `Full Name,Company Name,Title
+Jane Smith,Acme SaaS,VP of Sales`;
+
+    const { result } = validateCsv(badCsv, 'demand');
+
+    expect(result.errors.length).toBeGreaterThan(0);
+
+    const domainError = result.errors.find(e => e.field === 'Domain');
+    expect(domainError).toBeDefined();
+
+    // Verify human-readable fields exist
+    expect(domainError?.humanMessage).toBeDefined();
+    expect(domainError?.humanMessage).toContain('column');
+    expect(domainError?.suggestion).toBeDefined();
+    expect(domainError?.suggestion).toContain('Domain');
+  });
+
+  it('returns human-readable messages for empty required fields', () => {
+    const csvWithEmptyField = `Full Name,Company Name,Domain,Title
+Jane Smith,Acme SaaS,,VP of Sales`;
+
+    const { result } = validateCsv(csvWithEmptyField, 'demand');
+
+    expect(result.errors.length).toBeGreaterThan(0);
+
+    const domainError = result.errors.find(e => e.field === 'Domain');
+    expect(domainError).toBeDefined();
+
+    // Verify human-readable message mentions the row
+    expect(domainError?.humanMessage).toMatch(/Row \d+/);
+    expect(domainError?.humanMessage).toContain('website');
+    expect(domainError?.suggestion).toContain('acme.com');
+    expect(domainError?.example).toBe('stripe.com');
+  });
 });
 
 // =============================================================================

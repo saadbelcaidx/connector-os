@@ -26,3 +26,10 @@ dist-ssr
 
 # ConceptNet cache (large download, don't commit)
 .cache
+
+# Large data files
+data/esco/
+data/onet/
+public/semantic/bizgraph-*.json
+docs/CONNECTOR_COURSE_DRAFT.md
+nul

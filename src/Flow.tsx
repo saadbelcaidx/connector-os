@@ -1015,6 +1015,8 @@ interface Settings {
   supplyCampaignId?: string;
   // AI
   aiConfig: AIConfig | null;
+  // LAYER 3: OpenAI key as fallback when Azure content filter blocks
+  openaiApiKeyFallback?: string;
   // Signals toggle — fetch company signals for B2B Contacts (default false)
   fetchSignals?: boolean;
 }
@@ -1168,6 +1170,11 @@ export default function Flow() {
             ? data?.plusvibe_campaign_supply || ''
             : data?.instantly_campaign_supply || '';
 
+          // LAYER 3: If using Azure, store OpenAI key as fallback (if available)
+          const openaiApiKeyFallback = aiConfig?.provider === 'azure' && ai.openaiApiKey
+            ? ai.openaiApiKey
+            : undefined;
+
           setSettings({
             apifyToken: data?.apify_token || '',
             demandDatasetId: data?.demand_dataset_id || '',
@@ -1182,10 +1189,11 @@ export default function Flow() {
             demandCampaignId,
             supplyCampaignId,
             aiConfig,
+            openaiApiKeyFallback,
             fetchSignals: data?.fetch_signals === true, // default false
           });
 
-          console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none');
+          console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
           return;
         }
 
@@ -1216,6 +1224,11 @@ export default function Flow() {
           ? s.plusvibeCampaignSupply
           : s.instantlyCampaignSupply;
 
+        // LAYER 3: If using Azure, store OpenAI key as fallback (if available)
+        const openaiApiKeyFallback = aiConfig?.provider === 'azure' && s.openaiApiKey
+          ? s.openaiApiKey
+          : undefined;
+
         setSettings({
           apifyToken: s.apifyToken,
           demandDatasetId: s.demandDatasetId,
@@ -1230,10 +1243,11 @@ export default function Flow() {
           demandCampaignId,
           supplyCampaignId,
           aiConfig,
+          openaiApiKeyFallback,
           fetchSignals: s.fetchSignals === true, // default false
         });
 
-        console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none');
+        console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
       } catch (e) {
         console.error('[Flow] Settings load error:', e);
         setSettings({ aiConfig: null });
@@ -2027,10 +2041,15 @@ export default function Flow() {
       const demandKey = recordKey(match.demand);
       const supplyKey = recordKey(match.supply);
 
-      // GATE 1: Check for detected edge (from preflight)
+      // GATE 1: Check for detected edge WITH evidence (fail loud on empty)
       const edge = state.detectedEdges.get(demandKey);
       if (!edge) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - no edge detected`);
+        console.error(`[COMPOSE] BLOCKED: ${match.demand.company} — no edge detected`);
+        dropped++;
+        continue;
+      }
+      if (!edge.evidence || edge.evidence.trim() === '') {
+        console.error(`[COMPOSE] BLOCKED: ${match.demand.company} — edge exists but evidence is empty (type: ${edge.type})`);
         dropped++;
         continue;
       }
@@ -2055,14 +2074,21 @@ export default function Flow() {
 
       // Build DemandRecord with FULL metadata (user.txt contract: feed ALL data)
       const demandRaw = match.demand.raw || {};
+
+      // STRIPE-FIX: Use schema-aware needProfile.category for industry
+      const demandIndustryRaw = Array.isArray(match.demand.industry)
+        ? match.demand.industry[0]
+        : match.demand.industry;
+      const demandIndustry = match.needProfile?.category || demandIndustryRaw || 'tech';
+
       const demandRecord: DemandRecord = {
         domain: match.demand.domain,
         company: match.demand.company,
         contact: demandEnriched?.firstName || match.demand.firstName || '',
         email: demandEmail,
         title: demandEnriched?.title || match.demand.title || '',
-        industry: Array.isArray(match.demand.industry) ? match.demand.industry[0] || '' : (match.demand.industry || ''),
-        signals: [],
+        industry: demandIndustry,
+        signals: [edge.evidence],  // STRIPE-FIX: Pass actual signal (guaranteed non-empty by gate)
         metadata: {
           // Funding data (Crunchbase)
           fundingDate: demandRaw.last_funding_at || null,
@@ -2081,13 +2107,40 @@ export default function Flow() {
 
       // Build SupplyRecord with capability data
       const supplyRaw = match.supply.raw || {};
+
+      // STRIPE-FIX: Build capability from capabilityProfile with proper fallback chain
+      // Invariant: capability is NEVER empty (chain ends with literal)
+      const capabilityFromProfile = match.capabilityProfile?.category;
+      const capabilityLabel =
+        capabilityFromProfile === 'biotech_contact' ? 'biotech BD partnerships' :
+        capabilityFromProfile === 'healthcare_contact' ? 'healthcare partnerships' :
+        capabilityFromProfile === 'tech_contact' ? 'technology partnerships' :
+        capabilityFromProfile === 'finance_contact' ? 'financial services' :
+        capabilityFromProfile === 'recruiting' ? 'talent placement' :
+        capabilityFromProfile === 'bd_professional' ? 'business development' :
+        capabilityFromProfile === 'executive' ? 'executive network' :
+        capabilityFromProfile === 'consulting' ? 'strategic consulting' :
+        capabilityFromProfile === 'fractional' ? 'fractional leadership' :
+        capabilityFromProfile === 'marketing' ? 'growth marketing' :
+        capabilityFromProfile === 'engineering' ? 'software development' :
+        null;
+
+      const supplyCapability =
+        supplyRaw.capability ||
+        supplyRaw.services ||
+        capabilityLabel ||
+        match.supply.headline ||
+        match.supply.signal ||
+        match.supply.companyDescription?.slice(0, 100) ||
+        'business services';  // Ultimate fallback — NEVER empty
+
       const supplyRecord: SupplyRecord = {
         domain: match.supply.domain,
         company: match.supply.company,
         contact: supplyEnriched?.firstName || match.supply.firstName || '',
         email: supplyEmail,
         title: supplyEnriched?.title || match.supply.title || '',
-        capability: supplyRaw.capability || supplyRaw.services || match.supply.headline || match.supply.signal || '',
+        capability: supplyCapability,
         targetProfile: supplyRaw.targetProfile || (Array.isArray(match.supply.industry) ? (match.supply.industry as string[])[0] : match.supply.industry) || '',
         metadata: {},
       };
@@ -2116,9 +2169,27 @@ export default function Flow() {
             model: settings.aiConfig.model,
             azureEndpoint: settings.aiConfig.azureEndpoint,
             azureDeployment: settings.aiConfig.azureDeployment,
+            // LAYER 3: Pass OpenAI fallback key for Azure content filter resilience
+            openaiApiKeyFallback: settings.openaiApiKeyFallback,
           };
 
           console.log(`[COMPOSE] AI generating: ${match.demand.company} → ${match.supply.company}`);
+          // STRIPE-DEBUG: Log exact data being fed to AI (proves invariants)
+          console.log('[COMPOSE] demandRecord:', {
+            company: demandRecord.company,
+            industry: demandRecord.industry,
+            signals: demandRecord.signals,
+            funding: demandRecord.funding,
+          });
+          console.log('[COMPOSE] supplyRecord:', {
+            company: supplyRecord.company,
+            capability: supplyRecord.capability,
+            targetProfile: supplyRecord.targetProfile,
+          });
+          console.log('[COMPOSE] edge:', {
+            type: edge.type,
+            evidence: edge.evidence,
+          });
           const aiResult = await generateIntrosAI(introAIConfig, demandRecord, supplyRecord, edge);
 
           demandIntros.set(recordKey(match.demand), aiResult.demandIntro);

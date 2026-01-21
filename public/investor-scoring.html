@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connector OS — Match Intelligence</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #09090b;
+      color: #fff;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      padding: 60px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .header {
+      margin-bottom: 48px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.15));
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.8);
+      margin-bottom: 16px;
+      letter-spacing: 0.02em;
+    }
+
+    .badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      background: #8b5cf6;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.5);
+      font-weight: 400;
+    }
+
+    .card {
+      background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: rgba(255, 255, 255, 0.4);
+      margin-bottom: 24px;
+    }
+
+    .score-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .score-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(255, 255, 255, 0.35);
+      padding: 0 0 16px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .score-table th:last-child {
+      text-align: right;
+    }
+
+    .score-table td {
+      padding: 16px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 14px;
+    }
+
+    .score-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .score-table td:last-child {
+      text-align: right;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+    }
+
+    .component-name {
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .component-desc {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 2px;
+    }
+
+    .weight-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.6);
+    }
+
+    .max-score {
+      font-weight: 600;
+      color: #8b5cf6;
+    }
+
+    .total-row td {
+      padding-top: 20px;
+      border-top: 1px solid rgba(139, 92, 246, 0.3);
+    }
+
+    .total-label {
+      font-weight: 600;
+      font-size: 15px;
+      color: #fff;
+    }
+
+    .total-value {
+      font-weight: 700;
+      font-size: 20px;
+      color: #8b5cf6;
+    }
+
+    /* Performance Card */
+    .perf-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .perf-item {
+      text-align: center;
+      padding: 24px 16px;
+      background: rgba(255, 255, 255, 0.02);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .perf-value {
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 4px;
+    }
+
+    .perf-value.green { color: #10b981; }
+    .perf-value.purple { color: #8b5cf6; }
+    .perf-value.blue { color: #3b82f6; }
+
+    .perf-label {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.5);
+      font-weight: 500;
+    }
+
+    .perf-sublabel {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.3);
+      margin-top: 4px;
+    }
+
+    /* Funnel */
+    .funnel {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .funnel-step {
+      flex: 1;
+      text-align: center;
+      padding: 20px 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%);
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      position: relative;
+    }
+
+    .funnel-step::after {
+      content: '→';
+      position: absolute;
+      right: -18px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: rgba(255, 255, 255, 0.2);
+      font-size: 14px;
+    }
+
+    .funnel-step:last-child::after {
+      display: none;
+    }
+
+    .funnel-number {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 4px;
+    }
+
+    .funnel-number.dim { color: rgba(255, 255, 255, 0.9); }
+    .funnel-number.purple { color: #8b5cf6; }
+    .funnel-number.cyan { color: #06b6d4; }
+    .funnel-number.green { color: #10b981; }
+
+    .funnel-label {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+
+    .funnel-rate {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.25);
+      margin-top: 6px;
+    }
+
+    /* Bottom stat */
+    .bottom-stat {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 32px;
+      padding: 20px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.02) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+      border-radius: 12px;
+    }
+
+    .bottom-stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #10b981;
+      letter-spacing: -0.02em;
+    }
+
+    .bottom-stat-label {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .bottom-stat-sublabel {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    .footer {
+      margin-top: 40px;
+      text-align: center;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    .footer-logo {
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">Live Matching Engine</div>
+      <h1>Match Intelligence Scoring</h1>
+      <p class="subtitle">Multi-factor quality algorithm powering 765 active matches</p>
+    </div>
+
+    <!-- Scoring Breakdown -->
+    <div class="card">
+      <div class="card-title">Weighted Scoring Components</div>
+      <table class="score-table">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>Weight</th>
+            <th>Max Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <div class="component-name">Need → Capability Alignment</div>
+              <div class="component-desc">Core intelligence: demand need matched to supply capability</div>
+            </td>
+            <td><span class="weight-badge">50%</span></td>
+            <td class="max-score">25.0</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="component-name">Signal Relevance</div>
+              <div class="component-desc">Timing signal strength and recency</div>
+            </td>
+            <td><span class="weight-badge">15%</span></td>
+            <td class="max-score">6.0</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="component-name">Industry Match</div>
+              <div class="component-desc">Sector and vertical alignment</div>
+            </td>
+            <td><span class="weight-badge">15%</span></td>
+            <td class="max-score">4.5</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="component-name">Size Compatibility</div>
+              <div class="component-desc">Company scale and deal size fit</div>
+            </td>
+            <td><span class="weight-badge">10%</span></td>
+            <td class="max-score">2.0</td>
+          </tr>
+          <tr>
+            <td>
+              <div class="component-name">Base Score</div>
+              <div class="component-desc">Minimum routing threshold</div>
+            </td>
+            <td><span class="weight-badge">10%</span></td>
+            <td class="max-score">1.0</td>
+          </tr>
+          <tr class="total-row">
+            <td><span class="total-label">Maximum Achievable Score</span></td>
+            <td></td>
+            <td><span class="total-value">38.5</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Current Performance -->
+    <div class="card">
+      <div class="card-title">Current Batch Performance</div>
+      <div class="perf-grid">
+        <div class="perf-item">
+          <div class="perf-value purple">23-25</div>
+          <div class="perf-label">Average Score</div>
+          <div class="perf-sublabel">of 38.5 max</div>
+        </div>
+        <div class="perf-item">
+          <div class="perf-value green">60-65%</div>
+          <div class="perf-label">Quality Index</div>
+          <div class="perf-sublabel">of achievable max</div>
+        </div>
+        <div class="perf-item">
+          <div class="perf-value blue">765</div>
+          <div class="perf-label">Active Matches</div>
+          <div class="perf-sublabel">ready for routing</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Conversion Funnel -->
+    <div class="card">
+      <div class="card-title">Revenue Funnel (Conservative Projections)</div>
+      <div class="funnel">
+        <div class="funnel-step">
+          <div class="funnel-number dim">765</div>
+          <div class="funnel-label">Matches</div>
+          <div class="funnel-rate">100%</div>
+        </div>
+        <div class="funnel-step">
+          <div class="funnel-number purple">1,530</div>
+          <div class="funnel-label">Intros Sent</div>
+          <div class="funnel-rate">×2 (both sides)</div>
+        </div>
+        <div class="funnel-step">
+          <div class="funnel-number cyan">23-46</div>
+          <div class="funnel-label">Replies</div>
+          <div class="funnel-rate">1.5-3% rate</div>
+        </div>
+        <div class="funnel-step">
+          <div class="funnel-number green">2-5</div>
+          <div class="funnel-label">Deals</div>
+          <div class="funnel-rate">10-20% close</div>
+        </div>
+      </div>
+
+      <div class="bottom-stat">
+        <div>
+          <div class="bottom-stat-value">$20K - $250K</div>
+          <div class="bottom-stat-label">Projected Revenue Per Batch</div>
+          <div class="bottom-stat-sublabel">at $10K - $50K per connector fee</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span class="footer-logo">Connector OS</span> — Match Intelligence Engine
+    </div>
+  </div>
+</body>
+</html>

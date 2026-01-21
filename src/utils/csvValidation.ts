@@ -22,6 +22,9 @@ interface ErrorRow {
   field: string;
   reason: string;
   originalValue: string;
+  humanMessage: string;     // User-friendly message
+  suggestion: string;       // How to fix
+  example?: string;         // Example value
 }
 
 interface WarningRow {
@@ -58,6 +61,101 @@ const REQUIRED_COLUMNS: Record<CsvSide, string[]> = {
   demand: ['Full Name', 'Company Name', 'Domain', 'Title'],
   supply: ['Full Name', 'Company Name', 'Domain', 'Service Description'],
 };
+
+// =============================================================================
+// HUMAN-READABLE ERROR HELPERS
+// =============================================================================
+
+const FIELD_NAMES: Record<string, string> = {
+  'Full Name': 'contact name',
+  'Company Name': 'company name',
+  'Domain': 'company website',
+  'Title': 'job title',
+  'Service Description': 'service description',
+  'Email': 'email address',
+  'LinkedIn URL': 'LinkedIn URL',
+};
+
+const FIELD_SUGGESTIONS: Record<string, string> = {
+  'Full Name': "Add the person's full name like 'John Doe'",
+  'Company Name': "Add the company name like 'Acme Inc'",
+  'Domain': "Add the company website like 'acme.com' (without http://)",
+  'Title': "Add the job title like 'VP of Sales'",
+  'Service Description': "Add a brief description of services offered",
+  'Email': "Add a valid email address like 'john@acme.com'",
+  'LinkedIn URL': "Add the LinkedIn profile URL",
+};
+
+const FIELD_EXAMPLES: Record<string, string> = {
+  'Full Name': 'John Doe',
+  'Company Name': 'Stripe',
+  'Domain': 'stripe.com',
+  'Title': 'VP of Sales',
+  'Service Description': 'Tech recruitment for SaaS companies',
+  'Email': 'john.doe@stripe.com',
+  'LinkedIn URL': 'https://linkedin.com/in/johndoe',
+};
+
+function getHumanMessage(field: string, reason: string, rowIndex: number): string {
+  const humanField = FIELD_NAMES[field] || field.toLowerCase();
+
+  if (reason.includes('Missing required column')) {
+    return `Missing column: "${field}" — add this column to your CSV`;
+  }
+  if (reason.includes('Duplicate column')) {
+    return `Duplicate column: "${field}" — remove the duplicate`;
+  }
+  if (reason.includes('is empty')) {
+    return `Row ${rowIndex}: Missing ${humanField}`;
+  }
+  if (reason.includes('IP addresses')) {
+    return `Row ${rowIndex}: Use a domain name, not an IP address`;
+  }
+  if (reason.includes('Invalid domain')) {
+    return `Row ${rowIndex}: Invalid ${humanField} format`;
+  }
+  if (reason.includes('20%')) {
+    return 'Too many invalid domains — please fix and re-upload';
+  }
+  return `Row ${rowIndex}: Issue with ${humanField}`;
+}
+
+function getSuggestion(field: string, reason: string): string {
+  if (reason.includes('Missing required column')) {
+    return `Add a column named "${field}" to your CSV`;
+  }
+  if (reason.includes('Duplicate column')) {
+    return 'Remove duplicate column headers from your CSV';
+  }
+  if (reason.includes('IP addresses')) {
+    return "Use a domain like 'acme.com' instead of an IP address";
+  }
+  if (reason.includes('20%')) {
+    return 'Check that domains are formatted correctly (e.g., acme.com)';
+  }
+  return FIELD_SUGGESTIONS[field] || `Please provide a valid ${field.toLowerCase()}`;
+}
+
+function getExample(field: string): string | undefined {
+  return FIELD_EXAMPLES[field];
+}
+
+function createError(
+  rowIndex: number,
+  field: string,
+  reason: string,
+  originalValue: string
+): ErrorRow {
+  return {
+    rowIndex,
+    field,
+    reason,
+    originalValue,
+    humanMessage: getHumanMessage(field, reason, rowIndex),
+    suggestion: getSuggestion(field, reason),
+    example: getExample(field),
+  };
+}
 
 // =============================================================================
 // PARSING
@@ -150,12 +248,7 @@ export function validateCsvColumns(headers: string[], side: CsvSide): ErrorRow[]
   // Check for missing required columns
   for (const col of required) {
     if (!headers.includes(col)) {
-      errors.push({
-        rowIndex: 0,
-        field: col,
-        reason: `Missing required column: "${col}"`,
-        originalValue: '',
-      });
+      errors.push(createError(0, col, `Missing required column: "${col}"`, ''));
     }
   }
 
@@ -163,12 +256,7 @@ export function validateCsvColumns(headers: string[], side: CsvSide): ErrorRow[]
   const seen = new Set<string>();
   for (const header of headers) {
     if (seen.has(header)) {
-      errors.push({
-        rowIndex: 0,
-        field: header,
-        reason: `Duplicate column header: "${header}"`,
-        originalValue: header,
-      });
+      errors.push(createError(0, header, `Duplicate column header: "${header}"`, header));
     }
     seen.add(header);
   }
@@ -192,12 +280,12 @@ export function validateCsvRequiredFields(rows: Record<string, string>[], side: 
     for (const field of required) {
       const value = row[field]?.trim() || '';
       if (!value) {
-        errors.push({
-          rowIndex: idx + 2, // +2 for header row and 0-indexing
+        errors.push(createError(
+          idx + 2, // +2 for header row and 0-indexing
           field,
-          reason: `Required field "${field}" is empty`,
-          originalValue: '',
-        });
+          `Required field "${field}" is empty`,
+          ''
+        ));
       }
     }
   });
@@ -243,24 +331,24 @@ export function validateCsvDomains(rows: Record<string, string>[]): { errors: Er
 
     // Reject IP addresses
     if (ipRegex.test(domain)) {
-      errors.push({
-        rowIndex: idx + 2,
-        field: 'Domain',
-        reason: 'IP addresses are not allowed',
-        originalValue: row['Domain'],
-      });
+      errors.push(createError(
+        idx + 2,
+        'Domain',
+        'IP addresses are not allowed',
+        row['Domain']
+      ));
       invalidCount++;
       return;
     }
 
     // Validate domain format
     if (!domainRegex.test(domain)) {
-      errors.push({
-        rowIndex: idx + 2,
-        field: 'Domain',
-        reason: 'Invalid domain format',
-        originalValue: row['Domain'],
-      });
+      errors.push(createError(
+        idx + 2,
+        'Domain',
+        'Invalid domain format',
+        row['Domain']
+      ));
       invalidCount++;
     }
   });
@@ -351,12 +439,12 @@ export function validateCsv(text: string, side: CsvSide): { result: ValidationRe
   allErrors.push(...domainErrors);
 
   if (domainHardStop) {
-    allErrors.push({
-      rowIndex: 0,
-      field: 'Domain',
-      reason: 'More than 20% of domains are invalid. Please fix and re-upload.',
-      originalValue: '',
-    });
+    allErrors.push(createError(
+      0,
+      'Domain',
+      'More than 20% of domains are invalid. Please fix and re-upload.',
+      ''
+    ));
   }
 
   // Tier 4: Duplicate detection (WARNING ONLY)

@@ -23,6 +23,8 @@ export interface IntroAIConfig {
   model?: string;
   azureEndpoint?: string;
   azureDeployment?: string;
+  // LAYER 3: Optional fallback key for when Azure content filter blocks
+  openaiApiKeyFallback?: string;
 }
 
 export interface ValueProps {
@@ -49,9 +51,8 @@ function buildStep1Prompt(
     ? `$${(demand.metadata.fundingUsd / 1000000).toFixed(0)}M`
     : null;
 
-  return `Your job: Generate short value propositions for this match.
-
-THE RULE: Understate. Hedge. You're guessing, not claiming.
+  return `Generate two short value propositions for a B2B introduction.
+Tone: understated and cautious. Use hedging language—you are guessing, not claiming.
 
 Input data:
 
@@ -108,9 +109,8 @@ function buildStep2Prompt(
     ? `$${(demand.metadata.fundingUsd / 1000000).toFixed(0)}M`
     : null;
 
-  return `Your job: Write a demand intro that is PERFECT FOR THIS SPECIFIC PERSON.
-
-THE RULE: Every word must be specific to THIS company, THIS signal, THIS person. Generic = deleted.
+  return `Write a short, professional B2B introduction email for the demand side.
+Tone: specific and personal. Every word should relate to this company, this signal, this person. Generic language will be rejected.
 
 Input data:
 
@@ -279,9 +279,8 @@ function buildStep3Prompt(
     ? 'Hey there—'
     : `Hey ${supplyFirstName}—`;
 
-  return `Your job: Write a supply intro that is PERFECT FOR THIS SPECIFIC PROVIDER.
-
-THE RULE: You're giving a friend a tip about a lead. Don't oversell. Understate. Let them decide.
+  return `Write a short, professional B2B introduction email for the supply side.
+Tone: casual, like giving a friend a tip about a lead. Understate. Let them decide.
 
 Input data:
 
@@ -527,6 +526,16 @@ async function callAzure(config: IntroAIConfig, prompt: string): Promise<string>
   if (!response.ok) {
     const errorBody = await response.text();
     console.error('[IntroAI] Azure error body:', errorBody);
+
+    // LAYER 2: Explicit content_filter detection (Stripe-grade observability)
+    if (
+      response.status === 400 &&
+      errorBody.toLowerCase().includes('content_filter')
+    ) {
+      console.error('[IntroAI] AZURE_CONTENT_FILTER_BLOCK detected');
+      throw new Error('AZURE_CONTENT_FILTER_BLOCK');
+    }
+
     throw new Error(`Azure error: ${response.status} - ${errorBody.slice(0, 200)}`);
   }
 
@@ -541,7 +550,34 @@ async function callAI(config: IntroAIConfig, prompt: string): Promise<string> {
     case 'anthropic':
       return callAnthropic(config, prompt);
     case 'azure':
-      return callAzure(config, prompt);
+      // LAYER 3: Deterministic provider fallback (Stripe-grade resilience)
+      // Azure blocks → automatic fallback to OpenAI
+      // No user interruption, no retry loop, no prompt mutation
+      try {
+        return await callAzure(config, prompt);
+      } catch (err) {
+        if (err instanceof Error && err.message === 'AZURE_CONTENT_FILTER_BLOCK') {
+          // Check if OpenAI fallback key is configured
+          if (!config.openaiApiKeyFallback) {
+            console.error('[IntroAI] Azure content filter blocked, no OpenAI fallback key configured');
+            throw new Error('AZURE_CONTENT_FILTER_BLOCK: Configure OpenAI API key in Settings as fallback');
+          }
+
+          console.log('[IntroAI] Azure content filter triggered, falling back to OpenAI');
+          const fallbackConfig: IntroAIConfig = {
+            provider: 'openai',
+            apiKey: config.openaiApiKeyFallback,
+            model: 'gpt-4o-mini', // Cost-effective fallback
+          };
+          try {
+            return await callOpenAI(fallbackConfig, prompt);
+          } catch (fallbackErr) {
+            console.error('[IntroAI] OpenAI fallback failed:', fallbackErr);
+            throw new Error('AZURE_CONTENT_FILTER_BLOCK: OpenAI fallback also failed - check API key');
+          }
+        }
+        throw err;
+      }
     default:
       throw new Error(`Unknown AI provider: ${config.provider}`);
   }
