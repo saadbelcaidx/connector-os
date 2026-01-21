@@ -1719,7 +1719,21 @@ export default function Flow() {
             return 'is showing activity';
 
           case 'contact':
-            // B2B Contacts — Contact role (NOT hiring)
+            // B2B Contacts: Check signalMeta.kind — hiring signals need different treatment
+            // This handles CSV with explicit Signal column like "Hiring: eCommerce Director"
+            if (demand.signalMeta?.kind === 'HIRING_ROLE') {
+              // Explicit hiring signal in contact data — extract role from signal
+              const hiringLabel = demand.signalMeta.label || '';
+              // "Hiring: eCommerce Director" → "is hiring eCommerce Director"
+              // "Hiring eCommerce Director" → "is hiring eCommerce Director"
+              const role = hiringLabel.replace(/^hiring[:\s]*/i, '').trim();
+              return role ? `is hiring ${role}` : 'is actively hiring';
+            }
+            if (demand.signalMeta?.kind === 'GROWTH') {
+              // Explicit non-hiring signal — use as-is
+              return demand.signalMeta.label || 'is showing activity';
+            }
+            // Regular contact — show role exploring options
             const contactTitle = demand.title || demand.signalMeta?.label || '';
             if (contactTitle) {
               return `has ${contactTitle} exploring options`;

@@ -623,7 +623,12 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   // SIGNAL META — Record-level truth, UI renders label only
   // ==========================================================================
   let signalMeta: SignalMeta;
-  const rawSignal = getNestedValue(record, fields.signal) || '';
+
+  // PRIORITY: Explicit Signal column (CSV with "Signal" header) > schema-mapped field
+  // This handles cases where user's CSV has separate "Signal" column with hiring intent
+  // e.g., CSV: Title="CEO", Signal="Hiring: eCommerce Director" → use Signal, not Title
+  const explicitSignal = record.Signal || record.signal || record['Hiring Signal'] || record.hiring_signal || '';
+  const rawSignal = explicitSignal || getNestedValue(record, fields.signal) || '';
 
   if (isCrunchbasePeople) {
     // People/Founders: "{title} at {company}" or "{title}" or "{name}"
@@ -650,9 +655,21 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
     const jobTitle = record.title || record.job_title || b2bTitle || 'role';
     signalMeta = { kind: 'HIRING_ROLE', label: `Hiring ${jobTitle}`, source: 'job_title' };
   } else if (isLeadsFinder) {
-    // B2B Contacts: Use title as role
-    const contactTitle = b2bTitle || 'Decision maker';
-    signalMeta = { kind: 'CONTACT_ROLE', label: contactTitle, source: 'job_title' };
+    // B2B Contacts: Check for explicit hiring signal first, otherwise use title as role
+    // This handles CSV with Signal column like "Hiring: eCommerce Director"
+    const isHiringSignal = explicitSignal && /^hiring[:\s]/i.test(explicitSignal);
+
+    if (isHiringSignal) {
+      // Explicit hiring signal column — treat as hiring intent, not contact role
+      signalMeta = { kind: 'HIRING_ROLE', label: explicitSignal, source: 'Signal' };
+    } else if (explicitSignal) {
+      // Explicit signal but not hiring pattern — use as growth signal
+      signalMeta = { kind: 'GROWTH', label: explicitSignal, source: 'Signal' };
+    } else {
+      // No explicit signal — fall back to contact title as role
+      const contactTitle = b2bTitle || 'Decision maker';
+      signalMeta = { kind: 'CONTACT_ROLE', label: contactTitle, source: 'job_title' };
+    }
   } else {
     // Unknown schema: Use raw signal or fallback
     signalMeta = { kind: 'UNKNOWN', label: rawSignal || 'Record', source: fields.signal || 'unknown' };
