@@ -15,7 +15,7 @@ import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
 
 // New architecture
-import { NormalizedRecord, Schema, getSchemaById, renderSignal, getNarration } from './schemas';
+import { NormalizedRecord, renderSignal, getNarration } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
 import { filterDemandBySupplyCapability, type FilterResult } from './services/matching';
 import {
@@ -371,9 +371,6 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
     metadata.openRolesDays = raw.days_open;
   }
 
-  // Get schema to extract signalType
-  const schema = getSchemaById(normalized.schemaId);
-
   // CHECKPOINT 3 (user.txt): Map companyDescription to metadata
   // IntroAI reads metadata.companyDescription — this mapping is NON-NEGOTIABLE
   metadata.companyDescription = normalized.companyDescription || '';
@@ -388,8 +385,6 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
     industry: Array.isArray(normalized.industry) ? normalized.industry[0] || '' : (normalized.industry || ''),
     signals,
     metadata,
-    // === SCHEMA AWARENESS (user.txt contract) ===
-    signalType: schema?.signalType,  // Pass through for Composer
   };
 }
 
@@ -1706,71 +1701,37 @@ export default function Flow() {
     console.log('[EDGE] Annotating', filtered.demandMatches.length, 'matches with confidence levels');
     setState(prev => ({ ...prev, progress: { current: 90, total: 100, message: 'Analyzing match quality...' } }));
 
-    // GRACEFUL DEGRADATION: Schema-aware human-readable evidence
-    // Uses signalType to generate appropriate "why" — NO hiring assumption
+    // CSV-ONLY: Use signalMeta.kind as source of truth
     const buildWhy = (match: Match): string => {
       const demand = match.demand;
-      const schema = getSchemaById(demand.schemaId);
 
-      // SCHEMA-AWARE: Use renderSignal for the right language
-      if (schema) {
-        switch (schema.signalType) {
-          case 'hiring':
-            // Wellfound Jobs — ONLY true hiring
-            return `is hiring ${demand.signalMeta?.label || demand.signal || 'talent'}`;
-
-          case 'person':
-            // Crunchbase People — Person at company (NOT hiring)
-            const personRole = demand.signalMeta?.label || demand.title || '';
-            if (personRole) {
-              return `has ${personRole} exploring partners`;
-            }
-            return 'is exploring strategic partnerships';
-
-          case 'company':
-            // Crunchbase Orgs — Funding or company activity
-            if (demand.companyFunding) {
-              return 'recently raised funding';
-            }
-            return 'is showing activity';
-
-          case 'contact':
-            // B2B Contacts: Check signalMeta.kind — hiring signals need different treatment
-            // This handles CSV with explicit Signal column like "Hiring: eCommerce Director"
-            if (demand.signalMeta?.kind === 'HIRING_ROLE') {
-              // Explicit hiring signal in contact data — extract role from signal
-              const hiringLabel = demand.signalMeta.label || '';
-              // "Hiring: eCommerce Director" → "is hiring eCommerce Director"
-              // "Hiring eCommerce Director" → "is hiring eCommerce Director"
-              const role = hiringLabel.replace(/^hiring[:\s]*/i, '').trim();
-              return role ? `is hiring ${role}` : 'is actively hiring';
-            }
-            if (demand.signalMeta?.kind === 'GROWTH') {
-              // Explicit non-hiring signal — use as-is
-              return demand.signalMeta.label || 'is showing activity';
-            }
-            // Regular contact — show role exploring options
-            const contactTitle = demand.title || demand.signalMeta?.label || '';
-            if (contactTitle) {
-              return `has ${contactTitle} exploring options`;
-            }
-            return 'may be exploring outside partners';
-        }
+      // HIRING_ROLE: "Hiring: Senior Engineer" → "is hiring Senior Engineer"
+      if (demand.signalMeta?.kind === 'HIRING_ROLE') {
+        const role = (demand.signalMeta.label || '').replace(/^hiring[:\s]*/i, '').trim();
+        return role ? `is hiring ${role}` : 'is actively hiring';
       }
 
-      // FALLBACK: Generic (schema not found)
-      // Priority 1: Funding signal
+      // GROWTH: Non-hiring signal — use label as-is
+      if (demand.signalMeta?.kind === 'GROWTH') {
+        return demand.signalMeta.label || 'is showing activity';
+      }
+
+      // CONTACT_ROLE or UNKNOWN — use title if available
+      if (demand.title) {
+        return `has ${demand.title} exploring options`;
+      }
+
+      // Funding signal
       if (demand.companyFunding) {
         return 'recently raised funding';
       }
 
-      // Priority 2: Industry
+      // Industry fallback
       if (demand.industry) {
         const ind = Array.isArray(demand.industry) ? demand.industry[0] : demand.industry;
         if (ind) return `is growing in ${String(ind).split(',')[0].trim()}`;
       }
 
-      // Priority 3: Generic
       return 'may be exploring outside partners';
     };
 
