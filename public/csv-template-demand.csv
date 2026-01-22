@@ -1,4 +1,4 @@
-Full Name,Company Name,Domain,Title,LinkedIn URL,Email,Company Description,Signal
-Jane Smith,Acme SaaS,acmesaas.com,VP of Sales,https://linkedin.com/in/janesmith,jane@acmesaas.com,B2B SaaS platform for inventory management. Series B. 150 employees.,Hiring 3 Account Executives
-Mike Johnson,TechCorp,techcorp.io,CRO,,mike@techcorp.io,Developer tools company. $5M ARR. Growing 100% YoY.,Raised Series A $8M
-Lisa Park,CloudBase,cloudbase.com,Head of Sales,,,Enterprise cloud infrastructure. 80 employees.,Posted 5 sales roles this month
+Full Name,Company Name,Domain,Email,Context,Signal
+Jane Smith,Acme SaaS,acmesaas.com,jane@acmesaas.com,B2B SaaS platform for inventory management. Series B. 150 employees.,Hiring: 3 Account Executives
+Mike Johnson,TechCorp,techcorp.io,,Developer tools company. $5M ARR. Growing 100% YoY.,Raised Series A $8M
+Lisa Park,CloudBase,cloudbase.com,lisa.park@cloudbase.com,Enterprise cloud infrastructure. 80 employees.,Hiring: 5 sales roles

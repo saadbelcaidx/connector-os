@@ -366,10 +366,7 @@ function AppCardComponent({
           background: isHovered && isClickable
             ? 'rgba(255, 255, 255, 0.05)'
             : 'rgba(255, 255, 255, 0.02)',
-          borderColor: isHovered && isClickable
-            ? 'rgba(255, 255, 255, 0.1)'
-            : 'rgba(255, 255, 255, 0.06)',
-          border: '1px solid',
+          border: `1px solid ${isHovered && isClickable ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.06)'}`,
           transform: `scale(${isPressed ? 0.97 : 1}) translateY(${isHovered && isClickable ? -2 : 0}px) rotateX(${tilt.x * 0.3}deg) rotateY(${tilt.y * 0.3}deg)`,
           transition: 'all 400ms cubic-bezier(0.16, 1, 0.3, 1)',
           boxShadow: isHovered && isClickable ? '0 8px 32px rgba(0, 0, 0, 0.15)' : 'none',

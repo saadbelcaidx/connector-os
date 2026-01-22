@@ -105,49 +105,42 @@ export const BLOCKS = {
     next_step: 'Go to Settings and configure your API keys.',
     severity: 'error' as const,
   },
-  NO_APIFY_TOKEN: {
-    code: 'NO_APIFY_TOKEN',
-    title: 'Apify token missing',
-    detail: 'Cannot fetch datasets without an Apify token.',
-    next_step: 'Add your Apify token in Settings.',
+  NO_DEMAND_CSV: {
+    code: 'NO_DEMAND_CSV',
+    title: 'No demand CSV',
+    detail: 'Upload a demand CSV to get started.',
+    next_step: 'Go to Settings → Upload Demand CSV.',
     severity: 'error' as const,
   },
-  NO_DEMAND_DATASET: {
-    code: 'NO_DEMAND_DATASET',
-    title: 'No demand dataset',
-    detail: 'No demand dataset ID configured.',
-    next_step: 'Add a demand dataset ID in Settings.',
-    severity: 'error' as const,
-  },
-  NO_SUPPLY_DATASET: {
-    code: 'NO_SUPPLY_DATASET',
-    title: 'No supply dataset',
-    detail: 'No supply dataset ID configured.',
-    next_step: 'Add a supply dataset ID in Settings.',
+  NO_SUPPLY_CSV: {
+    code: 'NO_SUPPLY_CSV',
+    title: 'No supply CSV',
+    detail: 'Upload a supply CSV to match against demand.',
+    next_step: 'Go to Settings → Upload Supply CSV.',
     severity: 'warning' as const,
   },
 
   // Data loading
-  DATASET_FETCH_FAILED: (detail: string, correlationId?: string): FlowBlock => ({
-    code: 'DATASET_FETCH_FAILED',
-    title: 'Dataset fetch failed',
+  CSV_PARSE_FAILED: (detail: string, correlationId?: string): FlowBlock => ({
+    code: 'CSV_PARSE_FAILED',
+    title: 'CSV parsing failed',
     detail,
-    next_step: 'Check your dataset ID and Apify token, then retry.',
+    next_step: 'Check your CSV format matches the template.',
     correlationId,
     severity: 'error',
   }),
-  DATASET_EMPTY: {
-    code: 'DATASET_EMPTY',
-    title: 'Dataset is empty',
-    detail: 'The dataset returned no records.',
-    next_step: 'Check if the dataset has data in Apify console.',
+  CSV_EMPTY: {
+    code: 'CSV_EMPTY',
+    title: 'CSV is empty',
+    detail: 'The CSV file has no data rows.',
+    next_step: 'Add data to your CSV and re-upload.',
     severity: 'warning' as const,
   },
-  SCHEMA_INVALID: (detail: string): FlowBlock => ({
-    code: 'SCHEMA_INVALID',
-    title: 'Schema not recognized',
+  CSV_INVALID: (detail: string): FlowBlock => ({
+    code: 'CSV_INVALID',
+    title: 'CSV format invalid',
     detail,
-    next_step: 'Use a supported Apify scraper (Wellfound Jobs, LinkedIn Company Leads).',
+    next_step: 'Use the CSV template from Settings. Required columns: Company Name, Signal.',
     severity: 'error',
   }),
 

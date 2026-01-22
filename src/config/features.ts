@@ -2,8 +2,9 @@
 // Toggle features via environment variables without code changes
 
 export const FEATURES = {
+  // Force-enable in dev, respect env var in prod
   CONNECTOR_AGENT_ENABLED:
-    import.meta.env.VITE_ENABLE_CONNECTOR_AGENT === 'true',
+    import.meta.env.DEV || import.meta.env.VITE_ENABLE_CONNECTOR_AGENT === 'true',
 
   // PHILEMON — Ground Truth UI System
   // Default: ON in dev (for testing), OFF in prod (until Phase 3 complete)

@@ -31,6 +31,7 @@ interface CsvValidatedRow {
   'Service Description'?: string;
   'LinkedIn URL'?: string;
   'Email'?: string;
+  'Context'?: string;
   'Company Description'?: string;
   'Notes'?: string;
   'Target Industries'?: string;
@@ -150,10 +151,31 @@ export function normalizeCsvRecords(params: {
     const fullName = row['Full Name'] || '';
     const company = row['Company Name'] || '';
     const rawDomain = row['Domain'] || '';
-    const title = row['Title'] || row['Service Description'] || '';
+    const title = row['Title'] || '';
     const email = row['Email'] || null;
     const linkedin = row['LinkedIn URL'] || null;
-    const description = row['Company Description'] || row['Notes'] || null;
+
+    // CHECKPOINT 3 (user.txt): companyDescription from Service Description | company_description | description | about | summary
+    const description =
+      row['Context'] ||
+      row['Service Description'] ||
+      row['service_description'] ||
+      row['Company Description'] ||
+      row['company_description'] ||
+      row['description'] ||
+      row['Description'] ||
+      row['about'] ||
+      row['summary'] ||
+      row['Notes'] ||
+      null;
+
+    // CHECKPOINT 2 (user.txt): Extract explicit Signal column
+    const explicitSignal =
+      row['Signal'] ||
+      row['signal'] ||
+      row['Hiring Signal'] ||
+      row['hiring_signal'] ||
+      '';
 
     // Clean domain (same logic as Phase 1)
     const domain = cleanDomain(rawDomain);
@@ -165,12 +187,22 @@ export function normalizeCsvRecords(params: {
     const recordKey = computeRecordKey(uploadId, side, rowIndex);
     const stableKey = computeStableKey(fullName, company, domain, side);
 
-    // Build signal meta
-    const signalMeta: SignalMeta = {
-      kind: side === 'demand' ? 'HIRING_ROLE' : 'CONTACT_ROLE',
-      label: title || (side === 'demand' ? 'Decision maker' : 'Service provider'),
-      source: 'csv',
-    };
+    // CHECKPOINT 2 (user.txt): Derive signalMeta from Signal column, NOT hardcoded
+    // Only /^hiring[:\s]/i patterns → HIRING_ROLE
+    // Explicit non-hiring signal → GROWTH (licensing, partnerships, expansion, etc.)
+    // No signal → CONTACT_ROLE (title-based)
+    const isHiringSignal = explicitSignal && /^hiring[:\s]/i.test(explicitSignal);
+
+    let signalMeta: SignalMeta;
+    if (isHiringSignal) {
+      signalMeta = { kind: 'HIRING_ROLE', label: explicitSignal, source: 'Signal' };
+    } else if (explicitSignal) {
+      signalMeta = { kind: 'GROWTH', label: explicitSignal, source: 'Signal' };
+    } else {
+      // Fallback to title-based contact role
+      const contactTitle = title || (side === 'demand' ? 'Decision maker' : 'Service provider');
+      signalMeta = { kind: 'CONTACT_ROLE', label: contactTitle, source: 'csv' };
+    }
 
     // Determine domain source
     const domainSource: DomainSource = domain ? 'explicit' : 'none';
@@ -204,7 +236,7 @@ export function normalizeCsvRecords(params: {
 
       // Signal
       signalMeta,
-      signal: title,
+      signal: explicitSignal || title || '',  // Prefer explicit Signal column
       signalDetail: null,
 
       // Location (not in CSV template)

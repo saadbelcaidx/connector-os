@@ -25,9 +25,7 @@ interface PreSignalContextEntry {
 }
 
 interface Settings {
-  apifyToken: string;
-  demandDatasetId: string;
-  supplyDatasetId: string;
+  // CSV-ONLY: Apify settings removed (architectural decision locked)
   apolloApiKey: string;
   anymailApiKey: string;
   connectorAgentApiKey: string;
@@ -63,9 +61,7 @@ interface Settings {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  apifyToken: '',
-  demandDatasetId: '',
-  supplyDatasetId: '',
+  // CSV-ONLY: Apify settings removed (architectural decision locked)
   apolloApiKey: '',
   anymailApiKey: '',
   connectorAgentApiKey: '',
@@ -256,6 +252,28 @@ export default function Settings() {
   const [showDemandCsv, setShowDemandCsv] = useState(false);
   const [showSupplyCsv, setShowSupplyCsv] = useState(false);
 
+  // Track CSV data existence for persistent feedback
+  const [demandCsvCount, setDemandCsvCount] = useState<number>(0);
+  const [supplyCsvCount, setSupplyCsvCount] = useState<number>(0);
+
+  // Check localStorage for existing CSV data on mount
+  useEffect(() => {
+    try {
+      const demandData = localStorage.getItem('csv_demand_data');
+      if (demandData) {
+        const parsed = JSON.parse(demandData);
+        setDemandCsvCount(Array.isArray(parsed) ? parsed.length : 0);
+      }
+      const supplyData = localStorage.getItem('csv_supply_data');
+      if (supplyData) {
+        const parsed = JSON.parse(supplyData);
+        setSupplyCsvCount(Array.isArray(parsed) ? parsed.length : 0);
+      }
+    } catch (e) {
+      console.error('[Settings] Error reading CSV data from localStorage:', e);
+    }
+  }, []);
+
   // Load
   useEffect(() => { load(); }, [isGuest]);
 
@@ -283,9 +301,7 @@ export default function Settings() {
 
       if (data) {
         setSettings({
-          apifyToken: data.apify_token || '',
-          demandDatasetId: data.demand_dataset_id || '',
-          supplyDatasetId: data.supply_dataset_id || '',
+          // CSV-ONLY: Apify settings removed
           apolloApiKey: data.enrichment_api_key || '',
           anymailApiKey: data.anymail_finder_api_key || '',
           connectorAgentApiKey: data.connector_agent_api_key || '',
@@ -366,9 +382,7 @@ export default function Settings() {
       } else {
         await supabase.from('operator_settings').upsert({
           user_id: user!.id,
-          apify_token: settings.apifyToken,
-          demand_dataset_id: settings.demandDatasetId,
-          supply_dataset_id: settings.supplyDatasetId,
+          // CSV-ONLY: Apify settings removed
           enrichment_api_key: settings.apolloApiKey,
           anymail_finder_api_key: settings.anymailApiKey,
           connector_agent_api_key: settings.connectorAgentApiKey,
@@ -607,49 +621,10 @@ export default function Settings() {
                 </div>
               </div>
 
-              {/* Apify Token */}
+              {/* CSV Upload — Single Source of Truth */}
               <div>
                 <div className="flex items-center gap-2 mb-3">
                   <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Data source</h2>
-                </div>
-                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex items-start gap-3 flex-1">
-                      <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center flex-shrink-0">
-                        <Key size={16} strokeWidth={1.5} className="text-white/50" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-white/90">Apify token</span>
-                          <InfoTip content="Your API token for fetching datasets. Required for both demand and supply." />
-                          <a
-                            href="https://www.apify.com?fpr=keij5"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[11px] text-emerald-400/70 hover:text-emerald-400 transition-colors"
-                          >
-                            Get token →
-                          </a>
-                        </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Connects to your scraped data</p>
-                      </div>
-                    </div>
-                    <div className="w-[240px]">
-                      <Input
-                        type="password"
-                        value={settings.apifyToken}
-                        onChange={(v) => setSettings({ ...settings, apifyToken: v })}
-                        placeholder="apify_api_..."
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Datasets */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
-                  <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Datasets</h2>
                 </div>
 
                 {/* Demand Card */}
@@ -658,25 +633,16 @@ export default function Settings() {
                   style={{ animationDelay: '50ms' }}
                 >
                   {/* Header row */}
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex items-start gap-3 flex-1">
-                      <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
-                        <Target size={16} strokeWidth={1.5} className="text-blue-400/70" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-white/90">Demand</span>
-                          <InfoTip content="Companies showing timing signals. The system finds decision makers and generates intros." />
-                        </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Companies with timing signals</p>
-                      </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                      <Target size={16} strokeWidth={1.5} className="text-blue-400/70" />
                     </div>
-                    <div className="w-[180px]">
-                      <Input
-                        value={settings.demandDatasetId}
-                        onChange={(v) => setSettings({ ...settings, demandDatasetId: v })}
-                        placeholder="Dataset ID"
-                      />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium text-white/90">Demand CSV</span>
+                        <InfoTip content="Companies showing timing signals. Required: Company Name, Signal. Optional: Full Name, Email, Domain, Context." />
+                      </div>
+                      <p className="text-[12px] text-white/40 mt-0.5">Companies with timing signals</p>
                     </div>
                   </div>
 
@@ -698,21 +664,48 @@ export default function Settings() {
                   <div className="ml-11 mt-3 pt-3 border-t border-white/[0.04]">
                     {!showDemandCsv ? (
                       <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => setShowDemandCsv(true)}
-                          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
-                        >
-                          <Upload size={12} />
-                          <span>Or upload CSV</span>
-                        </button>
-                        <a
-                          href="/csv-template-demand.csv"
-                          download="demand-template.csv"
-                          className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
-                        >
-                          <Download size={10} />
-                          <span>Template</span>
-                        </a>
+                        {/* Show success badge when CSV data exists */}
+                        {demandCsvCount > 0 ? (
+                          <>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/[0.08] border border-emerald-500/[0.15]">
+                              <Check size={12} className="text-emerald-400" />
+                              <span className="text-[11px] text-emerald-400">{demandCsvCount} records loaded</span>
+                            </div>
+                            <button
+                              onClick={() => setShowDemandCsv(true)}
+                              className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                            >
+                              Replace
+                            </button>
+                            <button
+                              onClick={() => {
+                                localStorage.removeItem('csv_demand_data');
+                                setDemandCsvCount(0);
+                              }}
+                              className="text-[10px] text-white/30 hover:text-red-400/70 transition-colors"
+                            >
+                              Clear
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => setShowDemandCsv(true)}
+                              className="flex items-center gap-1.5 text-[11px] text-blue-400/70 hover:text-blue-400 transition-colors"
+                            >
+                              <Upload size={12} />
+                              <span>Upload CSV</span>
+                            </button>
+                            <a
+                              href="/csv-template-demand.csv"
+                              download="demand-template.csv"
+                              className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                            >
+                              <Download size={10} />
+                              <span>Template</span>
+                            </a>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -740,7 +733,10 @@ export default function Settings() {
                             // Store to localStorage for Flow.tsx to read
                             localStorage.setItem('csv_demand_data', JSON.stringify(records));
                             console.log('[Settings] Stored CSV demand data:', records.length, 'records');
-                            setShowDemandCsv(false);
+                            // Update count for persistent UI feedback
+                            setDemandCsvCount(records.length);
+                            // Don't immediately hide - let the CsvUpload show its success state
+                            // User can click Cancel or navigate away when ready
                           }}
                         />
                       </div>
@@ -753,36 +749,27 @@ export default function Settings() {
                   className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]"
                   style={{ animationDelay: '100ms' }}
                 >
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex items-start gap-3 flex-1">
-                      <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
-                        <Users size={16} strokeWidth={1.5} className="text-violet-400/70" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-white/90">Supply</span>
-                          <InfoTip content="We always fetch fresh data. Your notes and decisions are saved." />
-                        </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Refreshed from source each run</p>
-
-                        <LearnMore title="What counts as supply?">
-                          <LearnMoreCard>
-                            <LearnMoreList items={[
-                              "Recruiters (place candidates)",
-                              "Consultants (solve problems)",
-                              "Agencies (provide services)",
-                              "Anyone who monetizes demand signals"
-                            ]} />
-                          </LearnMoreCard>
-                        </LearnMore>
-                      </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                      <Users size={16} strokeWidth={1.5} className="text-violet-400/70" />
                     </div>
-                    <div className="w-[180px]">
-                      <Input
-                        value={settings.supplyDatasetId}
-                        onChange={(v) => setSettings({ ...settings, supplyDatasetId: v })}
-                        placeholder="Dataset ID"
-                      />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium text-white/90">Supply CSV</span>
+                        <InfoTip content="Service providers who fulfill demand. Required: Company Name, Signal. Optional: Full Name, Email, Domain, Context." />
+                      </div>
+                      <p className="text-[12px] text-white/40 mt-0.5">Providers who monetize demand signals</p>
+
+                      <LearnMore title="What counts as supply?">
+                        <LearnMoreCard>
+                          <LearnMoreList items={[
+                            "Recruiters (place candidates)",
+                            "Consultants (solve problems)",
+                            "Agencies (provide services)",
+                            "Anyone who monetizes demand signals"
+                          ]} />
+                        </LearnMoreCard>
+                      </LearnMore>
                     </div>
                   </div>
 
@@ -790,21 +777,48 @@ export default function Settings() {
                   <div className="ml-11 mt-3 pt-3 border-t border-white/[0.04]">
                     {!showSupplyCsv ? (
                       <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => setShowSupplyCsv(true)}
-                          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white/60 transition-colors"
-                        >
-                          <Upload size={12} />
-                          <span>Or upload CSV</span>
-                        </button>
-                        <a
-                          href="/csv-template-supply.csv"
-                          download="supply-template.csv"
-                          className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
-                        >
-                          <Download size={10} />
-                          <span>Template</span>
-                        </a>
+                        {/* Show success badge when CSV data exists */}
+                        {supplyCsvCount > 0 ? (
+                          <>
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/[0.08] border border-emerald-500/[0.15]">
+                              <Check size={12} className="text-emerald-400" />
+                              <span className="text-[11px] text-emerald-400">{supplyCsvCount} records loaded</span>
+                            </div>
+                            <button
+                              onClick={() => setShowSupplyCsv(true)}
+                              className="text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                            >
+                              Replace
+                            </button>
+                            <button
+                              onClick={() => {
+                                localStorage.removeItem('csv_supply_data');
+                                setSupplyCsvCount(0);
+                              }}
+                              className="text-[10px] text-white/30 hover:text-red-400/70 transition-colors"
+                            >
+                              Clear
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => setShowSupplyCsv(true)}
+                              className="flex items-center gap-1.5 text-[11px] text-violet-400/70 hover:text-violet-400 transition-colors"
+                            >
+                              <Upload size={12} />
+                              <span>Upload CSV</span>
+                            </button>
+                            <a
+                              href="/csv-template-supply.csv"
+                              download="supply-template.csv"
+                              className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                            >
+                              <Download size={10} />
+                              <span>Template</span>
+                            </a>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-2">
@@ -832,7 +846,10 @@ export default function Settings() {
                             // Store to localStorage for Flow.tsx to read
                             localStorage.setItem('csv_supply_data', JSON.stringify(records));
                             console.log('[Settings] Stored CSV supply data:', records.length, 'records');
-                            setShowSupplyCsv(false);
+                            // Update count for persistent UI feedback
+                            setSupplyCsvCount(records.length);
+                            // Don't immediately hide - let the CsvUpload show its success state
+                            // User can click Cancel or navigate away when ready
                           }}
                         />
                       </div>
@@ -842,46 +859,35 @@ export default function Settings() {
 
               </div>
 
-              {/* Which scrapers work? */}
+              {/* CSV Format Info */}
               <div className="ml-0">
-                <LearnMore title="Which scrapers work?">
+                <LearnMore title="CSV format">
                   <LearnMoreCard>
                     <div className="space-y-3 text-[12px] text-white/60">
-                      <p className="text-white/40 text-[11px]">The system is built for these Apify actors. Other scrapers may have missing fields.</p>
-
-                      <div className="space-y-2">
-                        <div className="flex items-start gap-2">
-                          <span className="text-emerald-400/60 mt-0.5">→</span>
-                          <div>
-                            <span className="text-white/70">LinkedIn Scraper</span>
-                            <span className="text-white/30 ml-2">— demand & supply</span>
-                            <a
-                              href="https://console.apify.com/actors/IoSHqwTR9YGhzccez/input"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="ml-2 text-[11px] text-blue-400/70 hover:text-blue-400 transition-colors"
-                            >
-                              Open in Apify →
-                            </a>
-                          </div>
+                      <p className="text-white/40 text-[11px]">Required columns for all CSV uploads:</p>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400/60">→</span>
+                          <span className="text-white/70 font-mono text-[11px]">Full Name</span>
                         </div>
-
-                        <div className="flex items-start gap-2">
-                          <span className="text-emerald-400/60 mt-0.5">→</span>
-                          <div>
-                            <span className="text-white/70">Wellfound Jobs</span>
-                            <span className="text-white/30 ml-2">— demand only</span>
-                            <a
-                              href="https://apify.com/radeance/wellfound-job-listings-scraper"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="ml-2 text-[11px] text-blue-400/70 hover:text-blue-400 transition-colors"
-                            >
-                              Open in Apify →
-                            </a>
-                          </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400/60">→</span>
+                          <span className="text-white/70 font-mono text-[11px]">Company Name</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400/60">→</span>
+                          <span className="text-white/70 font-mono text-[11px]">Domain</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400/60">→</span>
+                          <span className="text-white/70 font-mono text-[11px]">Context</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400/60">→</span>
+                          <span className="text-white/70 font-mono text-[11px]">Signal</span>
                         </div>
                       </div>
+                      <p className="text-white/30 text-[10px] mt-2">Download the template for the exact format.</p>
                     </div>
                   </LearnMoreCard>
                 </LearnMore>
