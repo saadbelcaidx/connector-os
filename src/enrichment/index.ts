@@ -327,6 +327,9 @@ export async function enrichBatch(
       continue;
     }
 
+    // DEBUG: Log record data for ALL records (even cache hits)
+    console.log(`[EnrichBatch] RECORD_DATA company=${record.company} domain=${record.domain} fullName=${record.fullName?.slice(0,15)}`);
+
     // Check cache first (no email, so we might have cached result)
     let result: EnrichmentResult | null = null;
     result = await checkCache(key);

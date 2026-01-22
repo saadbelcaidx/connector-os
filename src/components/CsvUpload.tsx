@@ -88,17 +88,21 @@ export function CsvUpload({ side, onValidated, onNormalized }: CsvUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Core normalization — no dedup, just normalize and store
-  const proceedWithNormalization = async (rows: Record<string, string>[]) => {
+  // CRITICAL: uploadIdOverride fixes race condition where React state isn't updated yet
+  const proceedWithNormalization = async (rows: Record<string, string>[], uploadIdOverride?: string) => {
     if (rows.length === 0) return;
 
     setState('normalizing');
     setError(null);
 
+    // Use override if provided (fixes race condition), otherwise fall back to state
+    const effectiveUploadId = uploadIdOverride || uploadId || generateUploadId();
+
     try {
       const { records } = normalizeCsvRecords({
         rows: rows as any,
         side,
-        uploadId,
+        uploadId: effectiveUploadId,
       });
 
       setRecordCount(records.length);
@@ -147,8 +151,9 @@ export function CsvUpload({ side, onValidated, onNormalized }: CsvUploadProps) {
       onValidated?.(result, rows);
 
       // Auto-proceed when valid
+      // CRITICAL: Pass newUploadId directly to avoid React state race condition
       if (result.status === 'valid' && rows.length > 0) {
-        await proceedWithNormalization(rows);
+        await proceedWithNormalization(rows, newUploadId);
       } else {
         setState('results');
       }

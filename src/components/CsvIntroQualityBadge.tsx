@@ -104,9 +104,19 @@ export function CsvIntroQualityBadge({
 // =============================================================================
 
 /**
- * Warning banner when batch contains T1 (BASIC) records.
+ * Warning banner for CSV batch quality.
  *
- * Shows quality distribution and improvement suggestions.
+ * Apple HIG: One title. One message. No suggestion line.
+ *
+ * PRIORITY ORDER:
+ * 1. BLOCKING (t1Count > 0): Email missing — intros won't generate
+ * 2. QUALITY (t2Count > 0): Context missing — intros will be basic
+ * 3. All T3: No warning
+ *
+ * TIER REMINDER:
+ * - T1 = no email (BLOCKING)
+ * - T2 = email but no context (QUALITY)
+ * - T3 = email + context (RICH)
  */
 export function CsvBatchQualityWarning({
   t1Count,
@@ -114,32 +124,50 @@ export function CsvBatchQualityWarning({
   t3Count,
   totalCsv,
 }: CsvBatchQualityWarningProps) {
-  // Don't show if no T1 records
-  if (t1Count === 0) {
+  // All T3 = no warning
+  if (t1Count === 0 && t2Count === 0) {
     return null;
   }
 
-  const basicPercent = totalCsv > 0 ? Math.round((t1Count / totalCsv) * 100) : 0;
+  // BLOCKING: T1 records have no email — intros won't generate
+  if (t1Count > 0) {
+    return (
+      <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/[0.12]">
+        <div className="w-7 h-7 rounded-full bg-red-500/20 flex items-center justify-center shrink-0 mt-0.5">
+          <AlertTriangle size={14} className="text-red-400" />
+        </div>
+        <div className="space-y-1 flex-1">
+          <p className="text-sm font-medium text-white/90">
+            Email required
+          </p>
+          <p className="text-xs text-white/60">
+            {t1Count} record{t1Count !== 1 ? 's' : ''} missing email — intros won't generate.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
-  return (
-    <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/[0.12]">
-      <div className="w-7 h-7 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
-        <AlertTriangle size={14} className="text-amber-400" />
+  // QUALITY: T2 records have email but no context — intros will be basic
+  if (t2Count > 0) {
+    return (
+      <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/[0.12]">
+        <div className="w-7 h-7 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
+          <AlertTriangle size={14} className="text-amber-400" />
+        </div>
+        <div className="space-y-1 flex-1">
+          <p className="text-sm font-medium text-white/90">
+            Add descriptions for richer intros
+          </p>
+          <p className="text-xs text-white/60">
+            {t2Count} record{t2Count !== 1 ? 's' : ''} {t2Count !== 1 ? 'have' : 'has'} basic intros.
+          </p>
+        </div>
       </div>
-      <div className="space-y-1.5 flex-1">
-        <p className="text-sm font-medium text-white/90">
-          Some intros are generic
-        </p>
-        <p className="text-xs text-white/60 leading-relaxed">
-          {t1Count} of {totalCsv} CSV records ({basicPercent}%) will get basic intros
-          due to limited data.
-        </p>
-        <p className="text-xs text-white/50">
-          Add Context (40+ chars) to your CSV for better intros.
-        </p>
-      </div>
-    </div>
-  );
+    );
+  }
+
+  return null;
 }
 
 // =============================================================================

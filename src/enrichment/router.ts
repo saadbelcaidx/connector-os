@@ -276,6 +276,13 @@ async function findCompanyContactWithAnymail(
   domain: string,
   config: RouterConfig
 ): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any }> {
+  // DEBUG: Log exact domain being sent to Anymail Finder
+  console.log(`[Router] findCompanyContactWithAnymail DOMAIN_SENT:`, {
+    domain,
+    domainLength: domain?.length,
+    domainType: typeof domain,
+  });
+
   try {
     const response = await fetch(`${config.supabaseFunctionsUrl}/anymail-finder`, {
       method: 'POST',

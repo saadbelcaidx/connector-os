@@ -3829,9 +3829,26 @@ export default function Flow() {
                 const enrichmentFailed = matchCount > 0 && totalEnriched === 0;
                 const enrichmentPartial = matchCount > 0 && totalEnriched > 0 && totalEnriched < matchCount;
 
-                // SENDABLE COUNT — requires both sides enriched (routable contacts)
-                // Per user.txt: "intro routing requires stricter constraints"
-                const sendableCount = Math.min(demandEnriched, supplyEnriched);
+                // INTRO PAIR COUNT — counts actual pairs where BOTH sides have email
+                // This is what the generator loops through, so this is the honest count
+                const introPairCount = demandMatches.filter(m => {
+                  // Demand has email?
+                  const demandHasEmail = m.demand.email || (() => {
+                    const e = state.enrichedDemand.get(recordKey(m.demand));
+                    return e && isSuccessfulEnrichment(e) && e.email;
+                  })();
+                  if (!demandHasEmail) return false;
+
+                  // Supply has email?
+                  const supplyHasEmail = m.supply.email || (() => {
+                    const e = state.enrichedSupply.get(recordKey(m.supply));
+                    return e && isSuccessfulEnrichment(e) && e.email;
+                  })();
+                  return supplyHasEmail;
+                }).length;
+
+                // Unique supply contacts (secondary stat)
+                const uniqueSupplyWithEmail = supplyEnriched;
 
                 // =============================================================
                 // EMAIL AVAILABILITY STATE (per directive)
@@ -4156,7 +4173,7 @@ export default function Flow() {
                     )}
 
                     {/* Generate Intros — export happens AFTER intros in Ready step */}
-                    {sendableCount > 0 && (
+                    {introPairCount > 0 && (
                       <motion.div
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -4166,8 +4183,13 @@ export default function Flow() {
                           onClick={regenerateIntros}
                           className={BTN.primary}
                         >
-                          Generate intros ({sendableCount})
+                          Generate {introPairCount} intros
                         </button>
+                        {uniqueSupplyWithEmail > 0 && uniqueSupplyWithEmail < introPairCount && (
+                          <p className="text-[10px] text-white/40 mt-1.5 text-center">
+                            {introPairCount} intros · {uniqueSupplyWithEmail} supply contacts
+                          </p>
+                        )}
                       </motion.div>
                     )}
                   </div>
