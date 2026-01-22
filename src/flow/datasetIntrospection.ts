@@ -134,41 +134,8 @@ export function inspectDataset(records: any[]): DatasetCapabilities {
 }
 
 // =============================================================================
-// SCHEMA HINTS — Non-authoritative, inspection always wins
+// CSV-ONLY: No schema hints — inspection is the only truth
 // =============================================================================
-
-const SCHEMA_HINTS: Record<string, Partial<DatasetCapabilities>> = {
-  'startup-jobs': { hasJobRole: true, hasCompany: true },
-  'crunchbase-people': { hasPersonName: true, hasTitle: true },
-  'crunchbase-orgs': { hasCompany: true },
-  'b2b-contacts': { hasEmail: true, hasPersonName: true },
-};
-
-/**
- * Merge inspected capabilities with schema hints.
- * Inspection ALWAYS wins — hints only fill gaps where inspection is inconclusive.
- */
-export function mergeWithHints(
-  inspected: DatasetCapabilities,
-  schemaId: string | undefined
-): DatasetCapabilities {
-  if (!schemaId) return inspected;
-
-  const hints = SCHEMA_HINTS[schemaId];
-  if (!hints) return inspected;
-
-  // Inspection wins — hints only used if inspection found nothing
-  // and hints suggest the field should exist (conservative merge)
-  return {
-    hasEmail: inspected.hasEmail,
-    hasPersonName: inspected.hasPersonName,
-    hasTitle: inspected.hasTitle,
-    hasCompany: inspected.hasCompany,
-    hasJobRole: inspected.hasJobRole,
-    hasDomain: inspected.hasDomain,
-    hasLinkedOrganization: inspected.hasLinkedOrganization,
-  };
-}
 
 // =============================================================================
 // ROUTABILITY DERIVATION — Data-derived, not source-derived
@@ -272,41 +239,18 @@ export function deriveDatasetCard(
 }
 
 // =============================================================================
-// KNOWN SCHEMA NAMES — Display names only, not capability source
-// =============================================================================
-
-const SCHEMA_NAMES: Record<string, string> = {
-  'startup-jobs': 'Wellfound Jobs',
-  'crunchbase-orgs': 'Crunchbase Organizations',
-  'crunchbase-people': 'Crunchbase People',
-  'b2b-contacts': 'B2B Contacts',
-};
-
-export function getSchemaDisplayName(schemaId: string | undefined): string | undefined {
-  if (!schemaId) return undefined;
-  return SCHEMA_NAMES[schemaId];
-}
-
-// =============================================================================
 // MAIN ENTRY POINT — Full introspection pipeline
 // =============================================================================
 
 export function introspectAndDeriveCard(
   label: 'Demand' | 'Supply',
-  records: any[],
-  schemaId?: string
+  records: any[]
 ): DatasetCard {
-  // 1. Inspect actual records
-  const inspected = inspectDataset(records);
+  // CSV-ONLY: Inspect actual records (inspection is the only truth)
+  const capabilities = inspectDataset(records);
 
-  // 2. Merge with hints (inspection wins)
-  const capabilities = mergeWithHints(inspected, schemaId);
-
-  // 3. Get display name (cosmetic only)
-  const schemaName = getSchemaDisplayName(schemaId);
-
-  // 4. Derive card from capabilities
-  return deriveDatasetCard(label, capabilities, schemaName);
+  // Derive card from capabilities (no schema display name needed)
+  return deriveDatasetCard(label, capabilities, undefined);
 }
 
 // =============================================================================
@@ -316,6 +260,8 @@ export function introspectAndDeriveCard(
 /**
  * Full dataset preflight validation.
  *
+ * CSV-ONLY: Inspection is the only truth — no schema hints or display names.
+ *
  * Returns routability state, capabilities, card, and block reason.
  * UI should check isRoutable() before showing enrichment CTAs.
  *
@@ -323,23 +269,16 @@ export function introspectAndDeriveCard(
  */
 export function preflightDataset(
   label: 'Demand' | 'Supply',
-  records: any[],
-  schemaId?: string
+  records: any[]
 ): DatasetPreflight {
-  // 1. Inspect actual records
-  const inspected = inspectDataset(records);
+  // CSV-ONLY: Inspect actual records (inspection is the only truth)
+  const capabilities = inspectDataset(records);
 
-  // 2. Merge with hints (inspection wins)
-  const capabilities = mergeWithHints(inspected, schemaId);
-
-  // 3. Derive routability from capabilities (data-derived, not source-derived)
+  // Derive routability from capabilities (data-derived, not source-derived)
   const routability = deriveRoutability(capabilities);
 
-  // 4. Get display name (cosmetic only)
-  const schemaName = getSchemaDisplayName(schemaId);
-
-  // 5. Derive card from capabilities
-  const card = deriveDatasetCard(label, capabilities, schemaName);
+  // Derive card from capabilities (no schema display name needed)
+  const card = deriveDatasetCard(label, capabilities, undefined);
 
   return {
     state: routability.state,

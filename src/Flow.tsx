@@ -275,76 +275,30 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
 
   // Extract signal type from signal string (job title/description)
   const signalLower = (normalized.signal || '').toLowerCase();
-  const isJobPosting = normalized.schemaId === 'startup-jobs';
+  const raw = normalized.raw || {};
 
-  // LEADERSHIP_GAP signals are ONLY valid when sourced from job postings
-  // For B2B_CONTACTS (schemaId === 'b2b-contacts'):
-  // job_title represents a CURRENT ROLE, NOT an open position.
-  // Therefore we must NEVER set vpOpen / cLevelOpen / hasLeadershipRole from contact titles.
-  if (isJobPosting) {
+  // CSV-ONLY: Use signalMeta.kind to detect hiring signals
+  const isHiringSignal = normalized.signalMeta?.kind === 'HIRING_ROLE';
+
+  // LEADERSHIP_GAP signals are ONLY valid for HIRING_ROLE signals
+  if (isHiringSignal) {
     if (signalLower.includes('vp') || signalLower.includes('vice president')) {
-      signals.push({ type: 'VP_OPEN', source: 'job_posting' });
+      signals.push({ type: 'VP_OPEN', source: 'csv' });
       metadata.vpOpen = true;
-      metadata.jobPostingProvenance = true;
     }
     if (signalLower.includes('ceo') || signalLower.includes('cfo') || signalLower.includes('cto') ||
         signalLower.includes('coo') || signalLower.includes('chief')) {
-      signals.push({ type: 'C_LEVEL_OPEN', source: 'job_posting' });
+      signals.push({ type: 'C_LEVEL_OPEN', source: 'csv' });
       metadata.cLevelOpen = true;
-      metadata.jobPostingProvenance = true;
     }
     if (signalLower.includes('director') || signalLower.includes('head of')) {
-      signals.push({ type: 'LEADERSHIP_OPEN', source: 'job_posting' });
+      signals.push({ type: 'LEADERSHIP_OPEN', source: 'csv' });
       metadata.hasLeadershipRole = true;
-      metadata.jobPostingProvenance = true;
     }
   }
 
-  // ==========================================================================
-  // CRUNCHBASE ORGANIZATIONS — Funding signals from Crunchbase data
-  // ==========================================================================
-  const isCrunchbase = normalized.schemaId === 'crunchbase-orgs';
-  const raw = normalized.raw || {};
-
-  if (isCrunchbase) {
-    // Extract funding date and type from raw Crunchbase data
-    const fundingDate = raw.last_funding_at || null;
-    const fundingType = raw.last_funding_type || raw.last_equity_funding_type || null;
-    const fundingUsd = raw.last_funding_total?.value_usd || raw.last_equity_funding_total?.value_usd || null;
-
-    // Mark as Crunchbase provenance for edge detection
-    metadata.crunchbaseProvenance = true;
-    metadata.crunchbaseLink = raw.link || null;
-    metadata.fundingStage = raw.funding_stage || null;
-    metadata.numFundingRounds = raw.num_funding_rounds || null;
-    metadata.employeeEnum = raw.num_employees_enum || null;
-    metadata.revenueRange = raw.revenue_range || null;
-
-    // Extract founder names for enrichment target
-    const founderIdentifiers = raw.founder_identifiers || [];
-    if (Array.isArray(founderIdentifiers) && founderIdentifiers.length > 0) {
-      metadata.founderNames = founderIdentifiers.map((f: any) => f.value || f).filter(Boolean);
-    }
-
-    // Create funding signals with Crunchbase provenance
-    if (fundingDate) {
-      signals.push({ type: 'FUNDING_RECENT', source: 'crunchbase', value: fundingDate });
-      metadata.fundingDate = fundingDate;
-    }
-    if (fundingType) {
-      signals.push({ type: 'FUNDING_EVENT', source: 'crunchbase', value: fundingType });
-      metadata.fundingType = fundingType;
-    }
-    if (fundingUsd) {
-      metadata.fundingUsd = fundingUsd;
-    }
-
-    // NOTE: Do NOT create VP_OPEN / LEADERSHIP_OPEN / C_LEVEL_OPEN for Crunchbase
-    // Crunchbase is company data, not job posting data
-  }
-
-  // Funding from company data (generic - non-Crunchbase)
-  if (!isCrunchbase && normalized.companyFunding) {
+  // Funding from company data
+  if (normalized.companyFunding) {
     signals.push({ type: 'FUNDING', value: normalized.companyFunding, source: 'company' });
     metadata.hasFunding = true;
   }
@@ -752,33 +706,32 @@ function safeString(value: unknown): string {
 }
 
 /**
- * Analyze demand records — SCHEMA-AWARE.
+ * Analyze demand records — CSV-ONLY.
  *
- * JOB POSTINGS (startup-jobs, wellfound-jobs):
+ * HIRING_ROLE signals:
  *   → signal = what they're hiring for (Engineering, Sales, etc.)
  *
- * CONTACT/COMPANY DATA (b2b-contacts, crunchbase-orgs, leads-finder):
- *   → signal = person's title (NOT what company needs!)
+ * GROWTH/CONTACT_ROLE signals:
+ *   → signal = company activity or person's title
  *   → Analyze by INDUSTRY instead
  *
- * STRIPE-LEVEL: Detect data type, show correct breakdown.
+ * Uses signalMeta.kind to detect data type, show correct breakdown.
  */
 function analyzeDemandNeeds(records: NormalizedRecord[]): CategoryBreakdown[] {
   const categories: Record<string, number> = {};
 
-  // Detect if this is JOB POSTING data or CONTACT data
-  // Job postings: schemaId contains 'job' or records have job-specific fields
-  const isJobData = records.some(r =>
-    r.schemaId?.includes('job') ||
-    r.schemaId?.includes('wellfound') ||
-    (r.raw?.jobUrl || r.raw?.job_url || r.raw?.applyUrl)
+  // CSV-ONLY: Detect if this is HIRING data or CONTACT data
+  // HIRING_ROLE signals → analyze by role type (what they're hiring for)
+  // GROWTH/CONTACT_ROLE → analyze by industry (what kind of companies)
+  const isHiringData = records.some(r =>
+    r.signalMeta?.kind === 'HIRING_ROLE'
   );
 
   for (const record of records) {
     let category = 'General';
 
-    if (isJobData) {
-      // JOB POSTINGS — analyze by role type (what they're hiring for)
+    if (isHiringData) {
+      // HIRING_ROLE — analyze by role type (what they're hiring for)
       const signal = safeString(record.signal || record.title).toLowerCase();
 
       if (/engineer|developer|software|tech lead|architect|devops|sre|full.?stack|front.?end|back.?end|data scientist|ml|machine learning/i.test(signal)) {

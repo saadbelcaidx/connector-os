@@ -9,16 +9,15 @@
  * - ALLOWED: "I'm connected to", "I'm in touch with", "I know"
  * - Must be verifiable statements only
  *
- * SCHEMA AWARENESS (user.txt contract):
- * - Uses signalType to generate appropriate bridge language
- * - NO hiring assumption — only 'hiring' signalType uses hiring language
+ * CSV-ONLY (user.txt contract):
+ * - Uses evidence keywords to generate appropriate bridge language
+ * - NO entity type inference — signalType branches removed
  */
 
 import type { DemandRecord } from '../schemas/DemandRecord';
 import type { SupplyRecord } from '../schemas/SupplyRecord';
 import type { Edge } from '../schemas/Edge';
 import type { Counterparty } from '../schemas/IntroOutput';
-import type { SignalType } from '../schemas';
 
 // =============================================================================
 // BANNED PHRASES
@@ -155,70 +154,17 @@ function detectSupplyCategory(capability: string): string {
  * The bridge explains WHY the signal matters NOW, not just what happened.
  * This is what separates a connector from a spammer.
  *
- * SCHEMA AWARENESS (user.txt contract):
- * - Uses signalType as PRIMARY routing
- * - Only 'hiring' type uses hiring-specific language
- * - Other types get appropriate bridges for their signal category
+ * CSV-ONLY (user.txt contract):
+ * - Uses evidence keywords as PRIMARY routing
+ * - NO entity type inference — signalType branches removed
  */
-function buildBridge(evidence: string, capability: string, signalType?: SignalType): string {
+function buildBridge(evidence: string, capability: string): string {
   const evLower = evidence.toLowerCase();
   const supplyCategory = detectSupplyCategory(capability);
 
   // =========================================================================
-  // SCHEMA-AWARE ROUTING — signalType determines bridge category
+  // CSV-ONLY: Evidence-based routing (no signalType branches)
   // =========================================================================
-
-  // PERSON signals (founders, executives, investors)
-  if (signalType === 'person') {
-    switch (supplyCategory) {
-      case 'marketing': return 'leaders at this level often explore GTM partnerships';
-      case 'recruiting': return 'executives like this often know others exploring similar moves';
-      case 'engineering': return 'leaders at this stage often need technical partners';
-      case 'sales': return 'executives at this level often drive partnership decisions';
-      case 'finance': return 'leaders at this stage often explore strategic advisors';
-      case 'operations': return 'executives at this level often explore operational partners';
-      default: return 'leaders at this stage often explore strategic partnerships';
-    }
-  }
-
-  // COMPANY signals (org activity, funding, growth)
-  if (signalType === 'company') {
-    // Check for funding specifically
-    if (evLower.includes('funding') || evLower.includes('raised') || evLower.includes('series')) {
-      switch (supplyCategory) {
-        case 'marketing': return 'post-raise companies usually accelerate GTM';
-        case 'recruiting': return 'post-raise companies usually accelerate hiring';
-        case 'engineering': return 'post-raise timelines usually compress';
-        case 'sales': return 'boards expect pipeline acceleration after a raise';
-        case 'finance': return 'investors usually want tighter financial ops';
-        default: return 'teams at this stage usually move fast on partners';
-      }
-    }
-    // General company activity
-    switch (supplyCategory) {
-      case 'marketing': return 'companies showing this activity often explore GTM partners';
-      case 'recruiting': return 'companies at this stage often explore outside help';
-      case 'engineering': return 'companies showing momentum often explore dev partnerships';
-      case 'sales': return 'companies with this activity often explore sales acceleration';
-      case 'finance': return 'companies at this stage often bring in finance specialists';
-      default: return 'companies showing this momentum often explore outside partners';
-    }
-  }
-
-  // CONTACT signals (decision makers, direct contacts)
-  if (signalType === 'contact') {
-    switch (supplyCategory) {
-      case 'marketing': return 'decision makers at this level often drive GTM partnerships';
-      case 'recruiting': return 'contacts at this level often explore talent partnerships';
-      case 'engineering': return 'decision makers here often evaluate tech partners';
-      case 'sales': return 'contacts at this level often drive vendor decisions';
-      case 'finance': return 'decision makers here often explore advisory relationships';
-      default: return 'decision makers at this level often explore outside partners';
-    }
-  }
-
-  // HIRING signals — use detailed keyword detection (existing logic)
-  // This handles signalType === 'hiring' AND legacy records without signalType
 
   // =========================================================================
   // FUNDING SIGNAL — Post-raise pressure is real and urgent
@@ -479,13 +425,17 @@ function generateWhatTheyDo(supplyRecord: SupplyRecord): string {
  * Build supply relevance phrase for demand intro.
  * Explains WHY supply is relevant to the signal, not just WHAT they do.
  *
+ * CSV-ONLY (user.txt contract):
+ * - Uses evidence keywords as PRIMARY routing
+ * - NO entity type inference — signalType branches removed
+ *
  * Returns a phrase that completes: "folks at [supply] who [relevance]"
  */
-function buildSupplyRelevance(supplyCategory: string, signalType?: SignalType, evidence?: string): string {
+function buildSupplyRelevance(supplyCategory: string, evidence?: string): string {
   const evLower = (evidence || '').toLowerCase();
 
   // ==========================================================================
-  // SIGNAL-SPECIFIC RELEVANCE
+  // CSV-ONLY: Evidence-based relevance (no signalType branches)
   // ==========================================================================
 
   // FUNDING signals
@@ -519,36 +469,6 @@ function buildSupplyRelevance(supplyCategory: string, signalType?: SignalType, e
       case 'operations': return 'help companies scale operations';
       case 'recruiting': return 'help fast-growing companies build teams';
       default: return 'work with companies scaling like this';
-    }
-  }
-
-  // ==========================================================================
-  // SCHEMA-TYPE FALLBACKS
-  // ==========================================================================
-
-  if (signalType === 'person') {
-    switch (supplyCategory) {
-      case 'investing': return 'back founders at this level';
-      case 'recruiting': return 'work with executives like this';
-      case 'marketing': return 'work with leaders at this stage';
-      default: return 'work with leaders at this level';
-    }
-  }
-
-  if (signalType === 'company') {
-    switch (supplyCategory) {
-      case 'investing': return 'invest in companies like this';
-      case 'marketing': return 'help companies like this grow';
-      case 'recruiting': return 'help companies like this hire';
-      default: return 'work with companies like this';
-    }
-  }
-
-  if (signalType === 'contact') {
-    switch (supplyCategory) {
-      case 'recruiting': return 'work with decision makers like this';
-      case 'sales': return 'work with buyers at this level';
-      default: return 'work with contacts at this level';
     }
   }
 
@@ -610,7 +530,7 @@ export function composeIntros(
     || extractCapabilityFromCompanyName(supplyRecord.company)
     || '';
   const supplyCategory = detectSupplyCategory(supplyCapability);
-  const supplyRelevance = buildSupplyRelevance(supplyCategory, demand.signalType, edge.evidence);
+  const supplyRelevance = buildSupplyRelevance(supplyCategory, edge.evidence);
 
   // ==========================================================================
   // DEMAND INTRO — Signal-First Template

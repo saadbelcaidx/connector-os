@@ -386,19 +386,16 @@ function extractNeedFromDemand(demand: NormalizedRecord): NeedProfile {
   const company = toStringSafe(demand.company).toLowerCase();
 
   // ==========================================================================
-  // SCHEMA DETECTION — Is this JOB DATA or CONTACT DATA?
+  // CSV-ONLY: Use signalMeta.kind to detect data type
   // ==========================================================================
-  // Job data: schemaId contains 'job', has jobUrl/applyUrl
-  // Contact data: Leads Finder, Crunchbase, B2B contacts (signal = person's title)
-  const isJobData =
-    demand.schemaId?.includes('job') ||
-    demand.schemaId?.includes('wellfound') ||
-    Boolean(demand.raw?.jobUrl || demand.raw?.job_url || demand.raw?.applyUrl);
+  // HIRING_ROLE signals → analyze by role type (what they're hiring for)
+  // GROWTH/CONTACT_ROLE → analyze by industry (what kind of companies)
+  const isHiringData = demand.signalMeta?.kind === 'HIRING_ROLE';
 
   // ==========================================================================
-  // CONTACT DATA — Analyze by INDUSTRY, not person's title
+  // NON-HIRING DATA — Analyze by INDUSTRY, not person's title
   // ==========================================================================
-  if (!isJobData) {
+  if (!isHiringData) {
     const industryAndDesc = `${industry} ${company} ${description}`;
 
     // Biotech/Pharma companies
