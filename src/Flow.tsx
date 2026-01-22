@@ -49,6 +49,15 @@ import { extractSignalIntelligence, type ExtractionResult } from './services/Sig
 // CSV Data Support
 import { getCsvData } from './services/SignalsClient';
 
+// Flow State Persistence — IndexedDB-based, survives navigation
+import {
+  createFlow,
+  saveFlow as persistFlow,
+  loadFlowAsync,
+  listFlowsAsync,
+  FlowState as PersistedFlowState,
+} from './services/FlowStateStore';
+
 // 3-Step AI Intro Generation (user.txt contract)
 import { generateIntrosAI, IntroAIConfig } from './services/IntroAI';
 
@@ -1033,6 +1042,110 @@ export default function Flow() {
   const errorRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
+
+  // =============================================================================
+  // FLOW PERSISTENCE — IndexedDB-based, survives navigation
+  // =============================================================================
+  const flowIdRef = useRef<string | null>(null);
+  const hasRestoredRef = useRef(false);
+
+  // Serialize Maps to objects for IndexedDB storage
+  const serializeState = useCallback((s: FlowState) => ({
+    step: s.step,
+    isHubFlow: s.isHubFlow,
+    demandRecords: s.demandRecords,
+    supplyRecords: s.supplyRecords,
+    matchingResult: s.matchingResult,
+    detectedEdges: Object.fromEntries(s.detectedEdges),
+    enrichedDemand: Object.fromEntries(s.enrichedDemand),
+    enrichedSupply: Object.fromEntries(s.enrichedSupply),
+    demandIntros: Object.fromEntries(s.demandIntros),
+    supplyIntros: Object.fromEntries(s.supplyIntros),
+    progress: s.progress,
+    sentDemand: s.sentDemand,
+    sentSupply: s.sentSupply,
+  }), []);
+
+  // Deserialize objects back to Maps
+  const deserializeState = useCallback((data: any): Partial<FlowState> => ({
+    step: data.step,
+    isHubFlow: data.isHubFlow,
+    demandRecords: data.demandRecords || [],
+    supplyRecords: data.supplyRecords || [],
+    matchingResult: data.matchingResult,
+    detectedEdges: new Map(Object.entries(data.detectedEdges || {})),
+    enrichedDemand: new Map(Object.entries(data.enrichedDemand || {})),
+    enrichedSupply: new Map(Object.entries(data.enrichedSupply || {})),
+    demandIntros: new Map(Object.entries(data.demandIntros || {})),
+    supplyIntros: new Map(Object.entries(data.supplyIntros || {})),
+    progress: data.progress || { current: 0, total: 0, message: '' },
+    sentDemand: data.sentDemand || 0,
+    sentSupply: data.sentSupply || 0,
+  }), []);
+
+  // Persist state to IndexedDB on step changes
+  useEffect(() => {
+    // Don't persist upload or complete steps
+    if (state.step === 'upload' || state.step === 'complete') return;
+    // Don't persist if no data loaded yet
+    if (state.demandRecords.length === 0 && state.supplyRecords.length === 0) return;
+
+    // Create flow if we don't have one
+    if (!flowIdRef.current) {
+      const newFlow = createFlow({ name: `Flow ${new Date().toLocaleTimeString()}` });
+      flowIdRef.current = newFlow.flowId;
+      console.log('[Flow] Created persistent flow:', flowIdRef.current);
+    }
+
+    // Save current state
+    const serialized = serializeState(state);
+    loadFlowAsync(flowIdRef.current).then(existingFlow => {
+      if (existingFlow) {
+        existingFlow.stages.matching.results = serialized;
+        existingFlow.stages.matching.status = state.step === 'matches_found' ? 'complete' : 'running';
+        existingFlow.stages.matching.progress = Math.round((state.progress.current / Math.max(state.progress.total, 1)) * 100);
+        persistFlow(existingFlow);
+        console.log('[Flow] Persisted state:', state.step);
+      }
+    });
+  }, [state.step, state.demandRecords.length, state.supplyRecords.length, serializeState]);
+
+  // Restore state on mount (check URL param or latest incomplete flow)
+  useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const resumeFlowId = params.get('resumeFlowId');
+
+    const restore = async () => {
+      let flowToRestore: PersistedFlowState | null = null;
+
+      if (resumeFlowId) {
+        // Explicit resume from URL
+        flowToRestore = await loadFlowAsync(resumeFlowId);
+      } else {
+        // Check for any recent incomplete flow
+        const flows = await listFlowsAsync();
+        for (const entry of flows) {
+          const flow = await loadFlowAsync(entry.flowId);
+          if (flow && flow.stages.matching.status === 'running') {
+            flowToRestore = flow;
+            break;
+          }
+        }
+      }
+
+      if (flowToRestore && flowToRestore.stages.matching.results) {
+        const restored = deserializeState(flowToRestore.stages.matching.results);
+        flowIdRef.current = flowToRestore.flowId;
+        setState(prev => ({ ...prev, ...restored }));
+        console.log('[Flow] Restored from:', flowToRestore.flowId, 'step:', restored.step);
+      }
+    };
+
+    restore();
+  }, [deserializeState]);
 
   // Navigation guard — warn user before leaving during active flow
   const hasActiveFlow = state.step !== 'upload' && state.step !== 'complete';
