@@ -15,7 +15,7 @@ import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
 
 // New architecture
-import { validateDataset, validateSupplyDataset, normalizeDataset, NormalizedRecord, Schema, getSchemaById, renderSignal, getNarration } from './schemas';
+import { NormalizedRecord, Schema, getSchemaById, renderSignal, getNarration } from './schemas';
 import { matchRecords, MatchingResult, filterByScore } from './matching';
 import { filterDemandBySupplyCapability, type FilterResult } from './services/matching';
 import {
@@ -374,6 +374,11 @@ function toDemandRecord(normalized: NormalizedRecord): DemandRecord {
   // Get schema to extract signalType
   const schema = getSchemaById(normalized.schemaId);
 
+  // CHECKPOINT 3 (user.txt): Map companyDescription to metadata
+  // IntroAI reads metadata.companyDescription — this mapping is NON-NEGOTIABLE
+  metadata.companyDescription = normalized.companyDescription || '';
+  metadata.description = metadata.companyDescription;  // Mirrored fallback
+
   return {
     domain: normalized.domain,
     company: normalized.company,
@@ -682,8 +687,7 @@ function safeRender(value: unknown): string {
 // =============================================================================
 
 type ErrorCode =
-  | 'MISSING_APIFY_TOKEN'
-  | 'MISSING_DATASET_ID'
+  | 'MISSING_DEMAND_CSV'
   | 'DATASET_FETCH_FAILED'
   | 'DATASET_EMPTY'
   | 'DATASET_INVALID'
@@ -694,13 +698,13 @@ type ErrorCode =
   | 'UNKNOWN';
 
 function toUserError(code: ErrorCode, detail?: string): string {
+  // CSV-ONLY: Error messages reference CSV upload
   const messages: Record<ErrorCode, string> = {
-    MISSING_APIFY_TOKEN: 'Missing Apify token. Go to Settings → Data Sources, paste your Apify API token.',
-    MISSING_DATASET_ID: 'Missing dataset ID. Go to Settings → Data Sources, add your Apify dataset ID.',
-    DATASET_FETCH_FAILED: `Failed to fetch dataset${detail ? `: ${detail}` : ''}. Check your dataset ID and Apify token, then retry.`,
-    DATASET_EMPTY: 'Dataset returned 0 rows. Run your Apify scraper first, or check the dataset ID.',
-    DATASET_INVALID: `Dataset format not recognized${detail ? `: ${detail}` : ''}. Use a supported Apify scraper (Wellfound Jobs, LinkedIn Company Leads).`,
-    MISSING_SUPPLY: 'No supply dataset configured. Go to Settings → Data Sources, add a supply dataset ID.',
+    MISSING_DEMAND_CSV: 'No demand CSV uploaded. Go to Settings → Data Sources, upload your demand CSV.',
+    DATASET_FETCH_FAILED: `Failed to load CSV${detail ? `: ${detail}` : ''}. Check your CSV format and retry.`,
+    DATASET_EMPTY: 'CSV has 0 rows. Upload a CSV with data.',
+    DATASET_INVALID: `CSV format not recognized${detail ? `: ${detail}` : ''}. Required columns: Company Name, Signal.`,
+    MISSING_SUPPLY: 'No supply CSV uploaded. Go to Settings → Data Sources, upload a supply CSV.',
     HUB_ERROR: detail || 'Hub data error. Please try selecting contacts again.',
     HUB_MISSING_SIDE: 'Hub requires both Demand and Supply contacts. Go back to Hub and select contacts for both sides.',
     CONTRACT_VIOLATION: `Data validation failed${detail ? `: ${detail}` : ''}. Check console for details.`,
@@ -1009,9 +1013,7 @@ interface FlowState {
 }
 
 interface Settings {
-  apifyToken?: string;
-  demandDatasetId?: string;
-  supplyDatasetId?: string;
+  // CSV-ONLY: Apify settings removed (architectural decision locked)
   apolloApiKey?: string;
   anymailApiKey?: string;
   connectorAgentApiKey?: string;
@@ -1187,9 +1189,7 @@ export default function Flow() {
             : undefined;
 
           setSettings({
-            apifyToken: data?.apify_token || '',
-            demandDatasetId: data?.demand_dataset_id || '',
-            supplyDatasetId: data?.supply_dataset_id || '',
+            // CSV-ONLY: Apify settings removed
             apolloApiKey: data?.enrichment_api_key || '',
             anymailApiKey: data?.anymail_finder_api_key || '',
             connectorAgentApiKey: data?.connector_agent_api_key || '',
@@ -1241,9 +1241,7 @@ export default function Flow() {
           : undefined;
 
         setSettings({
-          apifyToken: s.apifyToken,
-          demandDatasetId: s.demandDatasetId,
-          supplyDatasetId: s.supplyDatasetId,
+          // CSV-ONLY: Apify settings removed
           apolloApiKey: s.apolloApiKey,
           anymailApiKey: s.anymailApiKey,
           connectorAgentApiKey: s.connectorAgentApiKey,
@@ -1464,83 +1462,42 @@ export default function Flow() {
       // END HUB ADAPTER - Normal flow continues below
       // =========================================================================
 
-      // Fetch demand dataset (CSV takes priority over Apify)
+      // CSV-ONLY: Load demand from CSV (already normalized by CsvUpload)
       let demandRecords: NormalizedRecord[] = [];
-      let demandValidation: { valid: boolean; schema: Schema | null; error?: string } = { valid: false, schema: null };
+
+      // CSV schemas — placeholder metadata for downstream functions
+      // Same pattern as Hub path (lines 1437-1438)
+      const csvDemandSchema = { name: 'CSV Upload (Demand)', id: 'csv-demand', fields: [], hasContacts: true } as any;
+      const csvSupplySchema = { name: 'CSV Upload (Supply)', id: 'csv-supply', fields: [], hasContacts: true } as any;
 
       const csvDemandData = getCsvData('demand');
       if (csvDemandData && csvDemandData.length > 0) {
-        // CSV demand data exists - use it
-        console.log('[Flow] Using CSV demand data:', csvDemandData.length, 'records');
+        console.log('[Flow] Loading demand from CSV:', csvDemandData.length, 'records');
         console.log('[Flow] CSV demand sample:', csvDemandData[0]);
         setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading demand from CSV...' } }));
 
-        demandValidation = validateDataset(csvDemandData);
-        console.log('[Flow] CSV Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
-
-        if (!guard(demandValidation.valid && demandValidation.schema,
-          BLOCKS.SCHEMA_INVALID(demandValidation.error || 'Unknown CSV schema'), setFlowBlock)) return;
-
-        demandRecords = normalizeDataset(csvDemandData, demandValidation.schema);
-        console.log(`[Flow] CSV Demand: ${demandRecords.length} records (${demandValidation.schema.name})`);
+        // Data is already NormalizedRecord[] from CsvUpload — use directly
+        demandRecords = csvDemandData as NormalizedRecord[];
+        console.log(`[Flow] Demand: ${demandRecords.length} records`);
       } else {
-        // No CSV - require Apify
-        if (!guard(settings?.apifyToken, BLOCKS.NO_APIFY_TOKEN, setFlowBlock)) return;
-        if (!guard(settings?.demandDatasetId, BLOCKS.NO_DEMAND_DATASET, setFlowBlock)) return;
-
-        setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading demand...' } }));
-
-        const demandData = await fetchApifyDataset(settings.demandDatasetId, settings.apifyToken);
-        console.log('[Flow] Raw demand data sample:', demandData[0]);
-        console.log('[Flow] Raw demand fields:', demandData[0] ? Object.keys(demandData[0]) : 'empty');
-        setState(prev => ({ ...prev, progress: { ...prev.progress, current: 30, message: 'Validating demand...' } }));
-
-        demandValidation = validateDataset(demandData);
-        console.log('[Flow] Demand validation:', { valid: demandValidation.valid, schema: demandValidation.schema?.name, error: demandValidation.error });
-
-        if (!guard(demandData && demandData.length > 0, BLOCKS.DATASET_EMPTY, setFlowBlock)) return;
-        if (!guard(demandValidation.valid && demandValidation.schema,
-          BLOCKS.SCHEMA_INVALID(demandValidation.error || 'Unknown schema'), setFlowBlock)) return;
-
-        demandRecords = normalizeDataset(demandData, demandValidation.schema);
-        console.log(`[Flow] Demand: ${demandRecords.length} records (${demandValidation.schema.name})`);
-        console.log('[Flow] Normalized demand sample:', demandRecords[0] ? { email: demandRecords[0].email, firstName: demandRecords[0].firstName, company: demandRecords[0].company, domain: demandRecords[0].domain, signal: demandRecords[0].signal } : 'empty');
+        // No CSV — require upload
+        if (!guard(false, BLOCKS.NO_DEMAND_CSV, setFlowBlock)) return;
       }
 
-      // Fetch supply dataset (CSV takes priority over Apify)
+      // CSV-ONLY: Load supply from CSV (already normalized by CsvUpload)
       let supplyRecords: NormalizedRecord[] = [];
-      let supplySchema: Schema | null = null;
 
       const csvSupplyData = getCsvData('supply');
       if (csvSupplyData && csvSupplyData.length > 0) {
-        // CSV supply data exists - use it
-        console.log('[Flow] Using CSV supply data:', csvSupplyData.length, 'records');
+        console.log('[Flow] Loading supply from CSV:', csvSupplyData.length, 'records');
         console.log('[Flow] CSV supply sample:', csvSupplyData[0]);
         setState(prev => ({ ...prev, progress: { ...prev.progress, current: 50, message: 'Loading supply from CSV...' } }));
 
-        const supplyValidation = validateSupplyDataset(csvSupplyData);
-        console.log('[Flow] CSV Supply validation:', { valid: supplyValidation.valid, schema: supplyValidation.schema?.name, error: supplyValidation.error });
-        if (supplyValidation.valid && supplyValidation.schema) {
-          supplyRecords = normalizeDataset(csvSupplyData, supplyValidation.schema);
-          supplySchema = supplyValidation.schema;
-          console.log(`[Flow] CSV Supply: ${supplyRecords.length} records (${supplyValidation.schema.name})`);
-        }
-      } else if (settings.supplyDatasetId) {
-        setState(prev => ({ ...prev, progress: { ...prev.progress, current: 50, message: 'Loading supply...' } }));
-        const supplyData = await fetchApifyDataset(settings.supplyDatasetId, settings.apifyToken);
-        console.log('[Flow] Raw supply data sample:', supplyData[0]);
-        console.log('[Flow] Raw supply fields:', supplyData[0] ? Object.keys(supplyData[0]) : 'empty');
-
-        const supplyValidation = validateSupplyDataset(supplyData);
-        console.log('[Flow] Supply validation:', { valid: supplyValidation.valid, schema: supplyValidation.schema?.name, error: supplyValidation.error });
-        if (supplyValidation.valid && supplyValidation.schema) {
-          supplyRecords = normalizeDataset(supplyData, supplyValidation.schema);
-          supplySchema = supplyValidation.schema;
-          console.log(`[Flow] Supply: ${supplyRecords.length} records (${supplyValidation.schema.name})`);
-          console.log('[Flow] Normalized supply sample:', supplyRecords[0] ? { email: supplyRecords[0].email, firstName: supplyRecords[0].firstName, company: supplyRecords[0].company, domain: supplyRecords[0].domain, title: supplyRecords[0].title } : 'empty');
-        }
+        // Data is already NormalizedRecord[] from CsvUpload — use directly
+        supplyRecords = csvSupplyData as NormalizedRecord[];
+        console.log(`[Flow] Supply: ${supplyRecords.length} records`);
       } else {
-        console.log('[Flow] No supply dataset configured (no CSV, no Apify dataset ID)');
+        console.log('[Flow] No supply CSV uploaded');
       }
 
       // Analyze data for preview BEFORE matching
@@ -1599,8 +1556,8 @@ export default function Flow() {
         ...prev,
         step: 'preview',
         dataPreview,
-        demandSchema: demandValidation.schema,
-        supplySchema,
+        demandSchema: csvDemandSchema,
+        supplySchema: csvSupplySchema,
         demandRecords,
         supplyRecords,
         progress: { current: 70, total: 100, message: 'Review data...' },
@@ -2163,6 +2120,10 @@ export default function Flow() {
         industry: demandIndustry,
         signals: [edge.evidence],  // STRIPE-FIX: Pass actual signal (guaranteed non-empty by gate)
         metadata: {
+          // CHECKPOINT 3 (user.txt): companyDescription mapping — NON-NEGOTIABLE
+          // IntroAI reads metadata.companyDescription — "What they do: N/A" is a HARD FAILURE
+          companyDescription: match.demand.companyDescription || demandRaw.company_description || demandRaw['Service Description'] || demandRaw.description || '',
+          description: match.demand.companyDescription || demandRaw.company_description || demandRaw['Service Description'] || demandRaw.description || '',
           // Funding data (Crunchbase)
           fundingDate: demandRaw.last_funding_at || null,
           fundingType: demandRaw.last_funding_type || demandRaw.last_equity_funding_type || null,
@@ -2215,7 +2176,11 @@ export default function Flow() {
         title: supplyEnriched?.title || match.supply.title || '',
         capability: supplyCapability,
         targetProfile: supplyRaw.targetProfile || (Array.isArray(match.supply.industry) ? (match.supply.industry as string[])[0] : match.supply.industry) || '',
-        metadata: {},
+        metadata: {
+          // CHECKPOINT 3 (user.txt): companyDescription mapping for supply
+          companyDescription: match.supply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
+          description: match.supply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
+        },
       };
 
       // ==========================================================================
@@ -2289,6 +2254,55 @@ export default function Flow() {
             type: edge.type,
             evidence: edge.evidence,
           });
+
+          // ==========================================================================
+          // CHECKPOINT 4 (user.txt): Runtime audit log — MANDATORY BEFORE IntroAI
+          // If demandDesc is empty when source had description, this is a BUG
+          // ==========================================================================
+          console.log('[INTRO_INPUT_AUDIT]', {
+            demandCompany: demandRecord.company,
+            demandDesc: demandRecord.metadata.companyDescription?.slice(0, 100),
+            signalKind: match.demand.signalMeta?.kind,
+            signalLabel: match.demand.signalMeta?.label,
+            supplyCompany: supplyRecord.company,
+            supplyDesc: supplyRecord.metadata.companyDescription?.slice(0, 100),
+          });
+
+          // ==========================================================================
+          // CHECKPOINT 5 (user.txt): Regression Guard — DO NOT SILENTLY LOSE DATA
+          // If source had a description but metadata.companyDescription is empty, THROW
+          // ==========================================================================
+          const sourceHadDemandDesc =
+            demandRaw.company_description ||
+            demandRaw['Service Description'] ||
+            demandRaw.description ||
+            demandRaw.short_description ||
+            match.demand.companyDescription;
+
+          if (sourceHadDemandDesc && !demandRecord.metadata.companyDescription) {
+            console.error('[REGRESSION_GUARD] DEMAND DESCRIPTION LOST:', {
+              source: sourceHadDemandDesc?.slice(0, 50),
+              mappedTo: demandRecord.metadata.companyDescription,
+              company: demandRecord.company,
+            });
+            throw new Error(`REGRESSION_GUARD: Demand description lost for ${demandRecord.company}. Source had: "${sourceHadDemandDesc?.slice(0, 50)}..." but metadata.companyDescription is empty.`);
+          }
+
+          const sourceHadSupplyDesc =
+            supplyRaw.company_description ||
+            supplyRaw['Service Description'] ||
+            supplyRaw.description ||
+            match.supply.companyDescription;
+
+          if (sourceHadSupplyDesc && !supplyRecord.metadata.companyDescription) {
+            console.error('[REGRESSION_GUARD] SUPPLY DESCRIPTION LOST:', {
+              source: sourceHadSupplyDesc?.slice(0, 50),
+              mappedTo: supplyRecord.metadata.companyDescription,
+              company: supplyRecord.company,
+            });
+            throw new Error(`REGRESSION_GUARD: Supply description lost for ${supplyRecord.company}. Source had: "${sourceHadSupplyDesc?.slice(0, 50)}..." but metadata.companyDescription is empty.`);
+          }
+
           const aiResult = await generateIntrosAI(introAIConfig, demandRecord, supplyRecord, edge);
 
           demandIntros.set(recordKey(match.demand), aiResult.demandIntro);
@@ -2692,12 +2706,7 @@ export default function Flow() {
   // HELPERS
   // =============================================================================
 
-  async function fetchApifyDataset(datasetId: string, token: string): Promise<any[]> {
-    const url = `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Failed to fetch dataset');
-    return response.json();
-  }
+  // CSV-ONLY: fetchApifyDataset removed (architectural decision locked)
 
   const reset = () => {
     abortRef.current = true;
@@ -2814,13 +2823,13 @@ export default function Flow() {
                 // Normalize error to string (defensive against objects leaking in)
                 const errorStr = safeRender(state.error);
 
-                // Convert error string to UXBlock for rich explanation
-                const errorBlock: UXBlock = errorStr.includes('Missing Apify token')
-                  ? { type: 'DATASET_INVALID', side: 'demand', message: 'Missing Apify token' }
-                  : errorStr.includes('Missing dataset')
+                // Convert error string to UXBlock for rich explanation (CSV-ONLY)
+                const errorBlock: UXBlock = errorStr.includes('No demand CSV')
+                  ? { type: 'DATASET_INVALID', side: 'demand', message: 'No demand CSV uploaded' }
+                  : errorStr.includes('Missing dataset') || errorStr.includes('No CSV')
                   ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
-                  : errorStr.includes('No supply dataset')
-                  ? { type: 'DATASET_INVALID', side: 'supply', message: 'No supply dataset configured' }
+                  : errorStr.includes('No supply')
+                  ? { type: 'DATASET_INVALID', side: 'supply', message: 'No supply CSV uploaded' }
                   : errorStr.includes('Hub')
                   ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
                   : { type: 'UNKNOWN_ERROR', message: errorStr };
@@ -2836,7 +2845,7 @@ export default function Flow() {
                           navigate('/settings');
                         } else if (action.kind === 'copy_to_clipboard') {
                           navigator.clipboard.writeText(
-                            `Flow Error: ${errorStr}\n\nDataset: ${settings?.demandDatasetId || 'not set'}`
+                            `Flow Error: ${errorStr}\n\nCSV: ${getCsvData('demand') ? 'loaded' : 'not set'}`
                           );
                         } else if (action.kind === 'retry') {
                           setState(prev => ({ ...prev, error: null }));
@@ -2851,9 +2860,8 @@ export default function Flow() {
                           Debug info
                         </summary>
                         <div className="mt-2 p-2 rounded-lg bg-black/30 border border-white/[0.06] text-[10px] font-mono text-white/50 space-y-1">
-                          <p>demandDatasetId: {settings.demandDatasetId || '(not set)'}</p>
-                          <p>supplyDatasetId: {settings.supplyDatasetId || '(not set)'}</p>
-                          <p>apifyToken: {settings.apifyToken ? '✓ set' : '✗ missing'}</p>
+                          <p>demandCSV: {getCsvData('demand') ? '✓ loaded' : '✗ not set'}</p>
+                          <p>supplyCSV: {getCsvData('supply') ? '✓ loaded' : '✗ not set'}</p>
                           <p>aiConfig: {settings.aiConfig?.provider || 'none'}</p>
                         </div>
                       </details>
@@ -2862,9 +2870,9 @@ export default function Flow() {
                 );
               })()}
 
-              {/* PRE-FLIGHT GATE: Check requirements BEFORE matching */}
+              {/* PRE-FLIGHT GATE: Check requirements BEFORE matching (CSV-ONLY) */}
               {(() => {
-                const hasDataset = !!(settings?.demandDatasetId || getCsvData('demand'));
+                const hasDataset = !!getCsvData('demand');
                 const hasEnrichmentKeys = !!(
                   settings?.apolloApiKey ||
                   settings?.anymailApiKey ||
@@ -2936,10 +2944,10 @@ export default function Flow() {
                       </button>
                     )}
 
-                    {/* Hint when no dataset */}
+                    {/* Hint when no CSV */}
                     {!hasDataset && (
                       <p className="text-[11px] text-white/30 mt-3 text-center">
-                        Add a dataset in Settings to begin
+                        Upload a CSV in Settings to begin
                       </p>
                     )}
                   </>
@@ -3330,35 +3338,10 @@ export default function Flow() {
                         </div>
                       </div>
 
-                      {/* Supply filter — Apple style card */}
-                      {supplyAwareFilter && supplyAwareFilter.totalDemand > 0 && (
-                        <div className="mt-6 max-w-xs mx-auto">
-                          <div className="p-4 rounded-2xl bg-white/[0.02]">
-                            <p className="text-[13px] text-white/70">
-                              <span className="text-white font-medium">{supplyAwareFilter.matchableDemand}</span>
-                              <span className="text-white/50"> of {supplyAwareFilter.totalDemand} match your supply</span>
-                            </p>
-
-                            {/* Gaps — collapsible, no scrollbar */}
-                            {supplyAwareFilter.supplyGaps.length > 0 && (
-                              <details className="mt-3 group">
-                                <summary className="text-[11px] text-white/30 cursor-pointer hover:text-white/50 transition-colors flex items-center gap-1">
-                                  <span className="group-open:rotate-90 transition-transform">›</span>
-                                  {supplyAwareFilter.totalDemand - supplyAwareFilter.matchableDemand} filtered
-                                </summary>
-                                <div className="mt-2 pt-2 border-t border-white/[0.04]">
-                                  {supplyAwareFilter.supplyGaps.slice(0, 5).map((gap, i) => (
-                                    <p key={i} className="text-[10px] text-white/25 py-0.5">{gap}</p>
-                                  ))}
-                                  {supplyAwareFilter.supplyGaps.length > 5 && (
-                                    <p className="text-[10px] text-white/20 pt-1">+{supplyAwareFilter.supplyGaps.length - 5} more</p>
-                                  )}
-                                </div>
-                              </details>
-                            )}
-                          </div>
-                        </div>
-                      )}
+                      {/* Supply filter REMOVED — was showing misleading "0 of X match" when real matcher found matches.
+                          The keyword-based filter assumed demand.signal = title, which is false for biotech licensing,
+                          partnerships, BD, strategy use cases. A system that emits confident wrong information is worse
+                          than no information. Real matching uses AI extraction. */}
 
                       {/* iOS Segmented Control */}
                       {edgeCount > 0 && (
@@ -3684,7 +3667,7 @@ export default function Flow() {
             >
               {/* Primary heading — encouraging, not blocking */}
               <h2 className="text-[32px] font-light text-white/90 mb-3">
-                Datasets loaded
+                CSV loaded
               </h2>
 
               {/* Secondary text — action-oriented */}
@@ -3707,7 +3690,7 @@ export default function Flow() {
                 Find contacts anyway
               </button>
 
-              {/* SECONDARY — Try different datasets */}
+              {/* SECONDARY — Try different CSV */}
               <button
                 onClick={() => {
                   setState(prev => ({
@@ -3724,7 +3707,7 @@ export default function Flow() {
                 }}
                 className={`mt-4 ${BTN.secondary}`}
               >
-                Or try different datasets
+                Or try different CSV
               </button>
 
               {/* Reassurance */}

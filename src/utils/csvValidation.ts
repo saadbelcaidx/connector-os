@@ -13,6 +13,8 @@
  * 4. Duplicate Detection (WARNING ONLY) — hash: name + company + domain
  */
 
+import Papa from 'papaparse';
+
 // =============================================================================
 // TYPES (LOCAL ONLY — NOT EXPORTED)
 // =============================================================================
@@ -58,8 +60,8 @@ type CsvSide = 'demand' | 'supply';
 // =============================================================================
 
 const REQUIRED_COLUMNS: Record<CsvSide, string[]> = {
-  demand: ['Full Name', 'Company Name', 'Domain', 'Title'],
-  supply: ['Full Name', 'Company Name', 'Domain', 'Service Description'],
+  demand: ['Company Name', 'Signal'],
+  supply: ['Company Name', 'Signal'],
 };
 
 // =============================================================================
@@ -70,6 +72,7 @@ const FIELD_NAMES: Record<string, string> = {
   'Full Name': 'contact name',
   'Company Name': 'company name',
   'Domain': 'company website',
+  'Signal': 'signal',
   'Title': 'job title',
   'Service Description': 'service description',
   'Email': 'email address',
@@ -80,6 +83,7 @@ const FIELD_SUGGESTIONS: Record<string, string> = {
   'Full Name': "Add the person's full name like 'John Doe'",
   'Company Name': "Add the company name like 'Acme Inc'",
   'Domain': "Add the company website like 'acme.com' (without http://)",
+  'Signal': "Add the signal like 'Hiring: 3 engineers' or 'Raised Series A'",
   'Title': "Add the job title like 'VP of Sales'",
   'Service Description': "Add a brief description of services offered",
   'Email': "Add a valid email address like 'john@acme.com'",
@@ -90,6 +94,7 @@ const FIELD_EXAMPLES: Record<string, string> = {
   'Full Name': 'John Doe',
   'Company Name': 'Stripe',
   'Domain': 'stripe.com',
+  'Signal': 'Hiring: 3 Account Executives',
   'Title': 'VP of Sales',
   'Service Description': 'Tech recruitment for SaaS companies',
   'Email': 'john.doe@stripe.com',
@@ -163,72 +168,26 @@ function createError(
 
 /**
  * Parse CSV text into headers and rows.
- * Handles: BOM, \r\n vs \n, quoted fields with commas, empty rows.
+ * Uses Papa Parse for proper handling of:
+ * - Multiline quoted fields
+ * - BOM removal
+ * - Various line endings
+ * - Escaped quotes
  */
 export function parseCsv(text: string): ParsedCsv {
-  // Remove BOM if present
-  let cleaned = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  const result = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim(),
+    transform: (value) => value.trim(),
+  });
 
-  // Normalize line endings
-  cleaned = cleaned.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-  const lines = cleaned.split('\n');
-  if (lines.length === 0) {
-    return { headers: [], rows: [] };
+  if (result.errors.length > 0) {
+    console.warn('[parseCsv] Parse warnings:', result.errors);
   }
 
-  // Parse a single CSV line (handles quoted fields)
-  const parseLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      const nextChar = line[i + 1];
-
-      if (inQuotes) {
-        if (char === '"' && nextChar === '"') {
-          current += '"';
-          i++; // Skip escaped quote
-        } else if (char === '"') {
-          inQuotes = false;
-        } else {
-          current += char;
-        }
-      } else {
-        if (char === '"') {
-          inQuotes = true;
-        } else if (char === ',') {
-          result.push(current.trim());
-          current = '';
-        } else {
-          current += char;
-        }
-      }
-    }
-    result.push(current.trim());
-    return result;
-  };
-
-  // Parse headers
-  const headers = parseLine(lines[0]);
-
-  // Parse data rows (skip empty lines)
-  const rows: Record<string, string>[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue; // Skip empty rows
-
-    const values = parseLine(line);
-    const row: Record<string, string> = {};
-
-    headers.forEach((header, idx) => {
-      row[header] = values[idx] || '';
-    });
-
-    rows.push(row);
-  }
+  const headers = result.meta.fields || [];
+  const rows = result.data;
 
   return { headers, rows };
 }
@@ -298,66 +257,64 @@ export function validateCsvRequiredFields(rows: Record<string, string>[], side: 
 // =============================================================================
 
 /**
- * Normalize and validate domain values.
+ * Validate domain values (WARN ONLY — domain is optional).
  * - Strip protocol, www, path/query/hash
  * - Lowercase
- * - Reject IP addresses
- * - Hard stop if >20% invalid
+ * - Flag IP addresses and invalid formats as warnings
+ * - NEVER blocks upload
  */
-export function validateCsvDomains(rows: Record<string, string>[]): { errors: ErrorRow[]; hardStop: boolean } {
-  const errors: ErrorRow[] = [];
+export function validateCsvDomains(rows: Record<string, string>[]): { warnings: WarningRow[]; stats: { missing: number; invalid: number } } {
+  const warnings: WarningRow[] = [];
   const domainRegex = /^[a-z0-9]+([-\.]{1}[a-z0-9]+)*\.[a-z]{2,}$/i;
   const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
 
+  let missingCount = 0;
   let invalidCount = 0;
 
   rows.forEach((row, idx) => {
     let domain = row['Domain']?.trim() || '';
-    if (!domain) return; // Empty domains handled by required field validation
+
+    // Track missing domains (for UX messaging about enrichment)
+    if (!domain) {
+      missingCount++;
+      return;
+    }
 
     // Normalize domain
     try {
-      // Remove protocol
       domain = domain.replace(/^https?:\/\//i, '');
-      // Remove www.
       domain = domain.replace(/^www\./i, '');
-      // Remove path/query/hash
       domain = domain.split('/')[0].split('?')[0].split('#')[0];
-      // Lowercase
       domain = domain.toLowerCase();
     } catch {
       // Keep original if parsing fails
     }
 
-    // Reject IP addresses
+    // Flag IP addresses as warning
     if (ipRegex.test(domain)) {
-      errors.push(createError(
-        idx + 2,
-        'Domain',
-        'IP addresses are not allowed',
-        row['Domain']
-      ));
+      warnings.push({
+        rowIndex: idx + 2,
+        field: 'Domain',
+        reason: 'IP address (use domain name for enrichment)',
+        originalValue: row['Domain'],
+      });
       invalidCount++;
       return;
     }
 
-    // Validate domain format
+    // Flag invalid format as warning
     if (!domainRegex.test(domain)) {
-      errors.push(createError(
-        idx + 2,
-        'Domain',
-        'Invalid domain format',
-        row['Domain']
-      ));
+      warnings.push({
+        rowIndex: idx + 2,
+        field: 'Domain',
+        reason: 'Invalid format (enrichment may fail)',
+        originalValue: row['Domain'],
+      });
       invalidCount++;
     }
   });
 
-  // Hard stop if >20% invalid domains
-  const invalidRatio = rows.length > 0 ? invalidCount / rows.length : 0;
-  const hardStop = invalidRatio > 0.2;
-
-  return { errors, hardStop };
+  return { warnings, stats: { missing: missingCount, invalid: invalidCount } };
 }
 
 // =============================================================================
@@ -434,18 +391,9 @@ export function validateCsv(text: string, side: CsvSide): { result: ValidationRe
   const fieldErrors = validateCsvRequiredFields(rows, side);
   allErrors.push(...fieldErrors);
 
-  // Tier 3: Domain validation (HARD STOP if >20% invalid)
-  const { errors: domainErrors, hardStop: domainHardStop } = validateCsvDomains(rows);
-  allErrors.push(...domainErrors);
-
-  if (domainHardStop) {
-    allErrors.push(createError(
-      0,
-      'Domain',
-      'More than 20% of domains are invalid. Please fix and re-upload.',
-      ''
-    ));
-  }
+  // Tier 3: Domain validation (WARN ONLY — domain is optional per CSV contract)
+  const { warnings: domainWarnings } = validateCsvDomains(rows);
+  allWarnings.push(...domainWarnings);
 
   // Tier 4: Duplicate detection (WARNING ONLY)
   const duplicateWarnings = detectCsvDuplicates(rows);

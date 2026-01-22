@@ -76,7 +76,7 @@ export const ERROR_CODES = {
   EVIDENCE_REQUIRED_FUNDING: 'EVIDENCE_REQUIRED_FUNDING',
   EVIDENCE_REQUIRED_TECH: 'EVIDENCE_REQUIRED_TECH',
   EVIDENCE_REQUIRED_PARTNERSHIP: 'EVIDENCE_REQUIRED_PARTNERSHIP',
-  CONFIG_MISSING_APIFY_TOKEN: 'CONFIG_MISSING_APIFY_TOKEN',
+  CONFIG_MISSING_DEMAND_CSV: 'CONFIG_MISSING_DEMAND_CSV',
   CONFIG_MISSING_DEMAND_DATASET: 'CONFIG_MISSING_DEMAND_DATASET',
   CONFIG_MISSING_SUPPLY_DATASET: 'CONFIG_MISSING_SUPPLY_DATASET',
   CONFIG_MISSING_INSTANTLY_KEY: 'CONFIG_MISSING_INSTANTLY_KEY',
@@ -443,10 +443,10 @@ function explainEvidenceRequired(
 
 function explainConfigMissing(key: string): UXExplanation {
   const configMap: Record<string, { id: string; title: string; reason: string; tab: string }> = {
-    apify_token: {
-      id: ERROR_CODES.CONFIG_MISSING_APIFY_TOKEN,
-      title: 'Apify token missing',
-      reason: 'An Apify API token is required to fetch datasets.',
+    demand_csv: {
+      id: ERROR_CODES.CONFIG_MISSING_DEMAND_CSV,
+      title: 'Demand CSV missing',
+      reason: 'A demand CSV upload is required to load companies.',
       tab: 'data',
     },
     demand_dataset_id: {

@@ -289,6 +289,7 @@ SUPPLY (the provider you're emailing):
 
 DEMAND (the lead you're offering):
 - Company: ${demand.company}
+- What they do: ${demand.metadata.companyDescription || demand.metadata.description || ''}
 - Contact: ${demand.contact}
 - Title: ${demand.title || 'decision maker'}
 - Industry: ${demand.industry || 'tech'}

@@ -135,7 +135,7 @@ export function CsvBatchQualityWarning({
           due to limited data.
         </p>
         <p className="text-xs text-white/50">
-          For higher-quality intros, add LinkedIn URLs, emails, or company descriptions to your CSV.
+          Add Context (40+ chars) to your CSV for better intros.
         </p>
       </div>
     </div>
