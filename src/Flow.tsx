@@ -3038,16 +3038,22 @@ export default function Flow() {
                 const exploratoryCount = matches.filter(m => m.tier === 'open').length;
 
                 // DOCTRINE: 4 separate counters — Matching ≠ Quality ≠ Sendability
-                // Raw emails: emails that came with the dataset (Leads Finder) — need verification
-                const rawEmailCount = matches.filter(m => m.demand.email).length;
-                // Enriched emails: emails found via Apollo/Anymail
-                const enrichedEmailCount = matches.filter(m => {
-                  if (m.demand.email) return false; // Don't double-count raw
+                // Demand emails: raw + enriched
+                const demandRawEmails = matches.filter(m => m.demand.email).length;
+                const demandEnrichedEmails = matches.filter(m => {
+                  if (m.demand.email) return false;
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e?.email;
                 }).length;
-                // Total emails: raw + enriched
-                const emailCount = rawEmailCount + enrichedEmailCount;
+                // Supply emails: raw + enriched
+                const supplyRawEmails = matches.filter(m => m.supply.email).length;
+                const supplyEnrichedEmails = matches.filter(m => {
+                  if (m.supply.email) return false;
+                  const e = state.enrichedSupply.get(recordKey(m.supply));
+                  return e?.email;
+                }).length;
+                // Total emails detected (both sides)
+                const emailCount = demandRawEmails + demandEnrichedEmails + supplyRawEmails + supplyEnrichedEmails;
                 // Ready to send: only VERIFIED emails (must pass through enrichment)
                 const readyToSendCount = matches.filter(m => {
                   const e = state.enrichedDemand.get(recordKey(m.demand));
