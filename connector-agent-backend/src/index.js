@@ -1259,15 +1259,30 @@ app.post('/api/email/v2/find', async (req, res) => {
   const effectiveUserId = apiKey ? apiKey.user_id : userId;
   const effectiveKeyId = apiKey ? apiKey.id : '';
 
-  const { firstName, lastName, domain } = req.body;
+  const { firstName, lastName, domain: rawDomain } = req.body;
 
   if (!firstName || !lastName) {
     return res.status(400).json({ success: false, error: 'firstName and lastName required' });
   }
 
-  if (!domain) {
+  if (!rawDomain) {
     return res.status(400).json({ success: false, error: 'domain required' });
   }
+
+  // Clean domain: strip protocol, www, trailing slashes
+  // "https://www.converge-bio.com/" → "converge-bio.com"
+  const domain = rawDomain
+    .replace(/^https?:\/\//, '')  // Remove http:// or https://
+    .replace(/^www\./, '')         // Remove www.
+    .replace(/\/.*$/, '')          // Remove path and trailing slash
+    .toLowerCase()
+    .trim();
+
+  if (!domain || !domain.includes('.')) {
+    return res.status(400).json({ success: false, error: 'Invalid domain format' });
+  }
+
+  console.log(`[Find] Domain cleaned: "${rawDomain}" → "${domain}"`);
 
   // Check cache first (with TTL)
   const cached = db.prepare(`
@@ -1606,10 +1621,23 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
   let tokensUsed = 0;
 
   for (const item of items) {
-    const { firstName, lastName, domain } = item;
+    const { firstName, lastName, domain: rawDomain } = item;
 
-    if (!firstName || !lastName || !domain) {
+    if (!firstName || !lastName || !rawDomain) {
       results.push({ ...item, success: false, error: 'Missing fields' });
+      continue;
+    }
+
+    // Clean domain: strip protocol, www, trailing slashes
+    const domain = rawDomain
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '')
+      .toLowerCase()
+      .trim();
+
+    if (!domain || !domain.includes('.')) {
+      results.push({ ...item, success: false, error: 'Invalid domain format' });
       continue;
     }
 
