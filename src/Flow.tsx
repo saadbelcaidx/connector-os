@@ -2885,7 +2885,24 @@ export default function Flow() {
                 transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                 className="w-10 h-10 mx-auto mb-8 rounded-full border-2 border-white/10 border-t-white/60"
               />
-              <p className="text-[13px] text-white/40">{safeRender(state.progress.message)}</p>
+              <p className="text-[13px] text-white/40 mb-4">{safeRender(state.progress.message)}</p>
+              {state.progress.total > 0 && (
+                <div className="max-w-xs mx-auto">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <span className="text-[13px] text-white/60 font-medium">
+                      {state.progress.current} <span className="text-white/30">of {state.progress.total}</span>
+                    </span>
+                  </div>
+                  <div className="h-1 bg-white/[0.06] rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-white/40 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(state.progress.current / Math.max(state.progress.total, 1)) * 100}%` }}
+                      transition={{ duration: 0.3 }}
+                    />
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 

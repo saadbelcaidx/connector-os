@@ -11,6 +11,13 @@ import { callAI, AI_ENABLED } from './AIService';
 import type { AIConfig } from './AIService';
 
 // =============================================================================
+// PERFORMANCE CONSTANTS
+// =============================================================================
+
+const MAX_SAMPLE = 50;        // Only analyze first 50 records for preview (cache handles rest)
+const PARALLEL_BATCH = 10;    // Process 10 AI calls concurrently (safe for all providers)
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -207,31 +214,52 @@ export async function extractDemandNeeds(
     }
   }
 
-  // Extract missing
+  // PERF: Sample first MAX_SAMPLE for preview, use keyword fallback for rest
+  const sampled = toExtract.slice(0, MAX_SAMPLE);
+  const skipped = toExtract.slice(MAX_SAMPLE);
+
+  // Add skipped records with keyword-based categorization (no AI call)
+  for (const record of skipped) {
+    results.push({
+      domain: record.domain,
+      signalText: record.signal,
+      extractedNeed: record.signal,
+      needCategory: categorizeByKeyword(record.signal),
+      confidence: 'low',
+    });
+  }
+
+  // PERF: Process in parallel batches of PARALLEL_BATCH
   let processed = results.length;
-  for (const record of toExtract) {
-    try {
-      const prompt = DEMAND_EXTRACTION_PROMPT
-        .replace('{SIGNAL}', record.signal.slice(0, 500))
-        .replace('{COMPANY}', record.company.slice(0, 100));
+  for (let i = 0; i < sampled.length; i += PARALLEL_BATCH) {
+    const batch = sampled.slice(i, i + PARALLEL_BATCH);
 
-      const response = await callAI(aiConfig, prompt);
-      const extracted = parseNeedResponse(response, record.domain, record.signal);
+    const batchResults = await Promise.all(
+      batch.map(async (record) => {
+        try {
+          const prompt = DEMAND_EXTRACTION_PROMPT
+            .replace('{SIGNAL}', record.signal.slice(0, 500))
+            .replace('{COMPANY}', record.company.slice(0, 100));
 
-      results.push(extracted);
-      cache.set(hashSignal(record.domain, record.signal), extracted);
-    } catch (err) {
-      // On failure, use raw signal as fallback
-      results.push({
-        domain: record.domain,
-        signalText: record.signal,
-        extractedNeed: record.signal,
-        needCategory: 'General',
-        confidence: 'low',
-      });
-    }
+          const response = await callAI(aiConfig, prompt);
+          const extracted = parseNeedResponse(response, record.domain, record.signal);
+          cache.set(hashSignal(record.domain, record.signal), extracted);
+          return extracted;
+        } catch (err) {
+          // On failure, use raw signal as fallback
+          return {
+            domain: record.domain,
+            signalText: record.signal,
+            extractedNeed: record.signal,
+            needCategory: 'General',
+            confidence: 'low' as const,
+          };
+        }
+      })
+    );
 
-    processed++;
+    results.push(...batchResults);
+    processed += batch.length;
     onProgress?.(processed, records.length);
   }
 
@@ -239,6 +267,22 @@ export async function extractDemandNeeds(
   cacheNeeds(cache);
 
   return results;
+}
+
+// Simple keyword-based categorization fallback
+function categorizeByKeyword(signal: string): string {
+  const s = signal.toLowerCase();
+  if (/engineer|developer|software|tech|devops|frontend|backend|fullstack/i.test(s)) return 'Engineering';
+  if (/sales|account executive|sdr|bdr|revenue|ae\b/i.test(s)) return 'Sales';
+  if (/marketing|growth|brand|content|seo/i.test(s)) return 'Marketing';
+  if (/product|pm\b|product manager/i.test(s)) return 'Product';
+  if (/design|ux|ui|creative/i.test(s)) return 'Design';
+  if (/hr|human resources|people|talent|recruiter/i.test(s)) return 'HR/People';
+  if (/finance|cfo|accounting|controller/i.test(s)) return 'Finance';
+  if (/operations|ops|coo|supply chain/i.test(s)) return 'Operations';
+  if (/legal|counsel|compliance/i.test(s)) return 'Legal';
+  if (/ceo|founder|executive|vp|director|head of/i.test(s)) return 'Leadership';
+  return 'General';
 }
 
 export async function extractSupplyCapabilities(
@@ -265,31 +309,52 @@ export async function extractSupplyCapabilities(
     }
   }
 
-  // Extract missing
+  // PERF: Sample first MAX_SAMPLE for preview, use keyword fallback for rest
+  const sampled = toExtract.slice(0, MAX_SAMPLE);
+  const skipped = toExtract.slice(MAX_SAMPLE);
+
+  // Add skipped records with keyword-based categorization (no AI call)
+  for (const record of skipped) {
+    results.push({
+      domain: record.domain,
+      capabilityText: record.service,
+      extractedCapability: record.service,
+      capabilityCategory: categorizeSupplyByKeyword(record.service, record.company),
+      confidence: 'low',
+    });
+  }
+
+  // PERF: Process in parallel batches of PARALLEL_BATCH
   let processed = results.length;
-  for (const record of toExtract) {
-    try {
-      const prompt = SUPPLY_EXTRACTION_PROMPT
-        .replace('{SERVICE}', record.service.slice(0, 500))
-        .replace('{COMPANY}', record.company.slice(0, 100));
+  for (let i = 0; i < sampled.length; i += PARALLEL_BATCH) {
+    const batch = sampled.slice(i, i + PARALLEL_BATCH);
 
-      const response = await callAI(aiConfig, prompt);
-      const extracted = parseCapabilityResponse(response, record.domain, record.service);
+    const batchResults = await Promise.all(
+      batch.map(async (record) => {
+        try {
+          const prompt = SUPPLY_EXTRACTION_PROMPT
+            .replace('{SERVICE}', record.service.slice(0, 500))
+            .replace('{COMPANY}', record.company.slice(0, 100));
 
-      results.push(extracted);
-      cache.set(hashSignal(record.domain, record.service), extracted);
-    } catch (err) {
-      // On failure, use raw service description as fallback
-      results.push({
-        domain: record.domain,
-        capabilityText: record.service,
-        extractedCapability: record.service,
-        capabilityCategory: 'General',
-        confidence: 'low',
-      });
-    }
+          const response = await callAI(aiConfig, prompt);
+          const extracted = parseCapabilityResponse(response, record.domain, record.service);
+          cache.set(hashSignal(record.domain, record.service), extracted);
+          return extracted;
+        } catch (err) {
+          // On failure, use raw service description as fallback
+          return {
+            domain: record.domain,
+            capabilityText: record.service,
+            extractedCapability: record.service,
+            capabilityCategory: 'General',
+            confidence: 'low' as const,
+          };
+        }
+      })
+    );
 
-    processed++;
+    results.push(...batchResults);
+    processed += batch.length;
     onProgress?.(processed, records.length);
   }
 
@@ -297,6 +362,22 @@ export async function extractSupplyCapabilities(
   cacheCapabilities(cache);
 
   return results;
+}
+
+// Simple keyword-based categorization for supply
+function categorizeSupplyByKeyword(service: string, company: string): string {
+  const s = (service + ' ' + company).toLowerCase();
+  if (/recruit|staffing|talent|hiring|headhunt|placement/i.test(s)) return 'Recruiting';
+  if (/marketing|growth|brand|agency|creative|content|seo|ads/i.test(s)) return 'Marketing';
+  if (/software|dev|engineer|tech|saas|platform|app/i.test(s)) return 'Engineering';
+  if (/sales|revenue|pipeline|outbound|lead gen/i.test(s)) return 'Sales';
+  if (/consult|advisory|strategy/i.test(s)) return 'Consulting';
+  if (/finance|accounting|cfo|bookkeep/i.test(s)) return 'Finance';
+  if (/legal|law|attorney|compliance/i.test(s)) return 'Legal';
+  if (/hr|human resources|people ops|payroll/i.test(s)) return 'HR';
+  if (/design|ux|ui|creative|graphic/i.test(s)) return 'Design';
+  if (/operations|ops|logistics|supply chain/i.test(s)) return 'Operations';
+  return 'General';
 }
 
 // =============================================================================
