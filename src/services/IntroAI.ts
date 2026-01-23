@@ -39,6 +39,43 @@ export interface GeneratedIntros {
 }
 
 // =============================================================================
+// HELPER: CLEAN COMPANY NAME
+// =============================================================================
+
+/**
+ * Clean company name: ALL CAPS → Title Case, remove legal suffixes.
+ * "REFLEXIVE CAPITAL MANAGEMENT LP" → "Reflexive Capital Management"
+ */
+function cleanCompanyName(name: string): string {
+  if (!name) return name;
+
+  let cleaned = name.trim();
+
+  // Convert ALL CAPS to Title Case
+  const lettersOnly = cleaned.replace(/[^a-zA-Z]/g, '');
+  const uppercaseCount = (lettersOnly.match(/[A-Z]/g) || []).length;
+  const isAllCaps = lettersOnly.length > 3 && uppercaseCount / lettersOnly.length > 0.8;
+
+  if (isAllCaps) {
+    const acronyms = new Set(['LP', 'LLC', 'LLP', 'GP', 'INC', 'CORP', 'LTD', 'CO', 'USA', 'UK', 'NYC', 'LA', 'SF', 'AI', 'ML', 'IT', 'HR', 'VP', 'CEO', 'CFO', 'CTO', 'COO', 'RIA', 'AUM', 'PE', 'VC']);
+    cleaned = cleaned
+      .toLowerCase()
+      .split(/(\s+)/)
+      .map(word => {
+        const upper = word.toUpperCase();
+        if (acronyms.has(upper)) return upper;
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join('');
+  }
+
+  // Remove legal suffixes
+  cleaned = cleaned.replace(/,?\s*(llc|l\.l\.c\.|inc\.?|corp\.?|corporation|ltd\.?|limited|co\.?|company|pllc|lp|l\.p\.|llp|l\.l\.p\.)\s*$/i, '').trim();
+
+  return cleaned;
+}
+
+// =============================================================================
 // STEP 1: GENERATE VALUE PROPOSITION
 // =============================================================================
 
@@ -57,12 +94,12 @@ Tone: understated and cautious. Use hedging language—you are guessing, not cla
 Input data:
 
 DEMAND:
-- Company: ${demand.company}
+- Company: ${cleanCompanyName(demand.company)}
 - Industry: ${demand.industry || 'tech'}
 - Signal: ${edge.type} - ${edge.evidence}
 ${demand.metadata.employeeEnum ? `- Size: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- Funding: ${fundingAmount}\n` : ''}
 SUPPLY:
-- Company: ${supply.company}
+- Company: ${cleanCompanyName(supply.company)}
 - Capability: ${supply.capability || 'business services'}
 
 === VOICE (from $2M/yr playbook) ===
@@ -116,14 +153,14 @@ Input data:
 
 DEMAND (the person you're emailing):
 - First name: ${demandFirstName}
-- Company: ${demand.company}
+- Company: ${cleanCompanyName(demand.company)}
 - Title: ${demand.title || 'decision maker'}
 - Industry: ${demand.industry || 'tech'}
 - Funding: ${fundingAmount || 'raised funding'}
 
 SUPPLY (the provider you're offering):
 - Contact: ${supply.contact}
-- Company: ${supply.company}
+- Company: ${cleanCompanyName(supply.company)}
 - Capability: ${supply.capability || 'business services'}
 
 VALUE PROP: ${valueProps.demandValueProp}
@@ -288,7 +325,7 @@ SUPPLY (the provider you're emailing):
 - First name: ${supplyFirstName}
 
 DEMAND (the lead you're offering):
-- Company: ${demand.company}
+- Company: ${cleanCompanyName(demand.company)}
 - What they do: ${demand.metadata.companyDescription || demand.metadata.description || ''}
 - Contact: ${demand.contact}
 - Title: ${demand.title || 'decision maker'}
@@ -616,7 +653,7 @@ export async function generateIntrosAI(
     // Fallback value props
     valueProps = {
       demandValueProp: `${edge.evidence} creates an opportunity.`,
-      supplyValueProp: `${demand.company} is an attractive prospect.`,
+      supplyValueProp: `${cleanCompanyName(demand.company)} is an attractive prospect.`,
     };
   }
   console.log('[IntroAI] Step 1 complete:', valueProps);

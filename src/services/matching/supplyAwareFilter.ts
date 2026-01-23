@@ -58,6 +58,19 @@ function extractSupplyCapabilities(supply: NormalizedRecord[]): Set<string> {
       const terms = extractKeyTerms(s.raw['Service Description']);
       terms.forEach(t => capabilities.add(t));
     }
+    // CSV template fields: Context and Signal
+    if (s.raw?.Context) {
+      const terms = extractKeyTerms(s.raw.Context);
+      terms.forEach(t => capabilities.add(t));
+    }
+    if (s.raw?.Signal) {
+      capabilities.add(normalizeCapability(s.raw.Signal));
+    }
+    // Also check context field (lowercase)
+    if (s.context) {
+      const terms = extractKeyTerms(s.context);
+      terms.forEach(t => capabilities.add(t));
+    }
   }
 
   return capabilities;
@@ -83,6 +96,13 @@ function extractKeyTerms(text: string): string[] {
     'healthcare', 'pharma', 'biotech', 'life science',
     'fintech', 'crypto', 'blockchain',
     'real estate', 'property', 'construction',
+    // RIA / Wealth Management
+    'ria', 'wealth', 'wealth management', 'advisor', 'advisors',
+    'm&a', 'merger', 'acquisition', 'succession', 'transition',
+    'aggregator', 'platform', 'custodian',
+    'pe', 'private equity', 'investor', 'capital',
+    'aum', 'assets under management',
+    'deal flow', 'deal', 'valuation',
   ];
 
   for (const kw of keywords) {

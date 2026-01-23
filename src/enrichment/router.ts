@@ -84,11 +84,59 @@ export const PROVIDER_CAPABILITIES: Record<ProviderName, EnrichmentAction[]> = {
 const PROVIDER_PRIORITY: Record<EnrichmentAction, ProviderName[]> = {
   'VERIFY': ['connectorAgent', 'anymail'],
   'FIND_PERSON': ['anymail', 'connectorAgent', 'apollo'],
-  'FIND_COMPANY_CONTACT': ['anymail', 'apollo'],
+  'FIND_COMPANY_CONTACT': ['apollo', 'anymail'],  // Apollo FREE first, then Anymail fallback
   'SEARCH_PERSON': ['anymail', 'apollo'],
   'SEARCH_COMPANY': ['apollo'],
   'CANNOT_ROUTE': [],
 };
+
+// =============================================================================
+// SENIORITY RANKING — For FIND_COMPANY_CONTACT person selection
+// =============================================================================
+
+/**
+ * Seniority ranking for picking best decision maker.
+ * Higher score = more senior = better target.
+ */
+const SENIORITY_RANKS: Record<string, number> = {
+  'founder': 100,
+  'co-founder': 99,
+  'owner': 98,
+  'partner': 95,
+  'principal': 94,
+  'managing director': 92,
+  'ceo': 90, 'cfo': 89, 'cto': 88, 'coo': 87, 'cmo': 86, 'cro': 85,
+  'president': 84,
+  'vp': 70, 'vice president': 70,
+  'director': 60,
+  'head': 55,
+  'manager': 40,
+  'lead': 35,
+  'senior': 30,
+};
+
+function scoreSeniority(title: string): number {
+  const t = (title || '').toLowerCase();
+  for (const [keyword, score] of Object.entries(SENIORITY_RANKS)) {
+    if (t.includes(keyword)) return score;
+  }
+  return 10; // default for unknown titles
+}
+
+function pickBestPerson(people: Array<{ first_name?: string; last_name?: string; title?: string }>): { firstName: string; lastName: string; title: string } | null {
+  if (!people || people.length === 0) return null;
+
+  const sorted = [...people].sort((a, b) => scoreSeniority(b.title || '') - scoreSeniority(a.title || ''));
+  const best = sorted[0];
+
+  console.log(`[Router] Seniority ranking: ${people.length} candidates, best=${best.first_name} ${best.last_name} (${best.title}, score=${scoreSeniority(best.title || '')})`);
+
+  return {
+    firstName: best.first_name || '',
+    lastName: best.last_name || '',
+    title: best.title || '',
+  };
+}
 
 // =============================================================================
 // ACTION CLASSIFIER (CANONICAL - DO NOT CHANGE LOGIC)
@@ -348,6 +396,105 @@ async function findPersonWithConnectorAgent(
     const data = await response.json();
     return { email: data.email || null };
   } catch (error) {
+    return { email: null, error };
+  }
+}
+
+/**
+ * FIND_COMPANY_CONTACT via Apollo FREE search → pick best → paid email lookup.
+ *
+ * Flow:
+ * 1. Apollo people_search (FREE) — get candidates at domain
+ * 2. Rank by seniority — pick best (founder > partner > c-suite > vp > director)
+ * 3. Apollo people_match (1 credit) — get email for chosen person
+ *
+ * Returns { noCandidates: true } if Apollo FREE returns 0 people.
+ * Caller should fallback to Anymail find_decision_maker.
+ */
+async function findCompanyContactWithApolloFree(
+  domain: string,
+  config: RouterConfig
+): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any; noCandidates?: boolean }> {
+  try {
+    // STEP 1: FREE search to find people at domain
+    console.log(`[Router] Apollo FREE search: finding decision makers at ${domain}`);
+
+    const searchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'people_search',
+        apiKey: config.apolloApiKey,
+        domain: domain,
+        seniorities: ['c_suite', 'founder', 'owner', 'partner', 'vp', 'director'],
+      }),
+    });
+
+    if (!searchResponse.ok) {
+      const errorBody = await searchResponse.text().catch(() => 'failed to read');
+      console.log(`[Router] Apollo FREE search error ${searchResponse.status}:`, errorBody);
+      return { email: null, error: { status: searchResponse.status, body: errorBody } };
+    }
+
+    const searchData = await searchResponse.json();
+    const people = searchData.people || [];
+
+    console.log(`[Router] Apollo FREE search: found ${people.length} people at ${domain} (0 credits used)`);
+
+    if (people.length === 0) {
+      console.log(`[Router] Apollo FREE search: no candidates at ${domain}, will fallback to Anymail`);
+      return { email: null, noCandidates: true };
+    }
+
+    // STEP 2: Rank and pick best person by seniority
+    const best = pickBestPerson(people);
+    if (!best) {
+      return { email: null, noCandidates: true };
+    }
+
+    console.log(`[Router] Selected best: ${best.firstName} ${best.lastName} (${best.title}) at ${domain}`);
+
+    // STEP 3: PAID match to get email (1 credit)
+    console.log(`[Router] Apollo PAID match: getting email for ${best.firstName} ${best.lastName} (1 credit)`);
+
+    const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'people_match',
+        apiKey: config.apolloApiKey,
+        payload: {
+          first_name: best.firstName,
+          last_name: best.lastName,
+          domain: domain,
+          reveal_personal_emails: true,
+        },
+      }),
+    });
+
+    if (!matchResponse.ok) {
+      const errorBody = await matchResponse.text().catch(() => 'failed to read');
+      console.log(`[Router] Apollo PAID match error ${matchResponse.status}:`, errorBody);
+      return { email: null, firstName: best.firstName, lastName: best.lastName, title: best.title, error: { status: matchResponse.status, body: errorBody } };
+    }
+
+    const matchData = await matchResponse.json();
+    const email = matchData.person?.email;
+
+    if (email) {
+      console.log(`[Router] Apollo PAID match: found email ${email} for ${best.firstName} ${best.lastName} (1 credit used)`);
+    } else {
+      console.log(`[Router] Apollo PAID match: no email for ${best.firstName} ${best.lastName} (1 credit used, no result)`);
+    }
+
+    return {
+      email: email || null,
+      firstName: best.firstName,
+      lastName: best.lastName,
+      title: best.title,
+    };
+  } catch (error) {
+    console.error(`[Router] Apollo FREE flow error:`, error);
     return { email: null, error };
   }
 }
@@ -720,7 +867,54 @@ export async function routeEnrichment(
         break;
 
       case 'apollo':
-        if (action === 'FIND_PERSON' || action === 'FIND_COMPANY_CONTACT') {
+        if (action === 'FIND_COMPANY_CONTACT') {
+          // NEW: Apollo FREE → pick best → Apollo PAID flow
+          const apolloFreeResult = await findCompanyContactWithApolloFree(inputs.domain!, config);
+
+          if (apolloFreeResult.noCandidates) {
+            // No people at domain — fallback to Anymail find_decision_maker
+            providerResults[provider].result = 'not_found';
+            providerResults[provider].reason = 'No people found at domain (0 credits used)';
+            console.log(`[Router] Apollo FREE: no candidates, falling back to Anymail`);
+            continue; // Try next provider (Anymail)
+          }
+
+          if (apolloFreeResult.error) {
+            result = apolloFreeResult;
+          } else if (apolloFreeResult.email) {
+            // Success — Apollo found email
+            result = apolloFreeResult;
+          } else {
+            // Apollo found person but no email — try Anymail find_person for that specific person
+            console.log(`[Router] Apollo PAID: person found but no email, trying Anymail find_person`);
+
+            if (config.anymailApiKey && apolloFreeResult.firstName) {
+              const fullName = `${apolloFreeResult.firstName} ${apolloFreeResult.lastName}`.trim();
+              const anymailResult = await findPersonWithAnymail({ domain: inputs.domain }, fullName, config);
+
+              if (anymailResult.email) {
+                // Anymail found email for the Apollo-selected person
+                providerResults[provider].result = 'not_found';
+                providerResults[provider].reason = 'Person found, no email';
+                providersAttempted.push('anymail');
+                providerResults.anymail.attempted = true;
+                providerResults.anymail.result = 'success';
+                return buildResult(
+                  action,
+                  'ENRICHED',
+                  anymailResult.email,
+                  'anymail',
+                  true,
+                  apolloFreeResult.firstName,
+                  apolloFreeResult.lastName,
+                  apolloFreeResult.title || ''
+                );
+              }
+            }
+            // Anymail also failed — continue to next provider
+            result = { email: null, firstName: apolloFreeResult.firstName, lastName: apolloFreeResult.lastName, title: apolloFreeResult.title };
+          }
+        } else if (action === 'FIND_PERSON') {
           result = await findWithApollo({
             domain: inputs.domain || undefined,
             firstName,

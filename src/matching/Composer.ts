@@ -45,18 +45,38 @@ function containsBannedPhrase(text: string): boolean {
 // =============================================================================
 
 /**
- * Clean company name by removing legal suffixes.
+ * Clean company name by removing legal suffixes and normalizing ALL CAPS.
+ * "REFLEXIVE CAPITAL MANAGEMENT LP" → "Reflexive Capital Management"
  * "Demars Financial Group Llc" → "Demars Financial Group"
  */
 function cleanCompanyName(name: string): string {
   if (!name) return name;
+
+  let cleaned = name.trim();
+
+  // STEP 0: Convert ALL CAPS to Title Case
+  const lettersOnly = cleaned.replace(/[^a-zA-Z]/g, '');
+  const uppercaseCount = (lettersOnly.match(/[A-Z]/g) || []).length;
+  const isAllCaps = lettersOnly.length > 3 && uppercaseCount / lettersOnly.length > 0.8;
+
+  if (isAllCaps) {
+    const acronyms = new Set(['LP', 'LLC', 'LLP', 'GP', 'INC', 'CORP', 'LTD', 'CO', 'USA', 'UK', 'NYC', 'LA', 'SF', 'AI', 'ML', 'IT', 'HR', 'VP', 'CEO', 'CFO', 'CTO', 'COO', 'RIA', 'AUM', 'PE', 'VC']);
+    cleaned = cleaned
+      .toLowerCase()
+      .split(/(\s+)/)
+      .map(word => {
+        const upper = word.toUpperCase();
+        if (acronyms.has(upper)) return upper;
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join('');
+  }
 
   // Suffixes to remove (case-insensitive)
   const suffixes = [
     /,?\s*(llc|l\.l\.c\.|inc\.?|inc|corp\.?|corporation|ltd\.?|limited|co\.?|company|pllc|p\.l\.l\.c\.|lp|l\.p\.|llp|l\.l\.p\.)\s*$/i
   ];
 
-  let cleaned = name.trim();
   for (const suffix of suffixes) {
     cleaned = cleaned.replace(suffix, '').trim();
   }

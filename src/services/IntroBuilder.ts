@@ -32,6 +32,27 @@ export function cleanCompanyName(name: string): string {
   // Remove HTML-like tags (e.g., <it>, <i>, <b>, etc.)
   cleaned = cleaned.replace(/<[^>]*>/g, '');
 
+  // STEP 0: Convert ALL CAPS to Title Case
+  // Check if >80% of letters are uppercase (ignoring suffixes like LP, LLC)
+  const lettersOnly = cleaned.replace(/[^a-zA-Z]/g, '');
+  const uppercaseCount = (lettersOnly.match(/[A-Z]/g) || []).length;
+  const isAllCaps = lettersOnly.length > 3 && uppercaseCount / lettersOnly.length > 0.8;
+
+  if (isAllCaps) {
+    // Convert to Title Case, preserving common acronyms
+    const acronyms = new Set(['LP', 'LLC', 'LLP', 'GP', 'INC', 'CORP', 'LTD', 'CO', 'USA', 'UK', 'NYC', 'LA', 'SF', 'AI', 'ML', 'IT', 'HR', 'VP', 'CEO', 'CFO', 'CTO', 'COO']);
+    cleaned = cleaned
+      .toLowerCase()
+      .split(/(\s+)/)
+      .map(word => {
+        const upper = word.toUpperCase();
+        if (acronyms.has(upper)) return upper;
+        // Title case: capitalize first letter
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join('');
+  }
+
   // Remove common garbage patterns from scraped data
   cleaned = cleaned.replace(/Pro\/source/gi, '');
   cleaned = cleaned.replace(/\s*\/\s*source/gi, '');

@@ -129,40 +129,27 @@ export function CsvBatchQualityWarning({
     return null;
   }
 
-  // BLOCKING: T1 records have no email — intros won't generate
+  // BLOCKING: T1 records have no email — need enrichment first
   if (t1Count > 0) {
     return (
-      <div className="flex items-start gap-3 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/[0.12]">
-        <div className="w-7 h-7 rounded-full bg-red-500/20 flex items-center justify-center shrink-0 mt-0.5">
-          <AlertTriangle size={14} className="text-red-400" />
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+        <div className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center shrink-0">
+          <AlertTriangle size={12} className="text-white/40" />
         </div>
-        <div className="space-y-1 flex-1">
-          <p className="text-sm font-medium text-white/90">
-            Email required
-          </p>
-          <p className="text-xs text-white/60">
-            {t1Count} record{t1Count !== 1 ? 's' : ''} missing email — intros won't generate.
-          </p>
-        </div>
+        <p className="text-[13px] text-white/60">
+          {t1Count} {t1Count !== 1 ? 'need' : 'needs'} an email to continue.
+        </p>
       </div>
     );
   }
 
-  // QUALITY: T2 records have email but no context — intros will be basic
+  // QUALITY: T2 records have email but no context — intros will be simpler
   if (t2Count > 0) {
     return (
-      <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/[0.12]">
-        <div className="w-7 h-7 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0 mt-0.5">
-          <AlertTriangle size={14} className="text-amber-400" />
-        </div>
-        <div className="space-y-1 flex-1">
-          <p className="text-sm font-medium text-white/90">
-            Add descriptions for richer intros
-          </p>
-          <p className="text-xs text-white/60">
-            {t2Count} record{t2Count !== 1 ? 's' : ''} {t2Count !== 1 ? 'have' : 'has'} basic intros.
-          </p>
-        </div>
+      <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+        <p className="text-[12px] text-white/40">
+          {t2Count} with basic intros — add descriptions to CSV for richer messages.
+        </p>
       </div>
     );
   }

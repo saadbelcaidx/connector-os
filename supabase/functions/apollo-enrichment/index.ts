@@ -76,7 +76,7 @@ Deno.serve(async (req: Request) => {
         break;
 
       case 'people_search':
-        apolloUrl = 'https://api.apollo.io/v1/mixed_people/search';
+        apolloUrl = 'https://api.apollo.io/v1/mixed_people/api_search';
         apolloMethod = 'POST';
 
         // Clean and validate inputs

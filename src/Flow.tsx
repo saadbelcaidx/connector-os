@@ -151,61 +151,8 @@ import {
 } from './intro-generation';
 import { CsvBatchQualityWarning } from './components/CsvIntroQualityBadge';
 
-// =============================================================================
-// BUTTON STYLES — Stripe-grade design system
-// =============================================================================
-// Philosophy: Physical, weighted, consistent. Every button feels the same.
-// - translateY(-1px) on hover creates "lift"
-// - Shadow progression creates depth
-// - scale(0.98) on active creates "press"
-// - No color for primary CTAs - color is for feedback AFTER actions
-
-const BTN = {
-  // Primary: White, for main actions (Begin Matching, Generate Intros, Send)
-  primary: `
-    px-6 py-3 text-[13px] font-medium rounded-xl
-    bg-white text-black
-    shadow-[0_1px_2px_rgba(0,0,0,0.05)]
-    hover:shadow-[0_4px_12px_rgba(255,255,255,0.15)]
-    hover:-translate-y-[1px]
-    active:translate-y-0 active:shadow-[0_1px_2px_rgba(0,0,0,0.05)]
-    active:scale-[0.98]
-    disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none
-    transition-all duration-150 ease-out
-  `.replace(/\s+/g, ' ').trim(),
-
-  // Secondary: Ghost, for alternate actions (Export, Try different)
-  secondary: `
-    px-5 py-2.5 text-[13px] font-medium rounded-xl
-    bg-transparent text-white/60
-    border border-white/[0.08]
-    hover:border-white/[0.15] hover:text-white/80
-    hover:-translate-y-[1px]
-    active:translate-y-0 active:scale-[0.98]
-    disabled:opacity-40 disabled:cursor-not-allowed
-    transition-all duration-150 ease-out
-  `.replace(/\s+/g, ' ').trim(),
-
-  // Danger: Red tint, for destructive or warning actions
-  danger: `
-    px-5 py-2.5 text-[13px] font-medium rounded-xl
-    bg-red-500/10 text-red-400
-    border border-red-500/20
-    hover:bg-red-500/15 hover:border-red-500/30
-    hover:-translate-y-[1px]
-    active:translate-y-0 active:scale-[0.98]
-    transition-all duration-150 ease-out
-  `.replace(/\s+/g, ' ').trim(),
-
-  // Icon: Small, square, for icon-only buttons
-  icon: `
-    p-2 rounded-lg
-    text-white/40 hover:text-white/70
-    hover:bg-white/[0.04]
-    active:scale-[0.95]
-    transition-all duration-150
-  `.replace(/\s+/g, ' ').trim(),
-} as const;
+// UI Primitives — Single source of truth
+import { BTN } from './ui/primitives';
 
 // =============================================================================
 // SIGNAL STATUS — Explicit 3-state for UX (no silent failures)
@@ -656,17 +603,17 @@ type ErrorCode =
   | 'UNKNOWN';
 
 function toUserError(code: ErrorCode, detail?: string): string {
-  // CSV-ONLY: Error messages reference CSV upload
+  // CSV-ONLY: Apple-calm guidance messages
   const messages: Record<ErrorCode, string> = {
-    MISSING_DEMAND_CSV: 'No demand CSV uploaded. Go to Settings → Data Sources, upload your demand CSV.',
-    DATASET_FETCH_FAILED: `Failed to load CSV${detail ? `: ${detail}` : ''}. Check your CSV format and retry.`,
-    DATASET_EMPTY: 'CSV has 0 rows. Upload a CSV with data.',
-    DATASET_INVALID: `CSV format not recognized${detail ? `: ${detail}` : ''}. Required columns: Company Name, Signal.`,
-    MISSING_SUPPLY: 'No supply CSV uploaded. Go to Settings → Data Sources, upload a supply CSV.',
-    HUB_ERROR: detail || 'Hub data error. Please try selecting contacts again.',
-    HUB_MISSING_SIDE: 'Hub requires both Demand and Supply contacts. Go back to Hub and select contacts for both sides.',
-    CONTRACT_VIOLATION: `Data validation failed${detail ? `: ${detail}` : ''}. Check console for details.`,
-    UNKNOWN: detail || 'Something went wrong. Check console for details.',
+    MISSING_DEMAND_CSV: 'Add a demand CSV in Settings to continue.',
+    DATASET_FETCH_FAILED: detail ? `Couldn't read CSV: ${detail}` : `Couldn't read CSV. Check the format.`,
+    DATASET_EMPTY: 'CSV is empty. Add some rows and try again.',
+    DATASET_INVALID: detail ? `CSV needs adjustment: ${detail}` : 'CSV needs Company Name and Signal columns.',
+    MISSING_SUPPLY: 'Add a supply CSV in Settings to continue.',
+    HUB_ERROR: detail || 'Hub needs a refresh. Try selecting contacts again.',
+    HUB_MISSING_SIDE: 'Select contacts for both Demand and Supply in Hub.',
+    CONTRACT_VIOLATION: detail || 'Data format issue. Check console for details.',
+    UNKNOWN: detail || 'Something unexpected happened.',
   };
   return messages[code];
 }
@@ -1049,10 +996,19 @@ export default function Flow() {
   const flowIdRef = useRef<string | null>(null);
   const hasRestoredRef = useRef(false);
 
+  // VALID_STEPS — used for restore validation (user.txt Task 1)
+  const VALID_STEPS = [
+    'upload', 'validating', 'preview', 'matching', 'matches_found',
+    'no_matches', 'enriching', 'route_context', 'generating',
+    'ready', 'sending', 'complete'
+  ] as const;
+
   // Serialize Maps to objects for IndexedDB storage
   const serializeState = useCallback((s: FlowState) => ({
     step: s.step,
     isHubFlow: s.isHubFlow,
+    demandSchema: s.demandSchema,  // Task 1: persist schemas
+    supplySchema: s.supplySchema,  // Task 1: persist schemas
     demandRecords: s.demandRecords,
     supplyRecords: s.supplyRecords,
     matchingResult: s.matchingResult,
@@ -1066,24 +1022,56 @@ export default function Flow() {
     sentSupply: s.sentSupply,
   }), []);
 
-  // Deserialize objects back to Maps
-  const deserializeState = useCallback((data: any): Partial<FlowState> => ({
-    step: data.step,
-    isHubFlow: data.isHubFlow,
-    demandRecords: data.demandRecords || [],
-    supplyRecords: data.supplyRecords || [],
-    matchingResult: data.matchingResult,
-    detectedEdges: new Map(Object.entries(data.detectedEdges || {})),
-    enrichedDemand: new Map(Object.entries(data.enrichedDemand || {})),
-    enrichedSupply: new Map(Object.entries(data.enrichedSupply || {})),
-    demandIntros: new Map(Object.entries(data.demandIntros || {})),
-    supplyIntros: new Map(Object.entries(data.supplyIntros || {})),
-    progress: data.progress || { current: 0, total: 0, message: '' },
-    sentDemand: data.sentDemand || 0,
-    sentSupply: data.sentSupply || 0,
-  }), []);
+  // Deserialize objects back to Maps (with restore guard - user.txt Task 1)
+  const deserializeState = useCallback((data: any): Partial<FlowState> & { _downgraded?: boolean } => {
+    // Task 1: Validate step against VALID_STEPS
+    let step = data.step;
+    let downgraded = false;
 
-  // Persist state to IndexedDB on step changes
+    if (!VALID_STEPS.includes(step)) {
+      console.warn(`[Flow] Invalid step "${step}" in persisted data, resetting to upload`);
+      step = 'upload';
+      downgraded = true;
+    }
+
+    // Task 1: Restore guard — if step requires prerequisites, validate them
+    const requiresSchemas = ['enriching', 'route_context', 'generating', 'ready', 'sending'].includes(step);
+    const hasSchemas = data.demandSchema != null;
+    const hasMatchingResult = data.matchingResult != null;
+
+    if (requiresSchemas && (!hasSchemas || !hasMatchingResult)) {
+      // Downgrade: if we have matchingResult, go to matches_found; else upload
+      if (hasMatchingResult) {
+        console.warn(`[Flow] Step "${step}" requires schemas but missing, downgrading to matches_found`);
+        step = 'matches_found';
+      } else {
+        console.warn(`[Flow] Step "${step}" requires matchingResult but missing, downgrading to upload`);
+        step = 'upload';
+      }
+      downgraded = true;
+    }
+
+    return {
+      step,
+      isHubFlow: data.isHubFlow,
+      demandSchema: data.demandSchema || null,  // Task 1: restore schemas
+      supplySchema: data.supplySchema || null,  // Task 1: restore schemas
+      demandRecords: data.demandRecords || [],
+      supplyRecords: data.supplyRecords || [],
+      matchingResult: data.matchingResult,
+      detectedEdges: new Map(Object.entries(data.detectedEdges || {})),
+      enrichedDemand: new Map(Object.entries(data.enrichedDemand || {})),
+      enrichedSupply: new Map(Object.entries(data.enrichedSupply || {})),
+      demandIntros: new Map(Object.entries(data.demandIntros || {})),
+      supplyIntros: new Map(Object.entries(data.supplyIntros || {})),
+      progress: data.progress || { current: 0, total: 0, message: '' },
+      sentDemand: data.sentDemand || 0,
+      sentSupply: data.sentSupply || 0,
+      _downgraded: downgraded,  // Signal for UX toast
+    };
+  }, []);
+
+  // Persist state to IndexedDB (Task 4: expanded dependencies for incremental persist)
   useEffect(() => {
     // Don't persist upload or complete steps
     if (state.step === 'upload' || state.step === 'complete') return;
@@ -1105,10 +1093,26 @@ export default function Flow() {
         existingFlow.stages.matching.status = state.step === 'matches_found' ? 'complete' : 'running';
         existingFlow.stages.matching.progress = Math.round((state.progress.current / Math.max(state.progress.total, 1)) * 100);
         persistFlow(existingFlow);
-        console.log('[Flow] Persisted state:', state.step);
+        console.log('[Flow] Persisted state:', state.step, 'enriched:', state.enrichedDemand.size, 'intros:', state.demandIntros.size);
       }
     });
-  }, [state.step, state.demandRecords.length, state.supplyRecords.length, serializeState]);
+  }, [
+    // Task 4: Complete dependency list for incremental persistence
+    state.step,
+    state.demandRecords.length,
+    state.supplyRecords.length,
+    state.matchingResult,
+    state.detectedEdges.size,
+    state.enrichedDemand.size,
+    state.enrichedSupply.size,
+    state.demandIntros.size,
+    state.supplyIntros.size,
+    state.progress.current,
+    serializeState
+  ]);
+
+  // Restore message state (Task 5B: UX for downgrade)
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
 
   // Restore state on mount (check URL param or latest incomplete flow)
   useEffect(() => {
@@ -1139,8 +1143,26 @@ export default function Flow() {
       if (flowToRestore && flowToRestore.stages.matching.results) {
         const restored = deserializeState(flowToRestore.stages.matching.results);
         flowIdRef.current = flowToRestore.flowId;
-        setState(prev => ({ ...prev, ...restored }));
-        console.log('[Flow] Restored from:', flowToRestore.flowId, 'step:', restored.step);
+
+        // Task 5B: Show downgrade toast if data was missing
+        if (restored._downgraded) {
+          setRestoreMessage('Picked up where you left off.');
+        }
+
+        // Task 5D: Show resume banner if partial progress exists
+        const enrichedCount = (restored.enrichedDemand?.size || 0) + (restored.enrichedSupply?.size || 0);
+        const introsCount = (restored.demandIntros?.size || 0) + (restored.supplyIntros?.size || 0);
+
+        if (restored.step === 'enriching' && enrichedCount > 0 && !restored._downgraded) {
+          setRestoreMessage(`resume enrichment — ${enrichedCount} contacts already saved`);
+        } else if (restored.step === 'generating' && introsCount > 0 && !restored._downgraded) {
+          setRestoreMessage(`resume intro generation — ${introsCount} intros already saved`);
+        }
+
+        // Remove _downgraded before setting state
+        const { _downgraded, ...cleanRestored } = restored;
+        setState(prev => ({ ...prev, ...cleanRestored }));
+        console.log('[Flow] Restored from:', flowToRestore.flowId, 'step:', restored.step, 'downgraded:', _downgraded);
       }
     };
 
@@ -1936,29 +1958,51 @@ export default function Flow() {
       concurrency: 5,
     });
 
+    // Task 2: Resume-safe enrichment — use existing results from state
+    const existingDemand = state.enrichedDemand;
+    const existingSupply = state.enrichedSupply;
+    console.log(`[Flow] Resume check: ${existingDemand.size} demand, ${existingSupply.size} supply already enriched`);
+
     // Enrich demand side with bounded concurrency
     const TEST_LIMIT = import.meta.env.DEV ? 100 : Infinity; // Dev = 100 (saves credits), Prod = unlimited
-    const demandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT);
-    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (concurrency=5) [TEST MODE: ${TEST_LIMIT}]`);
+    const allDemandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT);
 
-    const enrichedDemand = await enrichBatch(
-      demandRecords,
-      demandSchema,
-      config,
-      (current, total) => {
-        setState(prev => ({
-          ...prev,
-          progress: { current, total, message: `Enriching ${current}/${total}` },
-        }));
-      },
-      `${runId}-demand`
-    );
+    // Task 2: Filter out already-enriched demand records
+    const demandRecords = allDemandRecords.filter(r => !existingDemand.has(recordKey(r)));
+    console.log(`[Flow] Enriching ${demandRecords.length} demand matches (${allDemandRecords.length - demandRecords.length} skipped from cache)`);
 
-    // NOTE: Don't update state yet — wait until both demand and supply are enriched
-    // to avoid race conditions where route_context renders with partial data
+    // Start with existing results
+    const enrichedDemand = new Map(existingDemand);
+
+    if (demandRecords.length > 0) {
+      const newDemandResults = await enrichBatch(
+        demandRecords,
+        demandSchema,
+        config,
+        (current, total) => {
+          setState(prev => ({
+            ...prev,
+            progress: { current: existingDemand.size + current, total: allDemandRecords.length, message: `Enriching ${existingDemand.size + current}/${allDemandRecords.length}` },
+          }));
+        },
+        `${runId}-demand`
+      );
+
+      // Merge new results
+      for (const [k, v] of newDemandResults) {
+        enrichedDemand.set(k, v);
+      }
+    }
+
+    // Task 2: Persist demand results immediately (incremental persist)
+    setState(prev => ({
+      ...prev,
+      enrichedDemand: new Map(enrichedDemand),
+    }));
+    console.log(`[Flow] Demand enrichment persisted: ${enrichedDemand.size} total`);
 
     // Enrich supply side — ONLY supplies paired with edge-positive demands
-    const enrichedSupply = new Map<string, EnrichmentResult>();
+    const enrichedSupply = new Map(existingSupply);
 
     // Extract unique supplies from demand matches (not all supplyAggregates)
     const matchedSupplyKeys = new Set<string>();
@@ -1966,13 +2010,19 @@ export default function Flow() {
 
     for (const match of matching.demandMatches) {
       const supplyKey = recordKey(match.supply);
-      if (!matchedSupplyKeys.has(supplyKey)) {
+      // Task 2: Skip already-enriched supplies
+      if (!matchedSupplyKeys.has(supplyKey) && !existingSupply.has(supplyKey)) {
         matchedSupplyKeys.add(supplyKey);
         supplyToEnrich.push({ supply: match.supply });
       }
     }
 
-    console.log(`[Flow] Enriching ${supplyToEnrich.length} matched supplies (not all ${matching.supplyAggregates.length})`);
+    const totalSupplyCount = new Set(matching.demandMatches.map(m => recordKey(m.supply))).size;
+    console.log(`[Flow] Enriching ${supplyToEnrich.length} supplies (${totalSupplyCount - supplyToEnrich.length} skipped from cache)`);
+
+    // Task 2: Batch counter for incremental state updates
+    let batchCounter = 0;
+    const BATCH_SIZE = 5; // Update state every 5 enrichments
 
     for (const agg of supplyToEnrich) {
       if (abortRef.current) break;
@@ -2014,7 +2064,25 @@ export default function Flow() {
             durationMs: 0,
           });
         }
+
+        // Task 2: Incremental state update every BATCH_SIZE
+        batchCounter++;
+        if (batchCounter >= BATCH_SIZE) {
+          setState(prev => ({
+            ...prev,
+            enrichedSupply: new Map(enrichedSupply),
+          }));
+          batchCounter = 0;
+        }
       }
+    }
+
+    // Task 2: Final state update for any remaining
+    if (batchCounter > 0) {
+      setState(prev => ({
+        ...prev,
+        enrichedSupply: new Map(enrichedSupply),
+      }));
     }
 
     // Summary
@@ -2071,8 +2139,11 @@ export default function Flow() {
     enrichedDemand: Map<string, EnrichmentResult>,
     enrichedSupply: Map<string, EnrichmentResult>
   ) => {
-    const demandIntros = new Map<string, string>();
-    const supplyIntros = new Map<string, string>();
+    // Task 3: Resume-safe intro generation — start with existing intros from state
+    const existingDemandIntros = state.demandIntros;
+    const existingSupplyIntros = state.supplyIntros;
+    const demandIntros = new Map(existingDemandIntros);
+    const supplyIntros = new Map(existingSupplyIntros);
 
     console.log('[COMPOSE] Starting intro composition:');
     console.log('  - demandMatches:', matching.demandMatches.length);
@@ -2081,15 +2152,40 @@ export default function Flow() {
     console.log('  - enrichedDemand size:', enrichedDemand.size);
     console.log('  - enrichedDemand keys (first 5):', Array.from(enrichedDemand.keys()).slice(0, 5));
     console.log('  - demandMatches keys (first 5):', matching.demandMatches.slice(0, 5).map(m => recordKey(m.demand)));
+    console.log('  - existing demandIntros:', existingDemandIntros.size);
+    console.log('  - existing supplyIntros:', existingSupplyIntros.size);
 
     let progress = 0;
     let composed = 0;
     let dropped = 0;
+    let skipped = 0;  // Task 3: Track skipped (already generated)
 
+    // Count must match all 3 gates used in the loop below
     const total = matching.demandMatches.filter(m => {
-      const e = enrichedDemand.get(recordKey(m.demand));
-      return e && isSuccessfulEnrichment(e) && e.email;
+      const demandKey = recordKey(m.demand);
+      const supplyKey = recordKey(m.supply);
+
+      // Gate 1: edge evidence non-empty
+      const edge = state.detectedEdges.get(demandKey);
+      if (!edge || !edge.evidence || edge.evidence.trim() === '') return false;
+
+      // Gate 2: demand email (pre-existing OR enriched)
+      const demandEnriched = enrichedDemand.get(demandKey);
+      const demandEmail = m.demand.email || (demandEnriched && isSuccessfulEnrichment(demandEnriched) ? demandEnriched.email : null);
+      if (!demandEmail) return false;
+
+      // Gate 3: supply email (pre-existing OR enriched)
+      const supplyEnriched = enrichedSupply.get(supplyKey);
+      const supplyEmail = m.supply.email || (supplyEnriched && isSuccessfulEnrichment(supplyEnriched) ? supplyEnriched.email : null);
+      if (!supplyEmail) return false;
+
+      return true;
     }).length;
+    console.log(`[COMPOSE] Count: ${total} matches pass all 3 gates (edge + demand email + supply email)`);
+
+    // Task 3: Batch counter for incremental state updates
+    let introBatchCounter = 0;
+    const INTRO_BATCH_SIZE = 3; // Update state every 3 intros
 
     // Process each demand match using pre-detected edges
     for (const match of matching.demandMatches) {
@@ -2097,6 +2193,14 @@ export default function Flow() {
 
       const demandKey = recordKey(match.demand);
       const supplyKey = recordKey(match.supply);
+
+      // Task 3: Skip already-generated intros (dedupe by demandKey + supplyKey)
+      const introKey = `${demandKey}:${supplyKey}`;
+      if (existingDemandIntros.has(demandKey) && existingSupplyIntros.has(supplyKey)) {
+        skipped++;
+        progress++;
+        continue;
+      }
 
       // GATE 1: Check for detected edge WITH evidence (fail loud on empty)
       const edge = state.detectedEdges.get(demandKey);
@@ -2395,6 +2499,7 @@ export default function Flow() {
 
     console.log(`[COMPOSE] Complete:`);
     console.log(`  - Composed: ${composed}`);
+    console.log(`  - Skipped (already generated): ${skipped}`);
     console.log(`  - Dropped: ${dropped}`);
     console.log(`  - Demand intros: ${demandIntros.size}`);
     console.log(`  - Supply intros: ${supplyIntros.size}`);
@@ -2775,16 +2880,124 @@ export default function Flow() {
   // RENDER
   // =============================================================================
 
+  // Task 5C: Reset flow data handler
+  const handleResetFlowData = useCallback(async () => {
+    // Clear IndexedDB flow data
+    if (flowIdRef.current) {
+      try {
+        const flows = await listFlowsAsync();
+        for (const entry of flows) {
+          // Mark as complete to clear from "running" list
+          const flow = await loadFlowAsync(entry.flowId);
+          if (flow) {
+            flow.stages.matching.status = 'complete';
+            persistFlow(flow);
+          }
+        }
+      } catch (e) {
+        console.error('[Flow] Error clearing flow data:', e);
+      }
+    }
+    flowIdRef.current = null;
+    localStorage.removeItem('flow:index');
+    setRestoreMessage(null);
+    setState({
+      step: 'upload',
+      dataPreview: null,
+      isHubFlow: false,
+      demandSchema: null,
+      supplySchema: null,
+      demandRecords: [],
+      supplyRecords: [],
+      matchingResult: null,
+      detectedEdges: new Map(),
+      enrichedDemand: new Map(),
+      enrichedSupply: new Map(),
+      demandIntros: new Map(),
+      supplyIntros: new Map(),
+      progress: { current: 0, total: 0, message: '' },
+      sentDemand: 0,
+      sentSupply: 0,
+      error: null,
+      flowBlock: null,
+      auditData: null,
+      resultsDropped: false,
+      droppedCounts: null,
+      copyValidationFailures: [],
+    });
+    console.log('[Flow] Reset flow data complete');
+  }, []);
+
   return (
-    <div className="min-h-screen bg-[#000000] text-white flex flex-col">
-      {/* Back arrow */}
-      <div className="px-8 pt-8">
+    <div className="min-h-screen bg-[#000000] text-white flex flex-col relative">
+      {/* Restore message — Apple-style toast (portal-style, doesn't affect layout) */}
+      <AnimatePresence>
+        {restoreMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.98 }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed top-6 left-0 right-0 z-50 flex justify-center pointer-events-none"
+          >
+            <div className="pointer-events-auto px-5 py-3 rounded-2xl bg-[#1c1c1e]/90 backdrop-blur-xl border border-white/[0.06]">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 size={16} className="text-white/50 flex-shrink-0" />
+                <p className="text-[13px] text-white/70 tracking-[-0.01em]">
+                  {restoreMessage}
+                </p>
+                <button
+                  onClick={() => setRestoreMessage(null)}
+                  className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-all duration-200 flex-shrink-0 ml-2"
+                >
+                  <X size={12} className="text-white/30" />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Header — fixed height, consistent layout */}
+      <div className="h-16 px-8 flex items-center justify-between flex-shrink-0">
+        {/* Left: Back button */}
         <button
           onClick={() => navigate('/launcher')}
           className={BTN.icon}
         >
           <ArrowLeft size={18} className="text-white/50" />
         </button>
+
+        {/* Center: Processing indicator (absolute to not affect siblings) */}
+        {hasActiveFlow && ['enriching', 'generating', 'sending'].includes(state.step) && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2"
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400/60 animate-pulse" />
+            <span className="text-[11px] text-white/40 tracking-wide whitespace-nowrap">
+              Processing — keep this tab open
+            </span>
+          </motion.div>
+        )}
+
+        {/* Right: Start over (always reserve space) */}
+        <div className="w-16 flex justify-end">
+          {(state.step !== 'upload' || restoreMessage) && (
+            <motion.button
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              onClick={handleResetFlowData}
+              className="text-[11px] text-white/25 hover:text-white/50 transition-all duration-300 tracking-wide whitespace-nowrap"
+            >
+              Start over
+            </motion.button>
+          )}
+        </div>
       </div>
 
       {/* Main content */}
@@ -3829,19 +4042,26 @@ export default function Flow() {
                 const enrichmentFailed = matchCount > 0 && totalEnriched === 0;
                 const enrichmentPartial = matchCount > 0 && totalEnriched > 0 && totalEnriched < matchCount;
 
-                // INTRO PAIR COUNT — counts actual pairs where BOTH sides have email
+                // INTRO PAIR COUNT — Task 6: Gate-aligned count using same 3 gates as runIntroGeneration
                 // This is what the generator loops through, so this is the honest count
                 const introPairCount = demandMatches.filter(m => {
-                  // Demand has email?
+                  const demandKey = recordKey(m.demand);
+                  const supplyKey = recordKey(m.supply);
+
+                  // Gate 1: Edge evidence non-empty
+                  const edge = state.detectedEdges.get(demandKey);
+                  if (!edge || !edge.evidence || edge.evidence.trim() === '') return false;
+
+                  // Gate 2: Demand has email (pre-existing OR enriched success)
                   const demandHasEmail = m.demand.email || (() => {
-                    const e = state.enrichedDemand.get(recordKey(m.demand));
+                    const e = state.enrichedDemand.get(demandKey);
                     return e && isSuccessfulEnrichment(e) && e.email;
                   })();
                   if (!demandHasEmail) return false;
 
-                  // Supply has email?
+                  // Gate 3: Supply has email (pre-existing OR enriched success)
                   const supplyHasEmail = m.supply.email || (() => {
-                    const e = state.enrichedSupply.get(recordKey(m.supply));
+                    const e = state.enrichedSupply.get(supplyKey);
                     return e && isSuccessfulEnrichment(e) && e.email;
                   })();
                   return supplyHasEmail;
@@ -4092,7 +4312,7 @@ export default function Flow() {
                             <div className="flex items-center justify-between text-[11px]">
                               <div className="flex items-center gap-2">
                                 <Key className="w-3.5 h-3.5 text-red-400/80" />
-                                <span className="text-red-400/80">{statusCounts.authError} API key invalid</span>
+                                <span className="text-red-400/70">{statusCounts.authError} API key needs attention</span>
                               </div>
                               <button
                                 onClick={() => navigate('/settings')}
@@ -4140,8 +4360,8 @@ export default function Flow() {
                           {/* Generic Error */}
                           {statusCounts.error > 0 && (
                             <div className="flex items-center gap-2 text-[11px]">
-                              <AlertCircle className="w-3.5 h-3.5 text-red-400/70" />
-                              <span className="text-red-400/70">{statusCounts.error} provider errors</span>
+                              <AlertCircle className="w-3.5 h-3.5 text-white/40" />
+                              <span className="text-white/50">{statusCounts.error} provider issues</span>
                             </div>
                           )}
                         </div>
@@ -4296,15 +4516,11 @@ export default function Flow() {
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className="max-w-md mx-auto mb-4 p-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/20"
+                        className="max-w-md mx-auto mb-4 p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]"
                       >
-                        <div className="flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 text-amber-400" />
-                          <p className="text-[11px] text-amber-300/90">
-                            {state.droppedCounts.intros} intro{state.droppedCounts.intros !== 1 ? 's' : ''} couldn't be generated.
-                            You can continue with {state.droppedCounts.demand + state.droppedCounts.supply} ready.
-                          </p>
-                        </div>
+                        <p className="text-[11px] text-white/40 text-center">
+                          {state.droppedCounts.intros} skipped · {state.droppedCounts.demand + state.droppedCounts.supply} ready
+                        </p>
                       </motion.div>
                     )}
 
@@ -4480,7 +4696,7 @@ export default function Flow() {
                       <motion.p
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        className="mt-4 text-[11px] text-red-400/80"
+                        className="mt-4 text-[11px] text-white/50"
                       >
                         {safeRender(state.error)}
                       </motion.p>

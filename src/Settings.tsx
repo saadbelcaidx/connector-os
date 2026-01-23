@@ -12,6 +12,7 @@ import { InfoTip } from './components/InfoTip';
 import { LearnMore, LearnMoreCard, LearnMoreList } from './components/LearnMore';
 import type { AIConfig } from './services/AIService';
 import CsvUpload from './components/CsvUpload';
+import { RecentFlows } from './components/RecentFlows';
 
 // =============================================================================
 // TYPES
@@ -620,6 +621,9 @@ export default function Settings() {
                   </div>
                 </div>
               </div>
+
+              {/* Recent Flows — Resume saved sessions */}
+              <RecentFlows className="rounded-xl bg-gradient-to-b from-white/[0.02] to-transparent border border-white/[0.06]" />
 
               {/* CSV Upload — Single Source of Truth */}
               <div>
