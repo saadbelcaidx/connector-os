@@ -5,7 +5,7 @@
  * Linear-style UI, consistent with Connector OS design system.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../AuthContext';
@@ -490,6 +490,10 @@ function ConnectorAgentInner() {
   const [pendingResumeBatch, setPendingResumeBatch] = useState<ConnectorAgentBatch | null>(null);
   const [batchHistory, setBatchHistory] = useState<ConnectorAgentBatch[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+
+  // Drag and drop state
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load batch history on mount
   useEffect(() => {
@@ -1325,20 +1329,43 @@ function ConnectorAgentInner() {
                         <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">
                           {bulkMode === 'find' ? 'CSV (first_name, last_name, domain) — max 5MB' : 'CSV (contact) — max 5MB'}
                         </label>
-                        <input
-                          type="file"
-                          accept=".csv"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
+                        {/* Drop Zone Wrapper */}
+                        <div
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!isProcessing) setIsDragging(true);
+                          }}
+                          onDragEnter={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!isProcessing) setIsDragging(true);
+                          }}
+                          onDragLeave={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsDragging(false);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsDragging(false);
+                            if (isProcessing) return;
+
+                            const file = e.dataTransfer.files?.[0];
                             if (!file) return;
+                            if (!file.name.endsWith('.csv')) {
+                              setBulkError('Please drop a CSV file');
+                              return;
+                            }
 
                             // File size check (5MB)
                             if (file.size > 5 * 1024 * 1024) {
                               setBulkError('File too large. Max 5MB.');
-                              e.target.value = '';
                               return;
                             }
 
+                            // Process dropped file (same logic as onChange)
                             Papa.parse(file, {
                               header: true,
                               skipEmptyLines: true,
@@ -1354,7 +1381,6 @@ function ConnectorAgentInner() {
                                 setBulkRawHeaders(headers);
                                 setBulkParsedData(results.data as any[]);
 
-                                // Check if mapping needed
                                 const headersLower = headers.map(h => h.toLowerCase().trim());
                                 if (bulkMode === 'find') {
                                   const hasFirstName = headersLower.some(h => h === 'first_name' || h === 'firstname');
@@ -1365,7 +1391,6 @@ function ConnectorAgentInner() {
                                     setBulkColumnMap({});
                                   } else {
                                     setBulkNeedsMapping(false);
-                                    // Auto-map
                                     const map: Record<string, string> = {};
                                     headers.forEach(h => {
                                       const hl = h.toLowerCase().trim();
@@ -1388,12 +1413,93 @@ function ConnectorAgentInner() {
                                 }
                               }
                             });
-
-                            e.target.value = '';
                           }}
-                          disabled={isProcessing}
-                          className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-white/[0.08] file:text-white/70 hover:file:bg-white/[0.12] disabled:opacity-40"
+                          className={`relative rounded-xl border-2 border-dashed transition-all duration-200 ${
+                            isDragging
+                              ? 'border-white/40 bg-white/[0.04]'
+                              : 'border-transparent'
+                          }`}
+                        >
+                          {/* Drag overlay */}
+                          {isDragging && (
+                            <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/[0.02] pointer-events-none z-10">
+                              <div className="flex items-center gap-2 text-white/60 text-sm">
+                                <Upload size={16} />
+                                <span>Drop CSV here</span>
+                              </div>
+                            </div>
+                          )}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".csv"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+
+                              // File size check (5MB)
+                              if (file.size > 5 * 1024 * 1024) {
+                                setBulkError('File too large. Max 5MB.');
+                                e.target.value = '';
+                                return;
+                              }
+
+                              Papa.parse(file, {
+                                header: true,
+                                skipEmptyLines: true,
+                                complete: (results) => {
+                                  setBulkError(null);
+                                  setBulkResults(null);
+                                  setBulkSummary(null);
+                                  setBulkProgress(0);
+                                  setBulkCurrentBatch(0);
+                                  setBulkTotalBatches(0);
+
+                                  const headers = results.meta.fields || [];
+                                  setBulkRawHeaders(headers);
+                                  setBulkParsedData(results.data as any[]);
+
+                                  // Check if mapping needed
+                                  const headersLower = headers.map(h => h.toLowerCase().trim());
+                                  if (bulkMode === 'find') {
+                                    const hasFirstName = headersLower.some(h => h === 'first_name' || h === 'firstname');
+                                    const hasLastName = headersLower.some(h => h === 'last_name' || h === 'lastname');
+                                    const hasDomain = headersLower.includes('domain');
+                                    if (!hasFirstName || !hasLastName || !hasDomain) {
+                                      setBulkNeedsMapping(true);
+                                      setBulkColumnMap({});
+                                    } else {
+                                      setBulkNeedsMapping(false);
+                                      // Auto-map
+                                      const map: Record<string, string> = {};
+                                      headers.forEach(h => {
+                                        const hl = h.toLowerCase().trim();
+                                        if (hl === 'first_name' || hl === 'firstname') map['first_name'] = h;
+                                        if (hl === 'last_name' || hl === 'lastname') map['last_name'] = h;
+                                        if (hl === 'domain') map['domain'] = h;
+                                      });
+                                      setBulkColumnMap(map);
+                                    }
+                                  } else {
+                                    const hasEmail = headersLower.includes('email');
+                                    if (!hasEmail) {
+                                      setBulkNeedsMapping(true);
+                                      setBulkColumnMap({});
+                                    } else {
+                                      setBulkNeedsMapping(false);
+                                      const emailHeader = headers.find(h => h.toLowerCase().trim() === 'email');
+                                      setBulkColumnMap({ email: emailHeader || '' });
+                                    }
+                                  }
+                                }
+                              });
+
+                              e.target.value = '';
+                            }}
+                            disabled={isProcessing}
+                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-white/[0.08] file:text-white/70 hover:file:bg-white/[0.12] disabled:opacity-40"
                         />
+                        </div>
                       </div>
                     )}
 
