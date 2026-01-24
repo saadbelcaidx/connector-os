@@ -436,14 +436,24 @@ export function ConnectorAssistant() {
             console.log('[ConnectorAssistant] Azure config loaded');
             return;
           }
-          // Check for OpenAI/Anthropic config
-          if (parsed.aiProvider && parsed.aiApiKey) {
+          // Check for OpenAI config
+          if (parsed.aiProvider === 'openai' && parsed.openaiApiKey) {
             setAiConfig({
-              provider: parsed.aiProvider,
-              apiKey: parsed.aiApiKey,
-              model: parsed.aiModel,
+              provider: 'openai',
+              apiKey: parsed.openaiApiKey,
+              model: parsed.aiModel || 'gpt-4o-mini',
             });
-            console.log('[ConnectorAssistant] OpenAI/Anthropic config loaded');
+            console.log('[ConnectorAssistant] OpenAI config loaded');
+            return;
+          }
+          // Check for Anthropic/Claude config
+          if (parsed.aiProvider === 'anthropic' && parsed.claudeApiKey) {
+            setAiConfig({
+              provider: 'anthropic',
+              apiKey: parsed.claudeApiKey,
+              model: parsed.aiModel || 'claude-3-haiku-20240307',
+            });
+            console.log('[ConnectorAssistant] Anthropic config loaded');
             return;
           }
         } catch (e) {
