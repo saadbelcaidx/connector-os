@@ -416,6 +416,7 @@ export function ConnectorAssistant() {
 
   // Load AI config from settings (matches Settings.tsx storage)
   // Re-check when drawer opens in case user just saved settings
+  // FORGIVING: Check all providers, use whichever has valid credentials
   useEffect(() => {
     async function loadConfig() {
       const aiSettings = localStorage.getItem('ai_settings');
@@ -429,8 +430,11 @@ export function ConnectorAssistant() {
             hasClaudeKey: !!parsed.claudeApiKey
           });
 
-          // Check for Azure config
-          if (parsed.aiProvider === 'azure' && parsed.azureEndpoint && parsed.azureApiKey) {
+          // FORGIVING: Check ALL providers, not just the selected one
+          // Users often click wrong tab or forget to switch provider
+
+          // Check Azure (needs endpoint + key)
+          if (parsed.azureEndpoint && parsed.azureApiKey) {
             setAiConfig({
               provider: 'azure',
               apiKey: parsed.azureApiKey,
@@ -438,27 +442,27 @@ export function ConnectorAssistant() {
               azureEndpoint: parsed.azureEndpoint,
               azureDeployment: parsed.azureDeployment,
             });
-            console.log('[ConnectorAssistant] Azure config loaded');
+            console.log('[ConnectorAssistant] Azure config loaded (auto-detected)');
             return;
           }
-          // Check for OpenAI config
-          if (parsed.aiProvider === 'openai' && parsed.openaiApiKey) {
+          // Check OpenAI
+          if (parsed.openaiApiKey) {
             setAiConfig({
               provider: 'openai',
               apiKey: parsed.openaiApiKey,
               model: parsed.aiModel || 'gpt-4o-mini',
             });
-            console.log('[ConnectorAssistant] OpenAI config loaded');
+            console.log('[ConnectorAssistant] OpenAI config loaded (auto-detected)');
             return;
           }
-          // Check for Anthropic/Claude config
-          if (parsed.aiProvider === 'anthropic' && parsed.claudeApiKey) {
+          // Check Anthropic/Claude
+          if (parsed.claudeApiKey) {
             setAiConfig({
               provider: 'anthropic',
               apiKey: parsed.claudeApiKey,
               model: parsed.aiModel || 'claude-3-haiku-20240307',
             });
-            console.log('[ConnectorAssistant] Anthropic config loaded');
+            console.log('[ConnectorAssistant] Anthropic config loaded (auto-detected)');
             return;
           }
         } catch (e) {
