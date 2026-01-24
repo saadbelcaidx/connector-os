@@ -34,6 +34,7 @@ import Terms from './Terms';
 import ComingSoon from './components/ComingSoon';
 import VslWatch from './VslWatch';
 import { FEATURES } from './config/features';
+import ConnectorAssistant from './components/ConnectorAssistant';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -300,6 +301,7 @@ function App() {
           <PasswordSetupGate>
             <OnboardingOverlay />
             <AppRoutes />
+            <ConnectorAssistant />
           </PasswordSetupGate>
         </Router>
       </OnboardingProvider>
