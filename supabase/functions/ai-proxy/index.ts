@@ -156,11 +156,26 @@ Deno.serve(async (req: Request) => {
 
       console.log('[ai-proxy] Calling Anthropic with model:', model);
 
-      // Convert messages format for Anthropic
-      const anthropicMessages = messages.map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.content,
-      }));
+      // Anthropic requires system messages via separate 'system' parameter
+      // Only user/assistant messages go in the messages array
+      const systemMessage = messages.find(m => m.role === 'system');
+      const anthropicMessages = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: m.content,
+        }));
+
+      const requestBody: Record<string, unknown> = {
+        model,
+        messages: anthropicMessages,
+        max_tokens,
+      };
+
+      // Add system prompt if present
+      if (systemMessage) {
+        requestBody.system = systemMessage.content;
+      }
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -169,11 +184,7 @@ Deno.serve(async (req: Request) => {
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          messages: anthropicMessages,
-          max_tokens,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {

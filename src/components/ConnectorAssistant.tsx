@@ -211,14 +211,17 @@ async function callAI(
     temperature: 0.7,
   };
 
-  // Handle Azure vs other providers
+  // Handle provider-specific fields (must match ai-proxy expected field names)
   if (provider === 'azure') {
     requestBody.azureEndpoint = azureEndpoint;
     requestBody.azureApiKey = apiKey;
     requestBody.azureDeployment = azureDeployment;
-  } else {
-    requestBody.apiKey = apiKey;
-    requestBody.model = model || (provider === 'openai' ? 'gpt-4o-mini' : 'claude-3-haiku-20240307');
+  } else if (provider === 'openai') {
+    requestBody.openaiApiKey = apiKey;
+    requestBody.model = model || 'gpt-4o-mini';
+  } else if (provider === 'anthropic') {
+    requestBody.anthropicApiKey = apiKey;
+    requestBody.model = model || 'claude-3-haiku-20240307';
   }
 
   // Route through edge function to avoid CORS
