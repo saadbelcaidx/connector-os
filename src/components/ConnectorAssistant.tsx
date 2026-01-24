@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 import {
   MessageCircle,
   X,
@@ -240,76 +241,51 @@ async function callAI(
 }
 
 // =============================================================================
-// MARKDOWN RENDERER (Simple, no dependencies)
+// MARKDOWN COMPONENTS (styled for dark theme)
 // =============================================================================
 
-function renderMarkdown(text: string): React.ReactNode {
-  // Split by lines to handle line-based formatting
-  const lines = text.split('\n');
-  const elements: React.ReactNode[] = [];
-
-  lines.forEach((line, i) => {
-    let processed: React.ReactNode = line;
-
-    // Headers (## or ###)
-    if (line.startsWith('### ')) {
-      processed = <strong key={i} className="text-white/90 text-[13px]">{line.slice(4)}</strong>;
-    } else if (line.startsWith('## ')) {
-      processed = <strong key={i} className="text-white/90 text-[14px]">{line.slice(3)}</strong>;
-    }
-    // Numbered lists (1. 2. etc)
-    else if (/^\d+\.\s/.test(line)) {
-      const content = line.replace(/^\d+\.\s/, '');
-      processed = <span key={i} className="block pl-4">{renderInline(content)}</span>;
-    }
-    // Bullet points (- or *)
-    else if (/^[-*]\s/.test(line)) {
-      const content = line.replace(/^[-*]\s/, '');
-      processed = <span key={i} className="block pl-4">• {renderInline(content)}</span>;
-    }
-    // Horizontal rule (---)
-    else if (line.trim() === '---') {
-      processed = <hr key={i} className="border-white/[0.08] my-3" />;
-    }
-    // Regular line with inline formatting
-    else {
-      processed = <span key={i}>{renderInline(line)}</span>;
-    }
-
-    elements.push(processed);
-    if (i < lines.length - 1) {
-      elements.push(<br key={`br-${i}`} />);
-    }
-  });
-
-  return <>{elements}</>;
-}
-
-function renderInline(text: string): React.ReactNode {
-  // Handle **bold** and *italic*
-  const parts: React.ReactNode[] = [];
-  let remaining = text;
-  let key = 0;
-
-  while (remaining.length > 0) {
-    // Bold: **text**
-    const boldMatch = remaining.match(/\*\*(.+?)\*\*/);
-    if (boldMatch && boldMatch.index !== undefined) {
-      if (boldMatch.index > 0) {
-        parts.push(remaining.slice(0, boldMatch.index));
-      }
-      parts.push(<strong key={key++} className="text-white/90 font-medium">{boldMatch[1]}</strong>);
-      remaining = remaining.slice(boldMatch.index + boldMatch[0].length);
-      continue;
-    }
-
-    // No more matches, add rest
-    parts.push(remaining);
-    break;
-  }
-
-  return parts.length === 1 ? parts[0] : <>{parts}</>;
-}
+const markdownComponents = {
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="mb-3 last:mb-0">{children}</p>
+  ),
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="text-white font-semibold">{children}</strong>
+  ),
+  em: ({ children }: { children?: React.ReactNode }) => (
+    <em className="text-white/80 italic">{children}</em>
+  ),
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="list-disc list-inside mb-3 space-y-1 pl-1">{children}</ul>
+  ),
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="list-decimal list-inside mb-3 space-y-1 pl-1">{children}</ol>
+  ),
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li className="text-white/80">{children}</li>
+  ),
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="text-[15px] font-semibold text-white mb-2">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="text-[14px] font-semibold text-white mb-2">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="text-[13px] font-semibold text-white mb-2">{children}</h3>
+  ),
+  hr: () => <hr className="border-white/[0.08] my-4" />,
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-[12px] text-violet-300">{children}</code>
+  ),
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className="bg-white/[0.04] border border-white/[0.08] rounded-lg p-3 mb-3 overflow-x-auto text-[12px]">{children}</pre>
+  ),
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className="border-l-2 border-violet-500/40 pl-3 my-3 text-white/70 italic">{children}</blockquote>
+  ),
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">{children}</a>
+  ),
+};
 
 // =============================================================================
 // COMPONENTS
@@ -338,8 +314,12 @@ function ChatMessage({
             : 'bg-white/[0.04] border border-white/[0.08] text-white/90'
         }`}
       >
-        <div className={`text-[13px] leading-relaxed ${isUser ? 'text-white' : ''}`}>
-          {isUser ? message.content : renderMarkdown(message.content)}
+        <div className={`text-[13px] leading-relaxed ${isUser ? 'text-white' : 'text-white/80'}`}>
+          {isUser ? message.content : (
+            <ReactMarkdown components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
+          )}
         </div>
 
         {/* Feedback buttons for assistant messages */}
