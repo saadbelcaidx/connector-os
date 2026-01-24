@@ -415,14 +415,19 @@ export function ConnectorAssistant() {
   }, [user?.email]);
 
   // Load AI config from settings (matches Settings.tsx storage)
+  // Re-check when drawer opens in case user just saved settings
   useEffect(() => {
     async function loadConfig() {
-      // AI settings stored in 'ai_settings' localStorage (Settings.tsx line 371)
       const aiSettings = localStorage.getItem('ai_settings');
       if (aiSettings) {
         try {
           const parsed = JSON.parse(aiSettings);
-          console.log('[ConnectorAssistant] Loaded AI settings:', { provider: parsed.aiProvider, hasAzureKey: !!parsed.azureApiKey, hasApiKey: !!parsed.aiApiKey });
+          console.log('[ConnectorAssistant] Loaded AI settings:', {
+            provider: parsed.aiProvider,
+            hasOpenAIKey: !!parsed.openaiApiKey,
+            hasAzureKey: !!parsed.azureApiKey,
+            hasClaudeKey: !!parsed.claudeApiKey
+          });
 
           // Check for Azure config
           if (parsed.aiProvider === 'azure' && parsed.azureEndpoint && parsed.azureApiKey) {
@@ -465,7 +470,7 @@ export function ConnectorAssistant() {
     }
 
     loadConfig();
-  }, []);
+  }, [isOpen]);
 
   // Load messages from localStorage
   useEffect(() => {
