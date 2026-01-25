@@ -245,15 +245,16 @@ export function buildSupplyReceipt(input: SupplyExportInput): ExportReceipt {
 // HUMAN-READABLE REASON LABELS
 // =============================================================================
 
+// Apple-style labels — no "failed" or "missing" language
 export const REASON_LABELS: Record<FilterReason, string> = {
-  NO_MATCH: 'No matching result',
-  NO_EMAIL: 'Missing verified email',
-  NOT_VERIFIED: 'Email not verified',
-  NO_INTRO: 'Missing intro',
-  DUPLICATE_DOMAIN: 'Duplicate domain',
-  ENRICHMENT_FAILED: 'Enrichment failed',
-  USER_EXCLUDED: 'Manually excluded',
-  BUYER_SELLER_MISMATCH: 'Buyer-seller mismatch',
+  NO_MATCH: 'Not matched',
+  NO_EMAIL: 'Need email',
+  NOT_VERIFIED: 'Email unverified',
+  NO_INTRO: 'Need intro',
+  DUPLICATE_DOMAIN: 'Duplicate',
+  ENRICHMENT_FAILED: 'Need enrichment',
+  USER_EXCLUDED: 'Excluded',
+  BUYER_SELLER_MISMATCH: 'Type mismatch',
 };
 
 /**

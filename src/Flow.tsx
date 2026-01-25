@@ -900,6 +900,14 @@ interface FlowState {
   sentDemand: number;
   sentSupply: number;
 
+  // Send breakdown (Apple-style: new | existing | needs_attention)
+  sendBreakdown: {
+    new: number;
+    existing: number;
+    needsAttention: number;
+    details: string[];  // Details for needs_attention items
+  };
+
   // Error (legacy string-based)
   error: string | null;
 
@@ -958,6 +966,7 @@ export default function Flow() {
     progress: { current: 0, total: 0, message: '' },
     sentDemand: 0,
     sentSupply: 0,
+    sendBreakdown: { new: 0, existing: 0, needsAttention: 0, details: [] },
     error: null,
     flowBlock: null,
     auditData: null,
@@ -2672,6 +2681,9 @@ export default function Flow() {
     let sentDemand = 0;
     let sentSupply = 0;
 
+    // Track breakdown (Apple-style: new | existing | needs_attention)
+    const breakdown = { new: 0, existing: 0, needsAttention: 0, details: [] as string[] };
+
     // Send to demand side
     if (senderConfig.demandCampaignId) {
       const demandToSend = matchingResult.demandMatches.filter(m => {
@@ -2715,28 +2727,41 @@ export default function Flow() {
             introText: intro,
             contactTitle: enriched?.title || match.demand.title,
           });
-          if (result.success) {
+          // Track breakdown by status
+          if (result.status === 'new') {
+            breakdown.new++;
             sentDemand++;
-            // Fire-and-forget: Log match event for behavioral learning (Option B)
-            if (user?.id && match.tier && match.needProfile && match.capabilityProfile) {
-              logMatchSent({
-                operatorId: user.id,
-                demandDomain: match.demand.domain,
-                supplyDomain: match.supply.domain,
-                demandCompany: match.demand.company,
-                supplyCompany: match.supply.company,
-                score: match.score,
-                tier: match.tier,
-                tierReason: match.tierReason || '',
-                needProfile: match.needProfile,
-                capabilityProfile: match.capabilityProfile,
-                scoreBreakdown: match.scoreBreakdown,
-                campaignId: senderConfig.demandCampaignId!,
-              }).catch(() => {}); // Silent fire-and-forget
+          } else if (result.status === 'existing') {
+            breakdown.existing++;
+            sentDemand++; // Still counts as processed
+          } else if (result.status === 'needs_attention') {
+            breakdown.needsAttention++;
+            if (result.detail) {
+              breakdown.details.push(`${match.demand.company}: ${result.detail}`);
             }
           }
+
+          // Fire-and-forget: Log match event for behavioral learning (Option B)
+          if (result.success && user?.id && match.tier && match.needProfile && match.capabilityProfile) {
+            logMatchSent({
+              operatorId: user.id,
+              demandDomain: match.demand.domain,
+              supplyDomain: match.supply.domain,
+              demandCompany: match.demand.company,
+              supplyCompany: match.supply.company,
+              score: match.score,
+              tier: match.tier,
+              tierReason: match.tierReason || '',
+              needProfile: match.needProfile,
+              capabilityProfile: match.capabilityProfile,
+              scoreBreakdown: match.scoreBreakdown,
+              campaignId: senderConfig.demandCampaignId!,
+            }).catch(() => {}); // Silent fire-and-forget
+          }
         } catch (err) {
-          console.error('[Flow] Send failed:', match.demand.domain, err);
+          console.error('[Flow] Send issue:', match.demand.domain, err);
+          breakdown.needsAttention++;
+          breakdown.details.push(`${match.demand.company}: Connection issue`);
         }
 
         setState(prev => ({
@@ -2792,30 +2817,43 @@ export default function Flow() {
             introText: intro,
             contactTitle: enriched?.title || agg.supply.title,
           });
-          if (result.success) {
+          // Track breakdown by status
+          if (result.status === 'new') {
+            breakdown.new++;
             sentSupply++;
-            // Fire-and-forget: Log match event for behavioral learning (Option B)
-            // Supply sends use bestMatch for the demand-supply pairing data
-            const bestMatch = agg.bestMatch;
-            if (user?.id && bestMatch.tier && bestMatch.needProfile && bestMatch.capabilityProfile) {
-              logMatchSent({
-                operatorId: user.id,
-                demandDomain: bestMatch.demand.domain,
-                supplyDomain: agg.supply.domain,
-                demandCompany: bestMatch.demand.company,
-                supplyCompany: agg.supply.company,
-                score: bestMatch.score,
-                tier: bestMatch.tier,
-                tierReason: bestMatch.tierReason || '',
-                needProfile: bestMatch.needProfile,
-                capabilityProfile: bestMatch.capabilityProfile,
-                scoreBreakdown: bestMatch.scoreBreakdown,
-                campaignId: senderConfig.supplyCampaignId!,
-              }).catch(() => {}); // Silent fire-and-forget
+          } else if (result.status === 'existing') {
+            breakdown.existing++;
+            sentSupply++; // Still counts as processed
+          } else if (result.status === 'needs_attention') {
+            breakdown.needsAttention++;
+            if (result.detail) {
+              breakdown.details.push(`${agg.supply.company}: ${result.detail}`);
             }
           }
+
+          // Fire-and-forget: Log match event for behavioral learning (Option B)
+          // Supply sends use bestMatch for the demand-supply pairing data
+          const bestMatch = agg.bestMatch;
+          if (result.success && user?.id && bestMatch.tier && bestMatch.needProfile && bestMatch.capabilityProfile) {
+            logMatchSent({
+              operatorId: user.id,
+              demandDomain: bestMatch.demand.domain,
+              supplyDomain: agg.supply.domain,
+              demandCompany: bestMatch.demand.company,
+              supplyCompany: agg.supply.company,
+              score: bestMatch.score,
+              tier: bestMatch.tier,
+              tierReason: bestMatch.tierReason || '',
+              needProfile: bestMatch.needProfile,
+              capabilityProfile: bestMatch.capabilityProfile,
+              scoreBreakdown: bestMatch.scoreBreakdown,
+              campaignId: senderConfig.supplyCampaignId!,
+            }).catch(() => {}); // Silent fire-and-forget
+          }
         } catch (err) {
-          console.error('[Flow] Send failed:', agg.supply.domain, err);
+          console.error('[Flow] Send issue:', agg.supply.domain, err);
+          breakdown.needsAttention++;
+          breakdown.details.push(`${agg.supply.company}: Connection issue`);
         }
 
         setState(prev => ({
@@ -2825,12 +2863,13 @@ export default function Flow() {
       }
     }
 
-    // Complete
+    // Complete — with breakdown
     setState(prev => ({
       ...prev,
       step: 'complete',
       sentDemand,
       sentSupply,
+      sendBreakdown: breakdown,
     }));
   }, [state, settings]);
 
@@ -2859,9 +2898,12 @@ export default function Flow() {
       progress: { current: 0, total: 0, message: '' },
       sentDemand: 0,
       sentSupply: 0,
+      sendBreakdown: { new: 0, existing: 0, needsAttention: 0, details: [] },
       error: null,
       flowBlock: null,
       auditData: null,
+      resultsDropped: false,
+      droppedCounts: null,
       copyValidationFailures: [],
     });
   };
@@ -2918,6 +2960,7 @@ export default function Flow() {
       progress: { current: 0, total: 0, message: '' },
       sentDemand: 0,
       sentSupply: 0,
+      sendBreakdown: { new: 0, existing: 0, needsAttention: 0, details: [] },
       error: null,
       flowBlock: null,
       auditData: null,
@@ -4769,18 +4812,44 @@ export default function Flow() {
                 </div>
               </motion.div>
 
-              {/* Count */}
+              {/* Count + Breakdown */}
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
                 className="mb-8"
               >
-                <span className="text-[56px] font-light text-white tracking-tight">{state.sentDemand + state.sentSupply}</span>
-                <p className="text-[15px] text-white/50 mt-1 font-medium">Intros sent</p>
+                <span className="text-[56px] font-light text-white tracking-tight">
+                  {state.sendBreakdown.new + state.sendBreakdown.existing}
+                </span>
+                <p className="text-[15px] text-white/50 mt-1 font-medium">routed</p>
+
+                {/* Breakdown: new · existing */}
                 <p className="text-[12px] text-white/25 mt-2">
-                  {state.sentDemand} demand · {state.sentSupply} supply
+                  {state.sendBreakdown.new > 0 && `${state.sendBreakdown.new} new`}
+                  {state.sendBreakdown.new > 0 && state.sendBreakdown.existing > 0 && ' · '}
+                  {state.sendBreakdown.existing > 0 && `${state.sendBreakdown.existing} existing`}
+                  {state.sendBreakdown.new === 0 && state.sendBreakdown.existing === 0 && 'No new leads'}
                 </p>
+
+                {/* Needs attention — subtle, not alarming */}
+                {state.sendBreakdown.needsAttention > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                    className="mt-4 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]"
+                  >
+                    <p className="text-[12px] text-white/40">
+                      {state.sendBreakdown.needsAttention} need attention
+                    </p>
+                    {state.sendBreakdown.details.length > 0 && (
+                      <p className="text-[11px] text-white/25 mt-1 line-clamp-2">
+                        {state.sendBreakdown.details[0]}
+                      </p>
+                    )}
+                  </motion.div>
+                )}
               </motion.div>
 
               <motion.button
@@ -4801,42 +4870,75 @@ export default function Flow() {
 
       {/* Export Receipt Modal — Trust Layer */}
       <AnimatePresence>
-        {showExportReceipt && exportReceiptData && (
-          <motion.div
-            key={`export-modal-${exportModalKey}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-            onClick={() => setShowExportReceipt(false)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              transition={{ duration: 0.2 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-xs mx-4 p-6 rounded-2xl bg-[#0A0A0A] border border-white/[0.08] shadow-2xl text-center"
-            >
-              {/* Stripe-style: just show what they're getting */}
-              <p className="text-[13px] text-white/40 mb-2">Export</p>
-              <p className="text-[42px] font-light text-white tracking-tight mb-1">
-                {exportReceiptData.demand.totalExported + exportReceiptData.supply.totalExported}
-              </p>
-              <p className="text-[14px] text-white/50 font-medium mb-1">intros</p>
-              <p className="text-[12px] text-white/25 mb-6">
-                {exportReceiptData.demand.totalExported} demand · {exportReceiptData.supply.totalExported} supply
-              </p>
+        {showExportReceipt && exportReceiptData && (() => {
+          const totalReady = exportReceiptData.demand.totalExported + exportReceiptData.supply.totalExported;
+          const totalMatched = exportReceiptData.demand.totalMatched + exportReceiptData.supply.totalMatched;
+          const totalNotReady = totalMatched - totalReady;
 
-              <button
-                onClick={handleExportCSV}
-                className={`w-full ${BTN.primary}`}
+          // Aggregate filtered reasons from both sides
+          const reasonCounts = new Map<string, number>();
+          for (const f of [...exportReceiptData.demand.filtered, ...exportReceiptData.supply.filtered]) {
+            const label = REASON_LABELS[f.reason] || f.reason;
+            reasonCounts.set(label, (reasonCounts.get(label) || 0) + f.count);
+          }
+          const reasons = Array.from(reasonCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3); // Show top 3 reasons
+
+          return (
+            <motion.div
+              key={`export-modal-${exportModalKey}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+              onClick={() => setShowExportReceipt(false)}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                transition={{ duration: 0.2 }}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-xs mx-4 p-6 rounded-2xl bg-[#0A0A0A] border border-white/[0.08] shadow-2xl text-center"
               >
-                Download CSV
-              </button>
+                {/* Apple-style: show ready count with context */}
+                <p className="text-[13px] text-white/40 mb-2">Export</p>
+                <p className="text-[42px] font-light text-white tracking-tight mb-1">
+                  {totalReady}
+                </p>
+                <p className="text-[14px] text-white/50 font-medium mb-1">ready</p>
+                <p className="text-[12px] text-white/25 mb-4">
+                  {exportReceiptData.demand.totalExported} demand · {exportReceiptData.supply.totalExported} supply
+                </p>
+
+                {/* Show context: matched total and what's not ready */}
+                {totalNotReady > 0 && (
+                  <div className="mb-6 p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+                    <p className="text-[12px] text-white/30 mb-2">
+                      {totalMatched} matched total
+                    </p>
+                    <div className="space-y-1">
+                      {reasons.map(([label, count]) => (
+                        <p key={label} className="text-[11px] text-white/20">
+                          {count} {label.toLowerCase()}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleExportCSV}
+                  disabled={totalReady === 0}
+                  className={`w-full ${BTN.primary}`}
+                >
+                  {totalReady > 0 ? 'Download CSV' : 'Nothing to export'}
+                </button>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
+          );
+        })()}
       </AnimatePresence>
 
       {/* Dock */}

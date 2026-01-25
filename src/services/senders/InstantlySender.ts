@@ -1,12 +1,12 @@
 /**
  * INSTANTLY SENDER ADAPTER
  *
- * Wraps existing InstantlyService logic.
- * No behavior change from original implementation.
+ * Wraps InstantlyService with rich result passthrough.
+ * Returns Apple-style status: new | existing | needs_attention
  */
 
 import { SenderAdapter, SenderConfig, SendLeadParams, SendResult } from './SenderAdapter';
-import { sendToInstantly, DualSendParams } from '../InstantlyService';
+import { sendToInstantly, validateCampaignId, DualSendParams } from '../InstantlyService';
 
 export const InstantlySender: SenderAdapter = {
   id: 'instantly',
@@ -14,10 +14,23 @@ export const InstantlySender: SenderAdapter = {
 
   validateConfig(config: SenderConfig): string | null {
     if (!config.apiKey) {
-      return 'Instantly API key required';
+      return 'Add your Instantly API key in Settings';
     }
     if (!config.demandCampaignId && !config.supplyCampaignId) {
-      return 'At least one campaign ID required';
+      return 'Add at least one campaign ID in Settings';
+    }
+    // Validate campaign ID formats
+    if (config.demandCampaignId) {
+      const validation = validateCampaignId(config.demandCampaignId);
+      if (!validation.valid) {
+        return `Demand campaign: ${validation.message}`;
+      }
+    }
+    if (config.supplyCampaignId) {
+      const validation = validateCampaignId(config.supplyCampaignId);
+      if (!validation.valid) {
+        return `Supply campaign: ${validation.message}`;
+      }
     }
     return null;
   },
@@ -39,11 +52,12 @@ export const InstantlySender: SenderAdapter = {
 
     const result = await sendToInstantly(config.apiKey, dualParams);
 
+    // Pass through rich result directly (same interface)
     return {
       success: result.success,
       leadId: result.leadId,
-      status: result.success ? 'added' : 'error',
-      error: result.error,
+      status: result.status,
+      detail: result.detail,
     };
   },
 

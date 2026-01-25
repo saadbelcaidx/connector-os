@@ -28,11 +28,14 @@ export interface SendLeadParams {
   signalMetadata?: Record<string, any>;
 }
 
+// Apple-style status language (no "failure" words)
+export type SendStatus = 'new' | 'existing' | 'needs_attention';
+
 export interface SendResult {
   success: boolean;
   leadId?: string;
-  status: 'added' | 'skipped' | 'error';
-  error?: string;
+  status: SendStatus;
+  detail?: string;  // Human-readable detail for UI
 }
 
 export interface SenderAdapter {

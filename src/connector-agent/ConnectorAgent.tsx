@@ -271,23 +271,23 @@ class ConnectorAgentAPI {
         return { success: false, error: 'Invalid response from server' };
       }
     } catch (err: unknown) {
-      // Detect CORS errors - they throw TypeError with specific message
-      const isCorsError = err instanceof TypeError && (
+      // Detect network errors - TypeError with fetch failure messages
+      const isNetworkError = err instanceof TypeError && (
         (err.message || '').includes('Failed to fetch') ||
         (err.message || '').includes('NetworkError') ||
         (err.message || '').includes('CORS')
       );
 
-      if (isCorsError) {
-        console.error(`[ConnectorAgent] CORS blocked: ${endpoint}`, {
+      if (isNetworkError) {
+        console.error(`[ConnectorAgent] Network error: ${endpoint}`, {
           origin: window.location.origin,
           apiBase: API_BASE,
           error: err,
         });
         return {
           success: false,
-          error: 'CORS_BLOCKED',
-          errorMessage: `Network blocked by browser security. Please use https://app.connector-os.com`,
+          error: 'NETWORK_ERROR',
+          errorMessage: 'Connection interrupted — retrying may help',
           debug: {
             origin: window.location.origin,
             apiBase: API_BASE,
@@ -519,7 +519,7 @@ function ConnectorAgentInner() {
         const keyResult = await api.getActiveKey();
 
         // Detect CORS blocked
-        if (keyResult.error === 'CORS_BLOCKED') {
+        if (keyResult.error === 'NETWORK_ERROR') {
           setCorsBlocked({
             message: keyResult.errorMessage || 'Network blocked. Use app.connector-os.com',
             debug: keyResult.debug,
@@ -532,7 +532,7 @@ function ConnectorAgentInner() {
         const quotaResult = await api.getQuota();
 
         // Detect CORS blocked on quota
-        if (quotaResult.error === 'CORS_BLOCKED') {
+        if (quotaResult.error === 'NETWORK_ERROR') {
           setCorsBlocked({
             message: quotaResult.errorMessage || 'Network blocked. Use app.connector-os.com',
             debug: quotaResult.debug,
@@ -1929,9 +1929,8 @@ function ConnectorAgentInner() {
                                       } else if (res.error.includes('429')) {
                                         setBulkError('Rate limited — stopped at batch ' + (b + 1));
                                         stopped = true;
-                                      } else {
-                                        setBulkError(res.error);
                                       }
+                                      // Transient errors (network blips) — continue silently
                                     }
 
                                     // Accumulate results and stream to UI
@@ -2978,9 +2977,8 @@ function ConnectorAgentInner() {
                           } else if (res.error.includes('429')) {
                             setBulkError('Rate limited — stopped');
                             stopped = true;
-                          } else {
-                            setBulkError(res.error);
                           }
+                          // Transient errors (network blips) — continue silently
                         }
 
                         if (res.results) {

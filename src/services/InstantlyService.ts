@@ -16,6 +16,35 @@ interface InstantlyLeadPayload {
   custom_variables?: Record<string, any>;
 }
 
+// =============================================================================
+// RICH RESULT TYPES — Apple-style language (no "failure" words)
+// =============================================================================
+
+export type SendStatus = 'new' | 'existing' | 'needs_attention';
+
+export interface RichSendResult {
+  success: boolean;
+  status: SendStatus;
+  leadId?: string;
+  detail?: string;  // Human-readable detail for UI
+}
+
+// UUID v4 format validation
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Validate campaign ID format before sending
+ */
+export function validateCampaignId(campaignId: string): { valid: boolean; message?: string } {
+  if (!campaignId) {
+    return { valid: false, message: 'Campaign ID is required' };
+  }
+  if (!UUID_REGEX.test(campaignId)) {
+    return { valid: false, message: 'Campaign ID format is invalid' };
+  }
+  return { valid: true };
+}
+
 export interface DualSendParams {
   campaignId: string;
   email: string;
@@ -60,9 +89,19 @@ function generateIntroText(type: 'DEMAND' | 'SUPPLY', firstName: string, company
 export async function sendToInstantly(
   apiKey: string,
   params: DualSendParams
-): Promise<{ success: boolean; leadId?: string; error?: string }> {
+): Promise<RichSendResult> {
   console.log(`[InstantlyService] Sending ${params.type} lead to campaign ${params.campaignId}`);
   console.log(`[InstantlyService] Contact: ${params.email} (${params.first_name} ${params.last_name})`);
+
+  // Pre-flight: Validate campaign ID format
+  const validation = validateCampaignId(params.campaignId);
+  if (!validation.valid) {
+    return {
+      success: false,
+      status: 'needs_attention',
+      detail: validation.message,
+    };
+  }
 
   try {
     const introText = params.intro_text || generateIntroText(
@@ -93,22 +132,20 @@ export async function sendToInstantly(
 
     console.log(`[InstantlyService] Full payload:`, JSON.stringify(payload, null, 2));
 
-    const success = await createInstantlyLead(apiKey, payload);
+    const result = await createInstantlyLeadRich(apiKey, payload);
 
-    if (success) {
-      console.log(`[InstantlyService] Lead created successfully, recording send...`);
+    if (result.success) {
       // Fire-and-forget - don't block send on DB logging
       recordSend(params, introText);
-      return { success: true, leadId: `${params.email}-${Date.now()}` };
-    } else {
-      console.error(`[InstantlyService] Lead creation failed`);
-      return { success: false, error: 'Failed to create lead in Instantly' };
     }
+
+    return result;
   } catch (error) {
     console.error(`[InstantlyService] Exception in sendToInstantly:`, error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      status: 'needs_attention',
+      detail: error instanceof Error ? error.message : 'Something went wrong',
     };
   }
 }
@@ -178,18 +215,29 @@ export async function createInstantlyLead(
   payload: InstantlyLeadPayload,
   options?: { validateCampaign?: boolean; disableSkips?: boolean }
 ): Promise<boolean> {
+  const result = await createInstantlyLeadRich(apiKey, payload, options);
+  return result.success;
+}
+
+/**
+ * Rich version of createInstantlyLead — returns detailed status for UI
+ * Instantly API v2 response (observed 2025-01-25):
+ *   SUCCESS: { id: "uuid", status: 1, ... }
+ *   EXISTING: { id: "uuid", status: 0, ... } (lead already in campaign)
+ *   ERROR: HTTP 4xx with error details
+ */
+export async function createInstantlyLeadRich(
+  apiKey: string,
+  payload: InstantlyLeadPayload,
+  options?: { validateCampaign?: boolean; disableSkips?: boolean }
+): Promise<RichSendResult> {
   console.log('[InstantlyService] Starting lead creation via edge function');
-  console.log('[InstantlyService] Payload:', payload);
 
   try {
     const edgeFunctionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/instantly-proxy`;
-    console.log('[InstantlyService] Calling edge function:', edgeFunctionUrl);
 
-    // Use options or fall back to testing flag
     const disableSkips = options?.disableSkips ?? DISABLE_SKIPS_FOR_TESTING;
     const validateCampaign = options?.validateCampaign ?? false;
-
-    console.log('[InstantlyService] Options - validateCampaign:', validateCampaign, 'disableSkips:', disableSkips);
 
     const response = await fetch(edgeFunctionUrl, {
       method: 'POST',
@@ -205,42 +253,77 @@ export async function createInstantlyLead(
       })
     });
 
-    console.log(`[InstantlyService] Edge function response status: ${response.status}`);
+    console.log(`[InstantlyService] Response status: ${response.status}`);
 
+    // HTTP error responses
     if (!response.ok) {
       const error = await response.json();
-      console.error('[InstantlyService] Edge function error:', error);
-      console.error('[InstantlyService] Instantly API error details:', error.details);
-      console.error('[InstantlyService] Result status:', error.resultStatus);
+      console.error('[InstantlyService] API error:', error);
 
-      const errorMessage = error.details || error.error || 'Failed to create lead';
-      throw new Error(`Instantly API error: ${errorMessage}`);
+      // Map HTTP status to user-friendly message
+      const detail = response.status === 401
+        ? 'Check your Instantly API key in Settings'
+        : response.status === 404
+        ? 'Campaign not found — check campaign ID'
+        : response.status === 429
+        ? 'Rate limited — try again shortly'
+        : error.details || 'Something went wrong';
+
+      return {
+        success: false,
+        status: 'needs_attention',
+        detail,
+      };
     }
 
     const result = await response.json();
+    console.log('[InstantlyService] Response:', JSON.stringify(result, null, 2));
 
-    // Log detailed result
-    console.log('[InstantlyService] Raw response:', JSON.stringify(result, null, 2));
-    console.log('[InstantlyService] Result status:', result.resultStatus);
-
-    // Check if lead was actually added vs skipped
-    if (result.resultStatus === 'added') {
-      console.log('[InstantlyService] ✓ Lead ADDED successfully');
-      return true;
-    } else if (result.resultStatus?.startsWith('skipped')) {
-      console.warn('[InstantlyService] ⚠ Lead SKIPPED:', result.resultStatus);
-      // Still return true since API call succeeded, but log the skip
-      return true;
-    } else {
-      console.log('[InstantlyService] Lead created with status:', result.resultStatus);
-      return true;
+    // SUCCESS: Lead has an ID and status === 1
+    if (result.id && result.status === 1) {
+      console.log('[InstantlyService] ✓ New lead:', result.id);
+      return {
+        success: true,
+        status: 'new',
+        leadId: result.id,
+      };
     }
+
+    // EXISTING: Lead has ID but status !== 1 (already in campaign/workspace)
+    if (result.id && result.status !== 1) {
+      console.log('[InstantlyService] ○ Existing lead:', result.id);
+      return {
+        success: true,
+        status: 'existing',
+        leadId: result.id,
+        detail: 'Already in campaign',
+      };
+    }
+
+    // No ID returned — unexpected
+    if (!result.id) {
+      console.error('[InstantlyService] No lead ID in response:', result);
+      return {
+        success: false,
+        status: 'needs_attention',
+        detail: 'Unexpected response from Instantly',
+      };
+    }
+
+    // Fallback
+    return {
+      success: true,
+      status: 'new',
+      leadId: result.id,
+    };
 
   } catch (error) {
     console.error('[InstantlyService] Exception:', error);
-    console.error('[InstantlyService] Error type:', error instanceof Error ? error.constructor.name : typeof error);
-    console.error('[InstantlyService] Error message:', (error as Error).message);
-    return false;
+    return {
+      success: false,
+      status: 'needs_attention',
+      detail: error instanceof Error ? error.message : 'Connection issue',
+    };
   }
 }
 
