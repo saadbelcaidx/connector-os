@@ -72,8 +72,14 @@ Deno.serve(async (req: Request) => {
     }
 
     const data = await instantlyResponse.json();
-    console.log('[Instantly Proxy] Success:', data);
 
+    // DIAGNOSTIC LOGGING — observe actual Instantly response
+    console.log('[Instantly Proxy] ========== INSTANTLY API RESPONSE ==========');
+    console.log('[Instantly Proxy] Raw response:', JSON.stringify(data));
+    console.log('[Instantly Proxy] Response keys:', Object.keys(data));
+    console.log('[Instantly Proxy] ===========================================');
+
+    // Pass through unchanged — observe first, fix later
     return new Response(JSON.stringify(data), {
       headers: {
         ...corsHeaders,
