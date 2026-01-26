@@ -980,7 +980,8 @@ export async function routeEnrichment(
     switch (provider) {
       case 'anymail':
         if (action === 'FIND_PERSON') {
-          result = await findPersonWithAnymail({ domain: inputs.domain }, inputs.person_name!, config);
+          // Pass both domain AND company_name — Anymail uses domain first, falls back to company_name
+          result = await findPersonWithAnymail({ domain: inputs.domain, company_name: inputs.company }, inputs.person_name!, config);
         } else if (action === 'FIND_COMPANY_CONTACT') {
           result = await findCompanyContactWithAnymail(inputs.domain!, config);
         } else if (action === 'SEARCH_PERSON') {
@@ -1033,7 +1034,8 @@ export async function routeEnrichment(
 
             if (config.anymailApiKey && apolloFreeResult.firstName) {
               const fullName = `${apolloFreeResult.firstName} ${apolloFreeResult.lastName}`.trim();
-              const anymailResult = await findPersonWithAnymail({ domain: inputs.domain }, fullName, config);
+              // Pass both domain AND company_name — Anymail uses domain first, falls back to company_name
+              const anymailResult = await findPersonWithAnymail({ domain: inputs.domain, company_name: inputs.company }, fullName, config);
 
               if (anymailResult.email) {
                 // Anymail found email for the Apollo-selected person
