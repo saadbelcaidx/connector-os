@@ -214,12 +214,31 @@ async function saveIndexAsync(index: FlowIndexEntry[]): Promise<void> {
     try {
       const tx = db.transaction(INDEX_STORE, 'readwrite');
       const store = tx.objectStore(INDEX_STORE);
-      store.put(index, 'index');
+      const request = store.put(index, 'index');
+
+      // Swallow ALL errors — Stripe doctrine
+      request.onerror = (e) => {
+        console.warn('[FlowStateStore] Index request error (swallowed)');
+        e.preventDefault();
+        e.stopPropagation();
+        resolve();
+      };
+      tx.onerror = (e) => {
+        console.warn('[FlowStateStore] Index transaction error (swallowed)');
+        e.preventDefault();
+        e.stopPropagation();
+        resolve();
+      };
+      tx.onabort = (e) => {
+        console.warn('[FlowStateStore] Index transaction aborted (swallowed)');
+        e.preventDefault();
+        e.stopPropagation();
+        resolve();
+      };
       tx.oncomplete = () => {
         indexCache = index;
         resolve();
       };
-      tx.onerror = () => resolve();
     } catch (e) {
       resolve();
     }
@@ -275,7 +294,7 @@ export function createFlow(meta?: Partial<FlowMeta>): FlowState {
 export function saveFlow(flowState: FlowState): { success: boolean } {
   flowState.updatedAt = new Date().toISOString();
 
-  // Fire async save
+  // Fire async save — MUST be bulletproof (Stripe doctrine: never surface storage errors)
   (async () => {
     const db = await openDB();
     if (!db) return;
@@ -283,7 +302,24 @@ export function saveFlow(flowState: FlowState): { success: boolean } {
     try {
       const tx = db.transaction(FLOWS_STORE, 'readwrite');
       const store = tx.objectStore(FLOWS_STORE);
-      store.put(flowState);
+      const request = store.put(flowState);
+
+      // Swallow ALL transaction/request errors — disk full, quota exceeded, etc.
+      request.onerror = (e) => {
+        console.warn('[FlowStateStore] Request error (swallowed):', (e.target as IDBRequest)?.error?.message);
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      tx.onerror = (e) => {
+        console.warn('[FlowStateStore] Transaction error (swallowed):', (e.target as IDBTransaction)?.error?.message);
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      tx.onabort = (e) => {
+        console.warn('[FlowStateStore] Transaction aborted (swallowed)');
+        e.preventDefault();
+        e.stopPropagation();
+      };
     } catch (e) {
       console.warn('[FlowStateStore] Save failed silently:', e);
     }
@@ -361,7 +397,21 @@ export function deleteFlow(flowId: string): void {
     try {
       const tx = db.transaction(FLOWS_STORE, 'readwrite');
       const store = tx.objectStore(FLOWS_STORE);
-      store.delete(flowId);
+      const request = store.delete(flowId);
+
+      // Swallow ALL errors — Stripe doctrine
+      request.onerror = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      tx.onerror = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      tx.onabort = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
     } catch (e) {
       console.warn('[FlowStateStore] Delete failed silently:', e);
     }
@@ -527,3 +577,25 @@ export async function onStageFail(
   await loadIndexAsync();
   await cleanupExpired();
 })();
+
+// =============================================================================
+// GLOBAL ERROR HANDLER — Stripe doctrine: NEVER surface storage errors
+// =============================================================================
+
+// Catch any IndexedDB errors that slip through — FILE_ERROR_NO_SPACE, QuotaExceededError, etc.
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (event) => {
+    const msg = event.reason?.message || String(event.reason) || '';
+    // Swallow IndexedDB/storage errors silently
+    if (
+      msg.includes('FILE_ERROR') ||
+      msg.includes('QuotaExceededError') ||
+      msg.includes('IDBDatabase') ||
+      msg.includes('IndexedDB') ||
+      msg.includes('.ldb:')
+    ) {
+      console.warn('[FlowStateStore] Storage error swallowed globally:', msg.slice(0, 100));
+      event.preventDefault();
+    }
+  });
+}
