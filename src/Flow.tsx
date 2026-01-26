@@ -4518,7 +4518,12 @@ export default function Flow() {
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
 
-                const totalReady = demandReady.length + supplyReady.length;
+                // FIX: Count actual intros, not just emails — "intros ready" must be truthful
+                const totalReady = demandReady.filter(m =>
+                  state.demandIntros.has(recordKey(m.demand))
+                ).length + supplyReady.filter(a =>
+                  state.supplyIntros.has(recordKey(a.supply))
+                ).length;
                 const totalNeedEmail = demandNeedEmail.length + supplyNeedEmail.length;
 
                 // Build message previews — 2 per side, dedupe supply
