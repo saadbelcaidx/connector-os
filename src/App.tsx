@@ -29,6 +29,7 @@ import PasswordSetupGate from './PasswordSetupGate';
 import OnboardingWizard from './OnboardingWizard';
 import ConnectorHub from './ConnectorHub';
 import ConnectorAgent from './connector-agent/ConnectorAgent';
+import Operator from './Operator';
 import Privacy from './Privacy';
 import Terms from './Terms';
 import ComingSoon from './components/ComingSoon';
@@ -118,6 +119,9 @@ function AppRoutes() {
 
       {/* Flow - Main product */}
       <Route path="/flow" element={<div className="page-fade"><Flow /></div>} />
+
+      {/* Operator Console - Hidden pipeline dashboard */}
+      <Route path="/operator" element={<div className="page-fade"><Operator /></div>} />
 
       {/* Connector Hub - Lead database (SSM gated) */}
       <Route
