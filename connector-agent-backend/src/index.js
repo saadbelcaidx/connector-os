@@ -485,7 +485,7 @@ function tryAcquireToken() {
 // WORKER POOL QUEUES: Interactive (parallel) vs Bulk (sequential)
 // ============================================================
 const INTERACTIVE_CONCURRENCY = 5;  // Matches parallel permutations
-const BULK_CONCURRENCY = 1;         // Protects quota stability
+const BULK_CONCURRENCY = 3;         // 3 jobs in flight, still rate-limited to 2 req/sec
 
 const queues = {
   interactive: { items: [], activeWorkers: 0 },
