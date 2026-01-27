@@ -2133,8 +2133,8 @@ function ConnectorAgentInner() {
                               <>
                                 {[
                                   { id: 'all' as const, label: 'All', count: counts.all },
-                                  { id: 'found' as const, label: 'Resolved', count: counts.found },
-                                  { id: 'not_found' as const, label: 'Pending', count: counts.not_found },
+                                  { id: 'found' as const, label: 'Found', count: counts.found },
+                                  { id: 'not_found' as const, label: 'Not Found', count: counts.not_found },
                                 ].map(f => (
                                   <button
                                     key={f.id}
@@ -2151,9 +2151,9 @@ function ConnectorAgentInner() {
                               <>
                                 {[
                                   { id: 'all' as const, label: 'All', count: counts.all },
-                                  { id: 'valid' as const, label: 'Verified', count: counts.valid },
-                                  { id: 'invalid' as const, label: 'Rejected', count: counts.invalid },
-                                  { id: 'unknown' as const, label: 'Queued', count: counts.unknown },
+                                  { id: 'valid' as const, label: 'Valid', count: counts.valid },
+                                  { id: 'invalid' as const, label: 'Invalid', count: counts.invalid },
+                                  { id: 'unknown' as const, label: 'Unknown', count: counts.unknown },
                                 ].map(f => (
                                   <button
                                     key={f.id}
