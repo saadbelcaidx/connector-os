@@ -311,7 +311,7 @@ export default function OnboardingWizard() {
       case 'welcome':
         return true;
       case 'dataSource':
-        return data.apifyToken && data.demandDatasetId;
+        return true; // CSV upload happens in Settings after setup
       case 'enrichment':
         return data.enrichmentApiKey;
       case 'outreach':
@@ -353,7 +353,7 @@ export default function OnboardingWizard() {
 
             <div className="grid grid-cols-4 gap-3 max-w-lg mx-auto mb-8">
               {[
-                { icon: Database, label: 'Data', desc: 'Apify' },
+                { icon: Database, label: 'Data', desc: 'CSV' },
                 { icon: Search, label: 'Enrich', desc: 'Apollo' },
                 { icon: Mail, label: 'Send', desc: 'Instantly' },
                 { icon: Sparkles, label: 'Personal', desc: 'Optional' },
@@ -387,50 +387,55 @@ export default function OnboardingWizard() {
               </div>
               <div>
                 <h2 className="text-[18px] font-semibold text-white/90">Data Sources</h2>
-                <p className="text-[12px] text-white/40">Connect your Apify datasets</p>
+                <p className="text-[12px] text-white/40">Upload your CSV files</p>
               </div>
             </div>
 
             <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] mb-6">
               <p className="text-[13px] text-white/50 m-0">
-                <strong className="text-white/70">What is Apify?</strong> It's where your signal data comes from — job postings, company lists, LinkedIn profiles.
+                <strong className="text-white/70">CSV format:</strong> Your files need these columns: <code className="text-white/60">Full Name, Company Name, Domain, Email, Context, Signal</code>
               </p>
-              <a
-                href="https://apify.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/60 mt-2 transition-colors"
-              >
-                Create Apify account <ExternalLink size={10} />
-              </a>
+              <div className="flex gap-3 mt-3">
+                <a
+                  href="/csv-template-demand.csv"
+                  download
+                  className="inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                >
+                  Download demand template <ExternalLink size={10} />
+                </a>
+                <a
+                  href="/csv-template-supply.csv"
+                  download
+                  className="inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white/60 transition-colors"
+                >
+                  Download supply template <ExternalLink size={10} />
+                </a>
+              </div>
             </div>
 
-            <InputField
-              label="Apify API Token"
-              hint="Found in Apify Console → Settings → Integrations"
-              value={data.apifyToken}
-              onChange={(v) => setData({ ...data, apifyToken: v })}
-              placeholder="apify_api_xxxxxxxxxxxx"
-              type="password"
-              link={{ text: 'Get token', url: 'https://console.apify.com/account/integrations' }}
-            />
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                <div className="text-[12px] font-medium text-white/70 mb-1">Demand CSV</div>
+                <div className="text-[11px] text-white/35 mb-3">Companies with needs (hiring, funding, expanding)</div>
+                <p className="text-[12px] text-white/50">
+                  Upload in <strong className="text-white/70">Settings → Data Sources</strong> after setup.
+                </p>
+              </div>
 
-            <InputField
-              label="Demand Dataset ID"
-              hint="Companies with needs (hiring, funding, etc.)"
-              value={data.demandDatasetId}
-              onChange={(v) => setData({ ...data, demandDatasetId: v })}
-              placeholder="abc123xyz"
-              link={{ text: 'Your datasets', url: 'https://console.apify.com/storage/datasets' }}
-            />
+              <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                <div className="text-[12px] font-medium text-white/70 mb-1">Supply CSV</div>
+                <div className="text-[11px] text-white/35 mb-3">Providers who can help (recruiters, agencies, consultants)</div>
+                <p className="text-[12px] text-white/50">
+                  Upload in <strong className="text-white/70">Settings → Data Sources</strong> after setup.
+                </p>
+              </div>
+            </div>
 
-            <InputField
-              label="Supply Dataset ID"
-              hint="Providers who can help (recruiters, agencies, etc.) — optional"
-              value={data.supplyDatasetId}
-              onChange={(v) => setData({ ...data, supplyDatasetId: v })}
-              placeholder="xyz789abc"
-            />
+            <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04] mt-6">
+              <p className="text-[11px] text-white/40 m-0">
+                <strong className="text-white/50">Signal column:</strong> The timing trigger — "Hiring 5 engineers", "Series B funding", "Needs deal flow"
+              </p>
+            </div>
           </div>
         );
 
