@@ -120,7 +120,7 @@ function hasNegatedIntent(text: string, intentTokens: string[]): boolean {
 const STAGE_PATTERNS: Record<Stage, RegExp> = {
   BOUNCE: /undeliverable|address not found|mailbox not found|user unknown|does not exist|permanently rejected|550 |delivery.*(failed|error)/i,
   OOO: /out of (the )?office|on (vacation|holiday|leave|pto)|away (from|until)|auto.?reply|automatic reply|currently unavailable|limited access to email|i('m| am) (away|out)|back (on|in|after)/i,
-  NEGATIVE: /\b(not interested|no thanks|no thank you|pass|remove me|take me off|unsubscribe|stop (emailing|contacting)|don't contact|not for me|i'm good|no need|please stop|opt.?out|not at this time|not ok with|not okay with|i'm not ok|not for us|we're not|we are not|not looking|not a fit|all set|didn't ask|did not ask)\b|^stop\.?\s*$/i,
+  NEGATIVE: /\b(not interested|no thanks|no thank you|pass|remove me|take me off|unsubscribe|stop (emailing|contacting)|don't contact|not for me|i'm good|no need|please stop|opt.?out|not at this time|not ok with|not okay with|i'm not ok|not for us|we're not|we are not|not looking|not a fit|all set|didn't ask|did not ask|don't have time|waste.*(my |of )?time|people like you|heard.*(all )?(the )?pitch(es)?|nothing new|heard it (all )?before|same old|been down this road)\b|^stop\.?\s*$/i,
   HOSTILE: /\b(fuck|shit|spam|scam|bullshit|stop spamming|reported|blocking|harassment|predatory|disgusting)\b/i,
   SCHEDULING: /\b(send.*(calendar|times|link|availability)|when (can we|are you|works)|let's (book|schedule|set up|talk)|set up.*(call|time)|grab time|book.*(call|time)|what times|free (to|for)|available|my calendar|schedule a)\b/i,
   // v18: PRICING pattern - terse + embedded (must catch "price?" etc.)
@@ -592,6 +592,19 @@ describe('Reply Brain v16 - Classification', () => {
       expect(classifyMultiIntent('please remove me from your list').primary).toBe('NEGATIVE');
       expect(classifyMultiIntent('all set').primary).toBe('NEGATIVE');
       expect(classifyMultiIntent('stop.').primary).toBe('NEGATIVE');
+    });
+
+    it('should classify skepticism/dismissive messages as NEGATIVE', () => {
+      // Tee A. bug report - this was classified as UNKNOWN
+      expect(classifyMultiIntent("I don't have time to waste. I have met with a ton of people like you and have heard all the pitches. There is nothing new when it comes to marketing.").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("don't have time for this").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("waste of my time").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("people like you always say the same thing").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("heard all the pitches before").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("nothing new here").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("heard it all before").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("same old pitch").primary).toBe('NEGATIVE');
+      expect(classifyMultiIntent("been down this road before").primary).toBe('NEGATIVE');
     });
   });
 
