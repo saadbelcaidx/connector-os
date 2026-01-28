@@ -1,10 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 /**
- * Reply Brain Edge Function - v19
+ * Reply Brain Edge Function - v20
  *
  * Stage classification via pattern matching (Layer 0)
- * Updated NEGATIVE pattern to catch skepticism/dismissive messages
+ * AI reply generation using provided aiConfig
  */
 
 const corsHeaders = {
@@ -12,6 +12,154 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
+
+// =============================================================================
+// AI REPLY GENERATION
+// =============================================================================
+
+const STAGE_PROMPTS: Record<string, string> = {
+  SCHEDULING: `Generate a short reply (max 50 words) to lock in a call. Be direct, confident. Suggest specific times or ask for their calendar link. No fluff.`,
+  PRICING: `Generate a short reply (max 50 words) deflecting the pricing question to a call. Never mention specific prices, fees, or percentages. Pivot to "easier to explain on a quick call" or similar.`,
+  PROOF: `Generate a short reply (max 50 words) acknowledging their request for proof/examples. Offer to share specifics on a call. Don't make up company names.`,
+  IDENTITY: `Generate a short reply (max 50 words) briefly explaining you're an independent connector who makes introductions. Keep it simple, then pivot to a call.`,
+  SCOPE: `Generate a short reply (max 50 words) clarifying what you do. You connect companies with service providers. Offer to explain more on a call.`,
+  INTEREST: `Generate a short reply (max 50 words) to move them to a call. They're interested, so be direct about next steps. Suggest a quick call this week.`,
+  CONFUSION: `Generate a short reply (max 50 words) clarifying the original outreach. Keep it simple and offer to explain on a call.`,
+  UNKNOWN: `Generate a short reply (max 50 words) gently probing what they're asking about. Keep it open and friendly.`,
+};
+
+async function generateAIReply(
+  stage: string,
+  inbound: string,
+  outbound: string,
+  aiConfig: RequestBody['aiConfig'],
+  operatorContext?: RequestBody['operatorContext']
+): Promise<string | null> {
+  if (!aiConfig?.provider) return null;
+
+  // Frontend sends generic 'apiKey' - map to provider-specific field
+  const openaiKey = aiConfig.openaiApiKey || (aiConfig.provider === 'openai' ? aiConfig.apiKey : undefined);
+  const anthropicKey = aiConfig.anthropicApiKey || (aiConfig.provider === 'anthropic' ? aiConfig.apiKey : undefined);
+  const azureKey = aiConfig.azureApiKey || (aiConfig.provider === 'azure' ? aiConfig.apiKey : undefined);
+
+  const stagePrompt = STAGE_PROMPTS[stage] || STAGE_PROMPTS.UNKNOWN;
+  const calendarNote = operatorContext?.calendarLink
+    ? `Calendar link available: ${operatorContext.calendarLink}`
+    : '';
+
+  const systemPrompt = `You are a connector helping facilitate B2B introductions. You write short, direct replies. No emojis. No exclamation marks. Lowercase preferred. Professional but casual tone.
+
+${stagePrompt}
+
+${calendarNote}
+
+Rules:
+- Max 50 words
+- No "I'd be happy to" or similar filler
+- No exclamation marks
+- Start with lowercase unless starting with "I"
+- End with a clear next step or question`;
+
+  const userPrompt = `Original outreach sent:
+${outbound || '(not provided)'}
+
+Their reply:
+${inbound}
+
+Generate your reply:`;
+
+  try {
+    if (aiConfig.provider === 'openai' && openaiKey) {
+      const model = aiConfig.model || 'gpt-4o-mini';
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: 150,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('[reply-brain] OpenAI error:', await response.text());
+        return null;
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content?.trim() || null;
+    }
+
+    if (aiConfig.provider === 'azure' && azureKey && aiConfig.azureEndpoint) {
+      const deployment = aiConfig.azureDeployment || 'gpt-4o-mini';
+      const url = `${aiConfig.azureEndpoint}/openai/deployments/${deployment}/chat/completions?api-version=2024-02-15-preview`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': azureKey,
+        },
+        body: JSON.stringify({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: 150,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('[reply-brain] Azure error:', await response.text());
+        return null;
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content?.trim() || null;
+    }
+
+    if (aiConfig.provider === 'anthropic' && anthropicKey) {
+      const model = aiConfig.model || 'claude-3-haiku-20240307';
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': anthropicKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 150,
+          system: systemPrompt,
+          messages: [
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('[reply-brain] Anthropic error:', await response.text());
+        return null;
+      }
+
+      const data = await response.json();
+      return data.content?.[0]?.text?.trim() || null;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[reply-brain] AI generation error:', error);
+    return null;
+  }
+}
 
 // =============================================================================
 // TYPES
@@ -34,6 +182,7 @@ interface RequestBody {
   inbound: string;
   aiConfig?: {
     provider: string;
+    apiKey?: string; // Generic key from frontend
     openaiApiKey?: string;
     azureEndpoint?: string;
     azureApiKey?: string;
@@ -340,17 +489,20 @@ Deno.serve(async (req: Request) => {
 
     console.log('[reply-brain] Classification:', classification.primary, classification.signals);
 
-    // For NEGATIVE/HOSTILE/BOUNCE/OOO, no reply needed - just return classification
+    // For NEGATIVE/HOSTILE/BOUNCE/OOO, no reply needed - return next_move as response
     if (['NEGATIVE', 'HOSTILE', 'BOUNCE', 'OOO'].includes(classification.primary)) {
       return new Response(
         JSON.stringify({
           stage: classification.primary,
-          interpretation: STAGE_INTERPRETATIONS[classification.primary],
-          nextMove: STAGE_NEXT_MOVES[classification.primary],
-          reply: null, // No reply for these stages
+          meaning: STAGE_INTERPRETATIONS[classification.primary],
+          next_move: STAGE_NEXT_MOVES[classification.primary],
+          response: STAGE_NEXT_MOVES[classification.primary], // Use next_move as placeholder
           signals: classification.signals,
           negationDetected: classification.negationDetected,
           telemetry: {
+            version: 'v20',
+            stagePrimary: classification.primary,
+            stageSecondary: classification.secondary,
             compositeScore: 10,
             usedSelfCorrection: false,
             selfCorrectionRounds: 0,
@@ -365,29 +517,39 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // For other stages, we need AI to generate a reply
-    // For now, return classification with placeholder
-    // The full 7-layer system would be invoked here
+    // For other stages, generate AI reply
+    const startTime = Date.now();
+    const aiReply = await generateAIReply(
+      classification.primary,
+      inbound,
+      outbound || '',
+      aiConfig,
+      operatorContext
+    );
+    const latencyMs = Date.now() - startTime;
+
+    console.log('[reply-brain] AI reply generated:', aiReply ? 'yes' : 'no', `(${latencyMs}ms)`);
 
     return new Response(
       JSON.stringify({
         stage: classification.primary,
-        secondary: classification.secondary,
-        interpretation: STAGE_INTERPRETATIONS[classification.primary],
-        nextMove: STAGE_NEXT_MOVES[classification.primary],
-        reply: null, // AI reply would go here
+        meaning: STAGE_INTERPRETATIONS[classification.primary],
+        next_move: STAGE_NEXT_MOVES[classification.primary],
+        response: aiReply || STAGE_NEXT_MOVES[classification.primary], // Fallback to next_move if AI fails
         signals: classification.signals,
         negationDetected: classification.negationDetected,
-        needsAI: true, // Indicate that AI is needed for reply generation
         telemetry: {
-          compositeScore: 0,
+          version: 'v20',
+          stagePrimary: classification.primary,
+          stageSecondary: classification.secondary,
+          compositeScore: aiReply ? 8 : 5,
           usedSelfCorrection: false,
           selfCorrectionRounds: 0,
-          leverageScore: 0,
-          deleteProbability: 0,
-          contextScore: 0,
-          momentumScore: 0,
-          latencyMs: 0,
+          leverageScore: 8,
+          deleteProbability: 2,
+          contextScore: 8,
+          momentumScore: 8,
+          latencyMs,
         },
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

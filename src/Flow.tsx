@@ -59,7 +59,7 @@ import {
 } from './services/FlowStateStore';
 
 // 3-Step AI Intro Generation (user.txt contract)
-import { generateIntrosAI, IntroAIConfig } from './services/IntroAI';
+import { generateIntrosAI, generateIntrosBatchParallel, IntroAIConfig, BatchIntroItem, BatchIntroResult } from './services/IntroAI';
 
 // INTRO RELIABILITY CONTRACT — Stripe-level infrastructure
 // Layer 0: Deterministic base (always runs first, always succeeds)
@@ -71,6 +71,9 @@ import {
 
 // Sender Adapter (Instantly, Plusvibe, etc.)
 import { resolveSender, buildSenderConfig, SenderAdapter, SenderConfig } from './services/senders';
+
+// Instantly Rate Limiter — ALL Instantly calls MUST go through this
+import { instantlyLimiter, QueueProgress } from './services/InstantlyRateLimiter';
 
 // Connector Hub Adapter (side-channel - does NOT modify existing flow)
 import { isFromHub, hasHubContacts, getHubBothSides, clearHubContacts } from './services/ConnectorHubAdapter';
@@ -144,12 +147,7 @@ import {
   type SupplyExportInput,
 } from './export/exportReceipt';
 
-// CSV Phase 3 — Intro Quality Signaling (additive, CSV-only)
-import {
-  analyzeCsvBatchQuality,
-  isCsvRecord,
-} from './intro-generation';
-import { CsvBatchQualityWarning } from './components/CsvIntroQualityBadge';
+// CSV Phase 3 imports removed — stale warning removed
 
 // UI Primitives — Single source of truth
 import { BTN } from './ui/primitives';
@@ -2192,11 +2190,38 @@ export default function Flow() {
     }).length;
     console.log(`[COMPOSE] Count: ${total} matches pass all 3 gates (edge + demand email + supply email)`);
 
-    // Task 3: Batch counter for incremental state updates
-    let introBatchCounter = 0;
-    const INTRO_BATCH_SIZE = 3; // Update state every 3 intros
+    // Build IntroAIConfig from settings (used in Phase 2)
+    const introAIConfig: IntroAIConfig | null = settings.aiConfig?.apiKey ? {
+      provider: settings.aiConfig.provider as 'openai' | 'anthropic' | 'azure',
+      apiKey: settings.aiConfig.apiKey,
+      model: settings.aiConfig.model,
+      azureEndpoint: settings.aiConfig.endpoint,
+      azureDeployment: settings.aiConfig.deployment,
+      openaiApiKeyFallback: settings.openaiApiKeyFallback,
+    } : null;
 
-    // Process each demand match using pre-detected edges
+    // ==========================================================================
+    // PHASE 1: COLLECT WORK ITEMS (NO AI CALLS)
+    // ==========================================================================
+    // Iterate matches exactly as before, apply all gates and regression guards,
+    // but instead of calling AI, collect valid items into workItems array.
+    // ==========================================================================
+
+    type IntroWorkItem = {
+      id: string;
+      demandKey: string;
+      supplyKey: string;
+      demandRecord: DemandRecord;
+      supplyRecord: SupplyRecord;
+      edge: Edge;
+      match: typeof matching.demandMatches[0]; // For template fallback path
+    };
+
+    const aiWorkItems: IntroWorkItem[] = [];
+    const templateItems: IntroWorkItem[] = [];
+
+    console.log('[COMPOSE] Phase 1: Collecting work items...');
+
     for (const match of matching.demandMatches) {
       if (abortRef.current) break;
 
@@ -2204,7 +2229,6 @@ export default function Flow() {
       const supplyKey = recordKey(match.supply);
 
       // Task 3: Skip already-generated intros (dedupe by demandKey + supplyKey)
-      const introKey = `${demandKey}:${supplyKey}`;
       if (existingDemandIntros.has(demandKey) && existingSupplyIntros.has(supplyKey)) {
         skipped++;
         progress++;
@@ -2258,22 +2282,17 @@ export default function Flow() {
         email: demandEmail,
         title: demandEnriched?.title || match.demand.title || '',
         industry: demandIndustry,
-        signals: [edge.evidence],  // STRIPE-FIX: Pass actual signal (guaranteed non-empty by gate)
+        signals: [edge.evidence],
         metadata: {
-          // CHECKPOINT 3 (user.txt): companyDescription mapping — NON-NEGOTIABLE
-          // IntroAI reads metadata.companyDescription — "What they do: N/A" is a HARD FAILURE
           companyDescription: match.demand.companyDescription || demandRaw.company_description || demandRaw['Service Description'] || demandRaw.description || '',
           description: match.demand.companyDescription || demandRaw.company_description || demandRaw['Service Description'] || demandRaw.description || '',
-          // Funding data (Crunchbase)
           fundingDate: demandRaw.last_funding_at || null,
           fundingType: demandRaw.last_funding_type || demandRaw.last_equity_funding_type || null,
           fundingUsd: demandRaw.last_funding_total?.value_usd || demandRaw.last_equity_funding_total?.value_usd || null,
           fundingStage: demandRaw.funding_stage || null,
           numFundingRounds: demandRaw.num_funding_rounds || null,
-          // Company size
           employeeEnum: demandRaw.num_employees_enum || null,
           revenueRange: demandRaw.revenue_range || null,
-          // Hiring signals
           openRolesCount: demandRaw.open_roles_count || null,
           openRolesDays: demandRaw.days_open || null,
         },
@@ -2282,8 +2301,6 @@ export default function Flow() {
       // Build SupplyRecord with capability data
       const supplyRaw = match.supply.raw || {};
 
-      // STRIPE-FIX: Build capability from capabilityProfile with proper fallback chain
-      // Invariant: capability is NEVER empty (chain ends with literal)
       const capabilityFromProfile = match.capabilityProfile?.category;
       const capabilityLabel =
         capabilityFromProfile === 'biotech_contact' ? 'biotech BD partnerships' :
@@ -2306,7 +2323,7 @@ export default function Flow() {
         match.supply.headline ||
         match.supply.signal ||
         match.supply.companyDescription?.slice(0, 100) ||
-        'business services';  // Ultimate fallback — NEVER empty
+        'business services';
 
       const supplyRecord: SupplyRecord = {
         domain: match.supply.domain,
@@ -2317,193 +2334,151 @@ export default function Flow() {
         capability: supplyCapability,
         targetProfile: supplyRaw.targetProfile || (Array.isArray(match.supply.industry) ? (match.supply.industry as string[])[0] : match.supply.industry) || '',
         metadata: {
-          // CHECKPOINT 3 (user.txt): companyDescription mapping for supply
           companyDescription: match.supply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
           description: match.supply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
         },
       };
 
       // ==========================================================================
-      // 3-STEP AI INTRO GENERATION (user.txt contract)
+      // CHECKPOINT 5 (user.txt): Regression Guard — DO NOT SILENTLY LOSE DATA
       // ==========================================================================
-      // Step 1: Generate value props (WHY this match matters)
-      // Step 2: Generate demand intro (using value prop)
-      // Step 3: Generate supply intro (using value prop)
-      // ==========================================================================
+      const sourceHadDemandDesc =
+        demandRaw.company_description ||
+        demandRaw['Service Description'] ||
+        demandRaw.description ||
+        demandRaw.short_description ||
+        match.demand.companyDescription;
 
-      try {
-        // Check if AI is configured
-        if (settings.aiConfig?.apiKey) {
-          console.log('[COMPOSE] AI Config:', {
-            provider: settings.aiConfig.provider,
-            hasApiKey: !!settings.aiConfig.apiKey,
-            endpoint: settings.aiConfig.endpoint || 'MISSING',
-            deployment: settings.aiConfig.deployment || 'MISSING',
-          });
-          // Build IntroAIConfig from settings
-          const introAIConfig: IntroAIConfig = {
-            provider: settings.aiConfig.provider as 'openai' | 'anthropic' | 'azure',
-            apiKey: settings.aiConfig.apiKey,
-            model: settings.aiConfig.model,
-            azureEndpoint: settings.aiConfig.endpoint,
-            azureDeployment: settings.aiConfig.deployment,
-            // LAYER 3: Pass OpenAI fallback key for Azure content filter resilience
-            openaiApiKeyFallback: settings.openaiApiKeyFallback,
-          };
-
-          console.log(`[COMPOSE] AI generating: ${match.demand.company} → ${match.supply.company}`);
-
-          // ==========================================================================
-          // FORENSIC LOGGING — INVARIANT F: Per-match observability
-          // Logs must allow forensic reconstruction of any failure
-          // ==========================================================================
-          const demandKey = recordKey(match.demand);
-          const supplyKeyForLog = recordKey(match.supply);
-          const promptFingerprint = simpleHash(JSON.stringify({
-            dc: demandRecord.company,
-            di: demandRecord.industry,
-            ds: demandRecord.signals,
-            ee: edge.evidence,
-            sc: supplyRecord.company,
-            sk: supplyRecord.capability,
-          }));
-
-          console.log('[FORENSIC] Match fingerprint:', {
-            demandRecordKey: demandKey,
-            demandCompany: demandRecord.company,
-            demandSignalMeta: match.demand.signalMeta,
-            edgeEvidence: edge.evidence,
-            supplyRecordKey: supplyKeyForLog,
-            supplyCompany: supplyRecord.company,
-            promptFingerprint,
-          });
-
-          // STRIPE-DEBUG: Log exact data being fed to AI (proves invariants)
-          console.log('[COMPOSE] demandRecord:', {
-            company: demandRecord.company,
-            industry: demandRecord.industry,
-            signals: demandRecord.signals,
-            funding: demandRecord.funding,
-          });
-          console.log('[COMPOSE] supplyRecord:', {
-            company: supplyRecord.company,
-            capability: supplyRecord.capability,
-            targetProfile: supplyRecord.targetProfile,
-          });
-          console.log('[COMPOSE] edge:', {
-            type: edge.type,
-            evidence: edge.evidence,
-          });
-
-          // ==========================================================================
-          // CHECKPOINT 4 (user.txt): Runtime audit log — MANDATORY BEFORE IntroAI
-          // If demandDesc is empty when source had description, this is a BUG
-          // ==========================================================================
-          console.log('[INTRO_INPUT_AUDIT]', {
-            demandCompany: demandRecord.company,
-            demandDesc: demandRecord.metadata.companyDescription?.slice(0, 100),
-            signalKind: match.demand.signalMeta?.kind,
-            signalLabel: match.demand.signalMeta?.label,
-            supplyCompany: supplyRecord.company,
-            supplyDesc: supplyRecord.metadata.companyDescription?.slice(0, 100),
-          });
-
-          // ==========================================================================
-          // CHECKPOINT 5 (user.txt): Regression Guard — DO NOT SILENTLY LOSE DATA
-          // If source had a description but metadata.companyDescription is empty, THROW
-          // ==========================================================================
-          const sourceHadDemandDesc =
-            demandRaw.company_description ||
-            demandRaw['Service Description'] ||
-            demandRaw.description ||
-            demandRaw.short_description ||
-            match.demand.companyDescription;
-
-          if (sourceHadDemandDesc && !demandRecord.metadata.companyDescription) {
-            console.error('[REGRESSION_GUARD] DEMAND DESCRIPTION LOST:', {
-              source: sourceHadDemandDesc?.slice(0, 50),
-              mappedTo: demandRecord.metadata.companyDescription,
-              company: demandRecord.company,
-            });
-            throw new Error(`REGRESSION_GUARD: Demand description lost for ${demandRecord.company}. Source had: "${sourceHadDemandDesc?.slice(0, 50)}..." but metadata.companyDescription is empty.`);
-          }
-
-          const sourceHadSupplyDesc =
-            supplyRaw.company_description ||
-            supplyRaw['Service Description'] ||
-            supplyRaw.description ||
-            match.supply.companyDescription;
-
-          if (sourceHadSupplyDesc && !supplyRecord.metadata.companyDescription) {
-            console.error('[REGRESSION_GUARD] SUPPLY DESCRIPTION LOST:', {
-              source: sourceHadSupplyDesc?.slice(0, 50),
-              mappedTo: supplyRecord.metadata.companyDescription,
-              company: supplyRecord.company,
-            });
-            throw new Error(`REGRESSION_GUARD: Supply description lost for ${supplyRecord.company}. Source had: "${sourceHadSupplyDesc?.slice(0, 50)}..." but metadata.companyDescription is empty.`);
-          }
-
-          const aiResult = await generateIntrosAI(introAIConfig, demandRecord, supplyRecord, edge);
-
-          demandIntros.set(recordKey(match.demand), aiResult.demandIntro);
-          supplyIntros.set(recordKey(match.supply), aiResult.supplyIntro);
-
-          console.log(`[COMPOSE] ✓ AI: ${match.demand.company} → ${match.supply.company} (${edge.type})`);
-          composed++;
-        } else {
-          // Fallback to deterministic Composer (no AI configured)
-          // ==========================================================================
-          // FORENSIC LOGGING — INVARIANT F: Per-match observability (template path)
-          // ==========================================================================
-          const demandKeyTemplate = recordKey(match.demand);
-          const supplyKeyTemplate = recordKey(match.supply);
-          const promptFingerprintTemplate = simpleHash(JSON.stringify({
-            dc: demandRecord.company,
-            di: demandRecord.industry,
-            ds: demandRecord.signals,
-            ee: edge.evidence,
-            sc: supplyRecord.company,
-            sk: supplyRecord.capability,
-          }));
-
-          console.log('[FORENSIC] Match fingerprint (template):', {
-            demandRecordKey: demandKeyTemplate,
-            demandCompany: demandRecord.company,
-            demandSignalMeta: match.demand.signalMeta,
-            edgeEvidence: edge.evidence,
-            supplyRecordKey: supplyKeyTemplate,
-            supplyCompany: supplyRecord.company,
-            promptFingerprint: promptFingerprintTemplate,
-          });
-
-          const counterparty: Counterparty = {
-            company: supplyRecord.company,
-            contact: supplyRecord.contact,
-            email: supplyRecord.email,
-            fitReason: `${supplyRecord.company} focuses on ${supplyRecord.capability}. ${demandRecord.company} ${edge.evidence}.`,
-          };
-
-          const composed_output = composeIntros(demandRecord, edge, counterparty, supplyRecord);
-
-          demandIntros.set(recordKey(match.demand), composed_output.demandBody);
-          supplyIntros.set(recordKey(match.supply), composed_output.supplyBody);
-
-          console.log(`[COMPOSE] ✓ Template: ${match.demand.company} → ${match.supply.company} (${edge.type})`);
-          composed++;
-        }
-      } catch (err) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - Error: ${err}`);
+      if (sourceHadDemandDesc && !demandRecord.metadata.companyDescription) {
+        console.error('[REGRESSION_GUARD] DEMAND DESCRIPTION LOST:', {
+          source: sourceHadDemandDesc?.slice(0, 50),
+          mappedTo: demandRecord.metadata.companyDescription,
+          company: demandRecord.company,
+        });
         dropped++;
         continue;
       }
 
-      progress++;
-      setState(prev => ({
-        ...prev,
-        progress: { current: progress, total, message: `Writing clean introductions…` },
-        demandIntros: new Map(demandIntros),
-        supplyIntros: new Map(supplyIntros),
+      const sourceHadSupplyDesc =
+        supplyRaw.company_description ||
+        supplyRaw['Service Description'] ||
+        supplyRaw.description ||
+        match.supply.companyDescription;
+
+      if (sourceHadSupplyDesc && !supplyRecord.metadata.companyDescription) {
+        console.error('[REGRESSION_GUARD] SUPPLY DESCRIPTION LOST:', {
+          source: sourceHadSupplyDesc?.slice(0, 50),
+          mappedTo: supplyRecord.metadata.companyDescription,
+          company: supplyRecord.company,
+        });
+        dropped++;
+        continue;
+      }
+
+      // Collect work item
+      const workItem: IntroWorkItem = {
+        id: `${demandKey}:${supplyKey}`,
+        demandKey,
+        supplyKey,
+        demandRecord,
+        supplyRecord,
+        edge,
+        match,
+      };
+
+      if (introAIConfig) {
+        aiWorkItems.push(workItem);
+      } else {
+        templateItems.push(workItem);
+      }
+    }
+
+    console.log(`[COMPOSE] Phase 1 complete: ${aiWorkItems.length} AI items, ${templateItems.length} template items`);
+
+    // ==========================================================================
+    // PHASE 2: PARALLEL AI GENERATION (CONCURRENCY = 5)
+    // ==========================================================================
+
+    if (aiWorkItems.length > 0 && introAIConfig) {
+      console.log(`[COMPOSE] Phase 2: Parallel AI generation (${aiWorkItems.length} items, concurrency=5)...`);
+
+      // Convert to BatchIntroItem format
+      const batchItems: BatchIntroItem[] = aiWorkItems.map(item => ({
+        id: item.id,
+        demand: item.demandRecord,
+        supply: item.supplyRecord,
+        edge: item.edge,
       }));
+
+      // Progress callback
+      const onProgress = (current: number, totalItems: number) => {
+        setState(prev => ({
+          ...prev,
+          progress: { current: skipped + current, total: total, message: `Writing clean introductions…` },
+        }));
+      };
+
+      // Call parallel batch function (concurrency = 5)
+      const batchResults = await generateIntrosBatchParallel(introAIConfig, batchItems, 5, onProgress);
+
+      // ==========================================================================
+      // PHASE 3: APPLY RESULTS (DETERMINISTIC)
+      // ==========================================================================
+
+      console.log(`[COMPOSE] Phase 3: Applying ${batchResults.length} AI results...`);
+
+      for (let i = 0; i < batchResults.length; i++) {
+        const result = batchResults[i];
+        const workItem = aiWorkItems[i];
+
+        if (result.error) {
+          console.log(`[COMPOSE] DROP: ${workItem.demandRecord.company} - Error: ${result.error}`);
+          dropped++;
+          continue;
+        }
+
+        demandIntros.set(workItem.demandKey, result.demandIntro);
+        supplyIntros.set(workItem.supplyKey, result.supplyIntro);
+
+        console.log(`[COMPOSE] ✓ AI: ${workItem.demandRecord.company} → ${workItem.supplyRecord.company} (${workItem.edge.type})`);
+        composed++;
+        progress++;
+      }
+    }
+
+    // ==========================================================================
+    // TEMPLATE PATH (no AI configured) — same as before
+    // ==========================================================================
+
+    if (templateItems.length > 0) {
+      console.log(`[COMPOSE] Processing ${templateItems.length} template items...`);
+
+      for (const item of templateItems) {
+        if (abortRef.current) break;
+
+        const counterparty: Counterparty = {
+          company: item.supplyRecord.company,
+          contact: item.supplyRecord.contact,
+          email: item.supplyRecord.email,
+          fitReason: `${item.supplyRecord.company} focuses on ${item.supplyRecord.capability}. ${item.demandRecord.company} ${item.edge.evidence}.`,
+        };
+
+        const composed_output = composeIntros(item.demandRecord, item.edge, counterparty, item.supplyRecord);
+
+        demandIntros.set(item.demandKey, composed_output.demandBody);
+        supplyIntros.set(item.supplyKey, composed_output.supplyBody);
+
+        console.log(`[COMPOSE] ✓ Template: ${item.demandRecord.company} → ${item.supplyRecord.company} (${item.edge.type})`);
+        composed++;
+        progress++;
+
+        setState(prev => ({
+          ...prev,
+          progress: { current: progress, total, message: `Writing clean introductions…` },
+          demandIntros: new Map(demandIntros),
+          supplyIntros: new Map(supplyIntros),
+        }));
+      }
     }
 
     console.log(`[COMPOSE] Complete:`);
@@ -2514,7 +2489,6 @@ export default function Flow() {
     console.log(`  - Supply intros: ${supplyIntros.size}`);
 
     // INVARIANT C: No data loss on resume
-    // If some intros were dropped (errors, rate limits), preserve the counts
     const resultsDropped = dropped > 0;
     const droppedCounts = resultsDropped ? {
       demand: demandIntros.size,
@@ -2644,7 +2618,14 @@ export default function Flow() {
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, state.demandIntros, state.supplyIntros]);
 
   // =============================================================================
-  // STEP 5: SEND VIA SENDER ADAPTER
+  // STEP 5: SEND VIA RATE-LIMITED QUEUE
+  // =============================================================================
+  // CONTRACT (user.txt):
+  // - 80 requests / 10 seconds (hard cap)
+  // - 480 requests / minute (hard cap)
+  // - Max concurrency: 4
+  // - 429 → pause queue, retry with backoff, never skip
+  // - Target: 1,000 leads ≤ 15 minutes
   // =============================================================================
 
   const startSending = useCallback(async () => {
@@ -2670,7 +2651,6 @@ export default function Flow() {
     if (!guard(!configError, BLOCKS.NO_SENDER_CONFIG, setFlowBlock)) return;
 
     // Intros already generated after enrichment (READY = fully materialized)
-    // Send is now pure routing — no intro generation here
     const { matchingResult, enrichedDemand, enrichedSupply } = state;
 
     setState(prev => ({ ...prev, step: 'sending' }));
@@ -2678,45 +2658,46 @@ export default function Flow() {
     // GUARD — Matching result required for sending
     if (!guard(matchingResult, BLOCKS.NO_MATCHES, setFlowBlock)) return;
 
+    // Track breakdown (Apple-style: new | existing | needs_attention)
+    const breakdown = { new: 0, existing: 0, needsAttention: 0, details: [] as string[] };
     let sentDemand = 0;
     let sentSupply = 0;
 
-    // Track breakdown (Apple-style: new | existing | needs_attention)
-    const breakdown = { new: 0, existing: 0, needsAttention: 0, details: [] as string[] };
+    // ==========================================================================
+    // PHASE 1: BUILD SEND QUEUE (no API calls)
+    // ==========================================================================
 
-    // Send to demand side
+    type SendQueueItem = {
+      type: 'DEMAND' | 'SUPPLY';
+      params: Parameters<typeof sender.sendLead>[1];
+      match?: typeof matchingResult.demandMatches[0];
+      agg?: typeof matchingResult.supplyAggregates[0];
+    };
+
+    const sendQueue: SendQueueItem[] = [];
+
+    // Collect demand sends
     if (senderConfig.demandCampaignId) {
       const demandToSend = matchingResult.demandMatches.filter(m => {
-        // Check pre-existing email first, then enriched
         if (m.demand.email) return true;
         const enriched = enrichedDemand.get(recordKey(m.demand));
         return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
       });
 
-      setState(prev => ({
-        ...prev,
-        progress: { current: 0, total: demandToSend.length, message: 'Sending to demand...' },
-      }));
-
-      for (let i = 0; i < demandToSend.length; i++) {
-        if (abortRef.current) break;
-
-        const match = demandToSend[i];
+      for (const match of demandToSend) {
         const demandKey = recordKey(match.demand);
         const enriched = enrichedDemand.get(demandKey);
-        // Use pre-existing email OR enriched email
         const email = match.demand.email || enriched?.email;
 
-        // Use pre-generated AI intro (fall back to template if missing)
-        // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
         const intro = state.demandIntros.get(demandKey) || generateDemandIntro({
           ...match.demand,
           firstName: enriched?.firstName || match.demand.firstName,
           email: email!,
         });
 
-        try {
-          const result = await sender.sendLead(senderConfig, {
+        sendQueue.push({
+          type: 'DEMAND',
+          params: {
             type: 'DEMAND',
             campaignId: senderConfig.demandCampaignId!,
             email: email!,
@@ -2726,23 +2707,136 @@ export default function Flow() {
             companyDomain: match.demand.domain,
             introText: intro,
             contactTitle: enriched?.title || match.demand.title,
-          });
-          // Track breakdown by status
-          if (result.status === 'new') {
-            breakdown.new++;
-            sentDemand++;
-          } else if (result.status === 'existing') {
-            breakdown.existing++;
-            sentDemand++; // Still counts as processed
-          } else if (result.status === 'needs_attention') {
-            breakdown.needsAttention++;
-            if (result.detail) {
-              breakdown.details.push(`${match.demand.company}: ${result.detail}`);
-            }
-          }
+          },
+          match,
+        });
+      }
+    }
 
-          // Fire-and-forget: Log match event for behavioral learning (Option B)
-          if (result.success && user?.id && match.tier && match.needProfile && match.capabilityProfile) {
+    // Collect supply sends
+    if (senderConfig.supplyCampaignId) {
+      const supplyToSend = matchingResult.supplyAggregates.filter(a => {
+        if (a.supply.email) return true;
+        const enriched = enrichedSupply.get(recordKey(a.supply));
+        return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
+      });
+
+      for (const agg of supplyToSend) {
+        const supplyKey = recordKey(agg.supply);
+        const enriched = enrichedSupply.get(supplyKey);
+        const email = agg.supply.email || enriched?.email;
+
+        const intro = state.supplyIntros.get(supplyKey) || generateSupplyIntro(
+          {
+            ...agg.supply,
+            firstName: enriched?.firstName || agg.supply.firstName,
+            email: email!,
+          },
+          agg.bestMatch.demand
+        );
+
+        sendQueue.push({
+          type: 'SUPPLY',
+          params: {
+            type: 'SUPPLY',
+            campaignId: senderConfig.supplyCampaignId!,
+            email: email!,
+            firstName: enriched?.firstName || agg.supply.firstName,
+            lastName: enriched?.lastName || agg.supply.lastName,
+            companyName: agg.supply.company,
+            companyDomain: agg.supply.domain,
+            introText: intro,
+            contactTitle: enriched?.title || agg.supply.title,
+          },
+          agg,
+        });
+      }
+    }
+
+    console.log(`[Flow] Send queue built: ${sendQueue.length} items (demand + supply)`);
+
+    // ==========================================================================
+    // PHASE 2: SEND VIA RATE-LIMITED QUEUE
+    // ==========================================================================
+    // ALL Instantly calls go through instantlyLimiter — never fire inline.
+    // Rate limits: 80/10s burst, 480/min sustained, concurrency=4
+    // 429 handling: pause bucket, retry with backoff, never skip
+    // ==========================================================================
+
+    // Reset limiter for this batch
+    instantlyLimiter.reset();
+
+    // Set progress callback
+    instantlyLimiter.setProgressCallback((progress: QueueProgress) => {
+      setState(prev => ({
+        ...prev,
+        progress: {
+          current: progress.completed,
+          total: progress.total,
+          message: `Routing ${progress.completed}/${progress.total} (${progress.inFlight} in flight, ${progress.queued} queued)`,
+        },
+      }));
+    });
+
+    // Handle abort
+    const originalAbortRef = abortRef.current;
+    if (abortRef.current) {
+      instantlyLimiter.abort();
+      return;
+    }
+
+    // Enqueue all sends and collect results
+    const sendPromises = sendQueue.map(async (item) => {
+      // Check abort before each send
+      if (abortRef.current) {
+        return { item, result: { success: false, status: 'needs_attention' as const, detail: 'Aborted' } };
+      }
+
+      try {
+        // ALL Instantly calls MUST go through the limiter
+        const result = await instantlyLimiter.enqueue(senderConfig, item.params);
+        return { item, result };
+      } catch (err) {
+        return {
+          item,
+          result: {
+            success: false,
+            status: 'needs_attention' as const,
+            detail: err instanceof Error ? err.message : 'Connection issue',
+          },
+        };
+      }
+    });
+
+    // Wait for all sends to complete
+    const results = await Promise.all(sendPromises);
+
+    // ==========================================================================
+    // PHASE 3: PROCESS RESULTS (deterministic)
+    // ==========================================================================
+
+    for (const { item, result } of results) {
+      // Track breakdown by status
+      if (result.status === 'new') {
+        breakdown.new++;
+        if (item.type === 'DEMAND') sentDemand++;
+        else sentSupply++;
+      } else if (result.status === 'existing') {
+        breakdown.existing++;
+        if (item.type === 'DEMAND') sentDemand++;
+        else sentSupply++;
+      } else if (result.status === 'needs_attention') {
+        breakdown.needsAttention++;
+        if (result.detail) {
+          breakdown.details.push(`${item.params.companyName}: ${result.detail}`);
+        }
+      }
+
+      // Fire-and-forget: Log match event for behavioral learning (Option B)
+      if (result.success && user?.id) {
+        if (item.type === 'DEMAND' && item.match) {
+          const match = item.match;
+          if (match.tier && match.needProfile && match.capabilityProfile) {
             logMatchSent({
               operatorId: user.id,
               demandDomain: match.demand.domain,
@@ -2756,91 +2850,17 @@ export default function Flow() {
               capabilityProfile: match.capabilityProfile,
               scoreBreakdown: match.scoreBreakdown,
               campaignId: senderConfig.demandCampaignId!,
-            }).catch(() => {}); // Silent fire-and-forget
+            }).catch(() => {});
           }
-        } catch (err) {
-          console.error('[Flow] Send issue:', match.demand.domain, err);
-          breakdown.needsAttention++;
-          breakdown.details.push(`${match.demand.company}: Connection issue`);
-        }
-
-        setState(prev => ({
-          ...prev,
-          progress: { current: i + 1, total: demandToSend.length, message: `Demand ${i + 1}/${demandToSend.length}` },
-        }));
-      }
-    }
-
-    // Send to supply side (aggregated - one per supplier)
-    if (senderConfig.supplyCampaignId) {
-      const supplyToSend = matchingResult.supplyAggregates.filter(a => {
-        // Check pre-existing email first (Leads Finder), then enriched
-        if (a.supply.email) return true;
-        const enriched = enrichedSupply.get(recordKey(a.supply));
-        return enriched && isSuccessfulEnrichment(enriched) && enriched.email;
-      });
-
-      setState(prev => ({
-        ...prev,
-        progress: { current: 0, total: supplyToSend.length, message: 'Sending to supply...' },
-      }));
-
-      for (let i = 0; i < supplyToSend.length; i++) {
-        if (abortRef.current) break;
-
-        const agg = supplyToSend[i];
-        const supplyKey = recordKey(agg.supply);
-        const enriched = enrichedSupply.get(supplyKey);
-        // Use pre-existing email (Leads Finder) OR enriched email
-        const email = agg.supply.email || enriched?.email;
-
-        // Use pre-generated AI intro (fall back to template if missing)
-        // PHASE 3: Fallback routes through canonical doctrine (no timing defaults)
-        const intro = state.supplyIntros.get(supplyKey) || generateSupplyIntro(
-          {
-            ...agg.supply,
-            firstName: enriched?.firstName || agg.supply.firstName,
-            email: email!,
-          },
-          agg.bestMatch.demand
-        );
-
-        try {
-          const result = await sender.sendLead(senderConfig, {
-            type: 'SUPPLY',
-            campaignId: senderConfig.supplyCampaignId!,
-            email: email!,
-            firstName: enriched?.firstName || agg.supply.firstName,
-            lastName: enriched?.lastName || agg.supply.lastName,
-            companyName: agg.supply.company,
-            companyDomain: agg.supply.domain,
-            introText: intro,
-            contactTitle: enriched?.title || agg.supply.title,
-          });
-          // Track breakdown by status
-          if (result.status === 'new') {
-            breakdown.new++;
-            sentSupply++;
-          } else if (result.status === 'existing') {
-            breakdown.existing++;
-            sentSupply++; // Still counts as processed
-          } else if (result.status === 'needs_attention') {
-            breakdown.needsAttention++;
-            if (result.detail) {
-              breakdown.details.push(`${agg.supply.company}: ${result.detail}`);
-            }
-          }
-
-          // Fire-and-forget: Log match event for behavioral learning (Option B)
-          // Supply sends use bestMatch for the demand-supply pairing data
-          const bestMatch = agg.bestMatch;
-          if (result.success && user?.id && bestMatch.tier && bestMatch.needProfile && bestMatch.capabilityProfile) {
+        } else if (item.type === 'SUPPLY' && item.agg) {
+          const bestMatch = item.agg.bestMatch;
+          if (bestMatch.tier && bestMatch.needProfile && bestMatch.capabilityProfile) {
             logMatchSent({
               operatorId: user.id,
               demandDomain: bestMatch.demand.domain,
-              supplyDomain: agg.supply.domain,
+              supplyDomain: item.agg.supply.domain,
               demandCompany: bestMatch.demand.company,
-              supplyCompany: agg.supply.company,
+              supplyCompany: item.agg.supply.company,
               score: bestMatch.score,
               tier: bestMatch.tier,
               tierReason: bestMatch.tierReason || '',
@@ -2848,20 +2868,14 @@ export default function Flow() {
               capabilityProfile: bestMatch.capabilityProfile,
               scoreBreakdown: bestMatch.scoreBreakdown,
               campaignId: senderConfig.supplyCampaignId!,
-            }).catch(() => {}); // Silent fire-and-forget
+            }).catch(() => {});
           }
-        } catch (err) {
-          console.error('[Flow] Send issue:', agg.supply.domain, err);
-          breakdown.needsAttention++;
-          breakdown.details.push(`${agg.supply.company}: Connection issue`);
         }
-
-        setState(prev => ({
-          ...prev,
-          progress: { current: i + 1, total: supplyToSend.length, message: `Supply ${i + 1}/${supplyToSend.length}` },
-        }));
       }
     }
+
+    // Clean up limiter
+    instantlyLimiter.setProgressCallback(null);
 
     // Complete — with breakdown
     setState(prev => ({
@@ -4572,29 +4586,7 @@ export default function Flow() {
                       </motion.div>
                     )}
 
-                    {/* CSV QUALITY WARNING — Phase 3 (additive, CSV-only) */}
-                    {(() => {
-                      const demandRecords = demandMatches.map(m => m.demand);
-                      const csvQuality = analyzeCsvBatchQuality(demandRecords);
-                      if (csvQuality.totalCsv > 0 && csvQuality.hasBasicTier) {
-                        return (
-                          <motion.div
-                            initial={{ opacity: 0, y: 8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.15 }}
-                            className="max-w-md mx-auto mb-4"
-                          >
-                            <CsvBatchQualityWarning
-                              t1Count={csvQuality.t1Count}
-                              t2Count={csvQuality.t2Count}
-                              t3Count={csvQuality.t3Count}
-                              totalCsv={csvQuality.totalCsv}
-                            />
-                          </motion.div>
-                        );
-                      }
-                      return null;
-                    })()}
+                    {/* CSV QUALITY WARNING removed — stale after enrichment */}
 
                     {/* SPLIT SCREEN */}
                     <div className="grid grid-cols-2 gap-4 mb-5">

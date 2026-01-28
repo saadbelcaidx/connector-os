@@ -696,6 +696,9 @@ export interface BatchIntroResult {
   error?: string;
 }
 
+/**
+ * Sequential batch (legacy) - kept for backwards compatibility
+ */
 export async function generateIntrosBatch(
   config: IntroAIConfig,
   items: BatchIntroItem[],
@@ -724,6 +727,64 @@ export async function generateIntrosBatch(
         valueProps: { demandValueProp: '', supplyValueProp: '' },
         error: String(e),
       });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Parallel batch with bounded concurrency.
+ *
+ * @param concurrency - Max parallel requests (default 5, safe for most AI providers)
+ */
+export async function generateIntrosBatchParallel(
+  config: IntroAIConfig,
+  items: BatchIntroItem[],
+  concurrency: number = 5,
+  onProgress?: (current: number, total: number) => void
+): Promise<BatchIntroResult[]> {
+  const results: BatchIntroResult[] = new Array(items.length);
+  let completed = 0;
+
+  // Process in chunks of `concurrency`
+  for (let i = 0; i < items.length; i += concurrency) {
+    const chunk = items.slice(i, i + concurrency);
+
+    const chunkResults = await Promise.all(
+      chunk.map(async (item, idx) => {
+        try {
+          const intros = await generateIntrosAI(config, item.demand, item.supply, item.edge);
+          return {
+            index: i + idx,
+            result: {
+              id: item.id,
+              demandIntro: intros.demandIntro,
+              supplyIntro: intros.supplyIntro,
+              valueProps: intros.valueProps,
+            } as BatchIntroResult,
+          };
+        } catch (e) {
+          console.error(`[IntroAI] Parallel batch error for ${item.id}:`, e);
+          return {
+            index: i + idx,
+            result: {
+              id: item.id,
+              demandIntro: '',
+              supplyIntro: '',
+              valueProps: { demandValueProp: '', supplyValueProp: '' },
+              error: String(e),
+            } as BatchIntroResult,
+          };
+        }
+      })
+    );
+
+    // Store results in correct order
+    for (const { index, result } of chunkResults) {
+      results[index] = result;
+      completed++;
+      onProgress?.(completed, items.length);
     }
   }
 

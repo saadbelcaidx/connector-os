@@ -798,6 +798,94 @@ async function findWithApollo(
       };
     }
 
+    // =========================================================================
+    // PATH 4: SEARCH_COMPANY — company name only, find any decision maker
+    // =========================================================================
+    if (params.company) {
+      console.log(`[Apollo] SEARCH_COMPANY: finding decision maker at company "${params.company}"`);
+
+      // Use people_search with organization_name and seniority filter
+      const searchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'people_search',
+          apiKey: config.apolloApiKey,
+          organization_name: params.company,
+          seniorities: ['c_suite', 'founder', 'owner', 'partner', 'vp', 'director'],
+        }),
+      });
+
+      if (!searchResponse.ok) {
+        const errorBody = await searchResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] people_search error ${searchResponse.status}:`, errorBody);
+        return { email: null, error: { status: searchResponse.status, body: errorBody } };
+      }
+
+      const searchData = await searchResponse.json();
+      const people = searchData.people || [];
+
+      if (people.length === 0) {
+        console.log(`[Apollo] people_search: no decision makers found at company "${params.company}"`);
+        return { email: null };
+      }
+
+      // Pick best person by seniority
+      const bestPerson = people[0];
+      console.log(`[Apollo] Found ${people.length} decision makers at "${params.company}", picking: ${bestPerson.first_name} ${bestPerson.last_name}`);
+
+      // If person already has email in search results, return it (no credit used)
+      if (bestPerson.email) {
+        console.log(`[Apollo] Email found in FREE search (0 credits used)`);
+        return {
+          email: bestPerson.email,
+          firstName: bestPerson.first_name,
+          lastName: bestPerson.last_name,
+          title: bestPerson.title,
+        };
+      }
+
+      // Otherwise, use PAID match to get email (1 credit)
+      const matchPayload: any = {
+        first_name: bestPerson.first_name || '',
+        last_name: bestPerson.last_name || '',
+        organization_name: params.company,
+        reveal_personal_emails: true,
+      };
+
+      const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'people_match',
+          apiKey: config.apolloApiKey,
+          payload: matchPayload,
+        }),
+      });
+
+      if (!matchResponse.ok) {
+        const errorBody = await matchResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] people_match error ${matchResponse.status}:`, errorBody);
+        return { email: null, error: { status: matchResponse.status, body: errorBody } };
+      }
+
+      const matchData = await matchResponse.json();
+      const person = matchData.person;
+
+      if (!person?.email) {
+        console.log(`[Apollo] people_match: no email for ${bestPerson.first_name} ${bestPerson.last_name} (1 credit used)`);
+        return { email: null };
+      }
+
+      console.log(`[Apollo] people_match: found email (1 credit used)`);
+      return {
+        email: person.email,
+        firstName: person.first_name,
+        lastName: person.last_name,
+        title: person.title,
+      };
+    }
+
     // No valid inputs
     console.log(`[Apollo] No valid inputs provided`);
     return { email: null };

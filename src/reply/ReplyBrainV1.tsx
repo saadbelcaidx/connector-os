@@ -106,6 +106,7 @@ interface ReplyAnalysis {
 interface AIConfig {
   provider: string;
   apiKey: string;
+  model?: string;
   azureEndpoint?: string;
   azureDeployment?: string;
 }
@@ -464,8 +465,10 @@ export default function ReplyBrainV1() {
             const config: AIConfig = { provider: s.aiProvider, apiKey: '' };
             if (s.aiProvider === 'openai' && s.aiOpenaiApiKey) {
               config.apiKey = s.aiOpenaiApiKey;
+              config.model = s.aiModel || 'gpt-4o-mini';
             } else if (s.aiProvider === 'anthropic' && s.aiAnthropicApiKey) {
               config.apiKey = s.aiAnthropicApiKey;
+              config.model = s.aiModel || 'claude-3-haiku-20240307';
             } else if (s.aiProvider === 'azure' && s.aiAzureApiKey) {
               config.apiKey = s.aiAzureApiKey;
               config.azureEndpoint = s.aiAzureEndpoint;
@@ -521,12 +524,24 @@ export default function ReplyBrainV1() {
           console.log('[MsgSim] DB query result:', { data, error, sender_name: data?.sender_name });
 
           if (data) {
+            // Get model from localStorage ai_settings (not stored in DB)
+            let savedModel: string | undefined;
+            try {
+              const aiSettings = localStorage.getItem('ai_settings');
+              if (aiSettings) {
+                const parsed = JSON.parse(aiSettings);
+                savedModel = parsed.aiModel;
+              }
+            } catch {}
+
             if (data.ai_provider && data.ai_provider !== 'none') {
               const config: AIConfig = { provider: data.ai_provider, apiKey: '' };
               if (data.ai_provider === 'openai' && data.ai_openai_api_key) {
                 config.apiKey = data.ai_openai_api_key;
+                config.model = savedModel || 'gpt-4o-mini';
               } else if (data.ai_provider === 'anthropic' && data.ai_anthropic_api_key) {
                 config.apiKey = data.ai_anthropic_api_key;
+                config.model = savedModel || 'claude-3-haiku-20240307';
               } else if (data.ai_provider === 'azure' && data.ai_azure_api_key) {
                 config.apiKey = data.ai_azure_api_key;
                 config.azureEndpoint = data.ai_azure_endpoint;
