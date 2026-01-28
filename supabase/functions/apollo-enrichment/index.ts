@@ -75,6 +75,13 @@ Deno.serve(async (req: Request) => {
         apolloPayload = params.payload;
         break;
 
+      case 'people_enrich':
+        // Enrich by person ID (from FREE search) — guaranteed match, 1 credit
+        apolloUrl = 'https://api.apollo.io/api/v1/people/enrich';
+        apolloMethod = 'POST';
+        apolloPayload = { id: params.id };
+        break;
+
       case 'people_search':
         apolloUrl = 'https://api.apollo.io/v1/mixed_people/api_search';
         apolloMethod = 'POST';

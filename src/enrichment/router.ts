@@ -123,15 +123,22 @@ function scoreSeniority(title: string): number {
   return 10; // default for unknown titles
 }
 
-function pickBestPerson(people: Array<{ first_name?: string; last_name?: string; title?: string }>): { firstName: string; lastName: string; title: string } | null {
+function pickBestPerson(people: Array<{ id?: string; first_name?: string; last_name?: string; title?: string }>): { id: string; firstName: string; lastName: string; title: string } | null {
   if (!people || people.length === 0) return null;
 
   const sorted = [...people].sort((a, b) => scoreSeniority(b.title || '') - scoreSeniority(a.title || ''));
   const best = sorted[0];
 
-  console.log(`[Router] Seniority ranking: ${people.length} candidates, best=${best.first_name} ${best.last_name} (${best.title}, score=${scoreSeniority(best.title || '')})`);
+  // Must have ID for enrich-by-ID flow
+  if (!best.id) {
+    console.log(`[Router] Best person has no ID, cannot enrich`);
+    return null;
+  }
+
+  console.log(`[Router] Seniority ranking: ${people.length} candidates, best=${best.first_name} ${best.last_name} (${best.title}, score=${scoreSeniority(best.title || '')}, id=${best.id})`);
 
   return {
+    id: best.id,
     firstName: best.first_name || '',
     lastName: best.last_name || '',
     title: best.title || '',
@@ -473,39 +480,34 @@ async function findCompanyContactWithApolloFree(
       return { email: null, noCandidates: true };
     }
 
-    console.log(`[Router] Selected best: ${best.firstName} ${best.lastName} (${best.title}) at ${domain}`);
+    console.log(`[Router] Selected best: ${best.firstName} ${best.lastName} (${best.title}, id=${best.id}) at ${domain}`);
 
-    // STEP 3: PAID match to get email (1 credit)
-    console.log(`[Router] Apollo PAID match: getting email for ${best.firstName} ${best.lastName} (1 credit)`);
+    // STEP 3: PAID enrich by ID to get email (1 credit)
+    console.log(`[Router] Apollo PAID enrich: getting email for ID ${best.id} (1 credit)`);
 
-    const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+    const enrichResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        type: 'people_match',
+        type: 'people_enrich',
         apiKey: config.apolloApiKey,
-        payload: {
-          first_name: best.firstName,
-          last_name: best.lastName,
-          domain: domain,
-          reveal_personal_emails: true,
-        },
+        id: best.id,
       }),
     });
 
-    if (!matchResponse.ok) {
-      const errorBody = await matchResponse.text().catch(() => 'failed to read');
-      console.log(`[Router] Apollo PAID match error ${matchResponse.status}:`, errorBody);
-      return { email: null, firstName: best.firstName, lastName: best.lastName, title: best.title, error: { status: matchResponse.status, body: errorBody } };
+    if (!enrichResponse.ok) {
+      const errorBody = await enrichResponse.text().catch(() => 'failed to read');
+      console.log(`[Router] Apollo PAID enrich error ${enrichResponse.status}:`, errorBody);
+      return { email: null, firstName: best.firstName, lastName: best.lastName, title: best.title, error: { status: enrichResponse.status, body: errorBody } };
     }
 
-    const matchData = await matchResponse.json();
-    const email = matchData.person?.email;
+    const enrichData = await enrichResponse.json();
+    const email = enrichData.person?.email;
 
     if (email) {
-      console.log(`[Router] Apollo PAID match: found email ${email} for ${best.firstName} ${best.lastName} (1 credit used)`);
+      console.log(`[Router] Apollo PAID enrich: found email ${email} for ${best.firstName} ${best.lastName} (1 credit used)`);
     } else {
-      console.log(`[Router] Apollo PAID match: no email for ${best.firstName} ${best.lastName} (1 credit used, no result)`);
+      console.log(`[Router] Apollo PAID enrich: no email for ${best.firstName} ${best.lastName} (1 credit used, no result)`);
     }
 
     return {
@@ -1050,34 +1052,8 @@ export async function routeEnrichment(
             // Success — Apollo found email
             result = apolloFreeResult;
           } else {
-            // Apollo found person but no email — try Anymail find_person for that specific person
-            console.log(`[Router] Apollo PAID: person found but no email, trying Anymail find_person`);
-
-            if (config.anymailApiKey && apolloFreeResult.firstName) {
-              const fullName = `${apolloFreeResult.firstName} ${apolloFreeResult.lastName}`.trim();
-              // Pass both domain AND company_name — Anymail uses domain first, falls back to company_name
-              const anymailResult = await findPersonWithAnymail({ domain: inputs.domain, company_name: inputs.company }, fullName, config);
-
-              if (anymailResult.email) {
-                // Anymail found email for the Apollo-selected person
-                providerResults[provider].result = 'not_found';
-                providerResults[provider].reason = 'Person found, no email';
-                providersAttempted.push('anymail');
-                providerResults.anymail.attempted = true;
-                providerResults.anymail.result = 'success';
-                return buildResult(
-                  action,
-                  'ENRICHED',
-                  anymailResult.email,
-                  'anymail',
-                  true,
-                  apolloFreeResult.firstName,
-                  apolloFreeResult.lastName,
-                  apolloFreeResult.title || ''
-                );
-              }
-            }
-            // Anymail also failed — continue to next provider
+            // Apollo found person but no email — let waterfall continue to Anymail find_decision_maker
+            console.log(`[Router] Apollo PAID enrich: no email, falling back to next provider`);
             result = { email: null, firstName: apolloFreeResult.firstName, lastName: apolloFreeResult.lastName, title: apolloFreeResult.title };
           }
         } else if (action === 'FIND_PERSON') {

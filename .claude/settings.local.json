@@ -59,7 +59,21 @@
       "Bash(powershell -Command \"New-Item -ItemType Directory -Force -Path ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners''\")",
       "Bash(powershell -Command \"Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\aaron.jfif'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\aaron.jfif''; Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\john.jpg'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\john.jpg''; Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\joshua.jpg'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\joshua.jpg''; Copy-Item ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\claudeinstructions\\\\max.jfif'' ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners\\\\max.jfif''\")",
       "Bash(powershell -Command \"Get-ChildItem ''C:\\\\Users\\\\Smart Hp\\\\Desktop\\\\connector os\\\\public\\\\winners''\")",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "WebFetch(domain:codershigh.github.io)",
+      "WebFetch(domain:adviserinfo.sec.gov)",
+      "WebFetch(domain:www.sec.gov)",
+      "WebFetch(domain:catalog.data.gov)",
+      "WebFetch(domain:eganmatvoserru.stanford.edu)",
+      "Bash(python:*)",
+      "Bash(test:*)",
+      "Bash(set \"INSTANTLY_API_KEY=Y2NiZjMzOWEtMTMwOC00YzFmLWJjNGMtZjViNWRmY2JhMzZjOmlRUUJlem91WlJmdQ==\")",
+      "Bash(set \"INSTANTLY_CAMPAIGN_ID=8ae6002b-61fe-48aa-92c7-0d33b050f215\")",
+      "WebFetch(domain:developer.instantly.ai)",
+      "WebFetch(domain:assets.skool.com)",
+      "WebFetch(domain:pbs.twimg.com)",
+      "Bash(git fetch:*)",
+      "Bash(APOLLO_API_KEY=rHDOni_cmi9doRLhgHzN8A ANYMAIL_API_KEY=zHEUdr3EDlV9sLAcpnTu3ysM npx vitest:*)"
     ]
   }
 }
