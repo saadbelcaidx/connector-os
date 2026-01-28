@@ -10,7 +10,6 @@ import { trackConversion, hashContent } from '../services/ConversionTracker';
 import { useAuth } from '../AuthContext';
 import { captureReplyBrainBreadcrumb, safeHash } from '../sentry';
 import Dock from '../Dock';
-import AILayersPipeline from './AILayersPipeline';
 
 // =============================================================================
 // TYPES
@@ -53,53 +52,14 @@ interface ReplyAnalysis {
   response: string;
   next_move: string;
   stage?: string;
+  signals?: string[];
+  negationDetected?: boolean;
   telemetry?: {
     version?: string;
     stagePrimary?: string;
     stageSecondary?: string[];
-    negationDetected?: boolean;
-    anchorQuality?: string;
+    aiGenerated?: boolean;
     latencyMs?: number;
-    usedMicroRewrite?: boolean;
-    forbidTriggered?: string[];
-    pricingOverrideApplied?: boolean;
-    // Layer 2: Quality Gate
-    usedQualityGate?: boolean;
-    qualityGatePassed?: boolean;
-    qualityGateIssues?: string[];
-    // Layer 3: Doctrine Guardian
-    usedDoctrineGuardian?: boolean;
-    doctrineGuardianPassed?: boolean;
-    doctrineGuardianViolations?: string[];
-    leverageScore?: number;
-    // Layer 4: Red Team
-    usedRedTeam?: boolean;
-    redTeamPassed?: boolean;
-    redTeamRisks?: string[];
-    deleteProbability?: number;
-    // Layer 5: Thread Coherence
-    usedThreadCoherence?: boolean;
-    threadCoherencePassed?: boolean;
-    threadCoherenceIssues?: string[];
-    contextScore?: number;
-    // Layer 6: Deal Momentum
-    usedDealMomentum?: boolean;
-    dealMomentumPassed?: boolean;
-    dealMomentumIssues?: string[];
-    momentumScore?: number;
-    // Layer 7: Self-Correction
-    compositeScore?: number;
-    usedSelfCorrection?: boolean;
-    selfCorrectionRounds?: number;
-    selfCorrectionIssuesFixed?: string[];
-    selfCorrectionConfidence?: number;
-  };
-  debug?: {
-    intent?: {
-      signals?: string[];
-    };
-    aiLayers?: number;
-    compositeScore?: number;
   };
 }
 
@@ -209,84 +169,49 @@ function StageBadge({ stage, secondary }: { stage: string; secondary?: string[] 
   );
 }
 
-function TelemetryPanel({ telemetry, debug }: { telemetry?: ReplyAnalysis['telemetry']; debug?: ReplyAnalysis['debug'] }) {
+function TelemetryPanel({ telemetry, signals }: { telemetry?: ReplyAnalysis['telemetry']; signals?: string[] }) {
   if (!telemetry) return null;
-
-  const signals = debug?.intent?.signals || [];
 
   return (
     <div className="mt-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.04]">
-      <div className="flex items-center gap-2 mb-3">
-        <Activity size={12} className="text-white/30" />
-        <span className="text-[10px] font-semibold text-white/30 uppercase tracking-wider">Telemetry</span>
-      </div>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {/* AI Generated Status */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
+            telemetry.aiGenerated
+              ? 'bg-emerald-500/10 border border-emerald-500/20'
+              : 'bg-amber-500/10 border border-amber-500/20'
+          }`}>
+            <div className={`w-1.5 h-1.5 rounded-full ${
+              telemetry.aiGenerated ? 'bg-emerald-400' : 'bg-amber-400'
+            }`} />
+            <span className={`text-[11px] font-medium ${
+              telemetry.aiGenerated ? 'text-emerald-400' : 'text-amber-400'
+            }`}>
+              {telemetry.aiGenerated ? 'AI reply generated' : 'Fallback reply'}
+            </span>
+          </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {/* Version */}
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-violet-500/10 flex items-center justify-center">
-            <Shield size={12} className="text-violet-400" />
-          </div>
-          <div>
-            <div className="text-[10px] text-white/30">Version</div>
-            <div className="text-[12px] text-white/70 font-mono">{telemetry.version || 'v20'}</div>
-          </div>
-        </div>
+          {/* Version */}
+          <span className="text-[10px] text-white/30 font-mono">{telemetry.version || 'v21'}</span>
 
-        {/* Latency */}
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-            <Clock size={12} className="text-emerald-400" />
-          </div>
-          <div>
-            <div className="text-[10px] text-white/30">Latency</div>
-            <div className="text-[12px] text-white/70 font-mono">{telemetry.latencyMs || 0}ms</div>
-          </div>
-        </div>
-
-        {/* Anchor Quality */}
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center">
-            <Target size={12} className="text-amber-400" />
-          </div>
-          <div>
-            <div className="text-[10px] text-white/30">Anchor</div>
-            <div className="text-[12px] text-white/70 capitalize">{telemetry.anchorQuality || 'none'}</div>
-          </div>
-        </div>
-
-        {/* Micro-rewrite */}
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center">
-            <Sparkles size={12} className="text-blue-400" />
-          </div>
-          <div>
-            <div className="text-[10px] text-white/30">AI Rewrite</div>
-            <div className="text-[12px] text-white/70">{telemetry.usedMicroRewrite ? 'Yes' : 'No'}</div>
-          </div>
+          {/* Latency */}
+          {telemetry.latencyMs !== undefined && (
+            <span className="text-[10px] text-white/30 font-mono">{telemetry.latencyMs}ms</span>
+          )}
         </div>
       </div>
 
-      {/* Signals */}
-      {signals.length > 0 && (
+      {/* Signals (classification telemetry) */}
+      {signals && signals.length > 0 && (
         <div className="mt-3 pt-3 border-t border-white/[0.04]">
-          <div className="text-[10px] text-white/30 mb-2">Signals</div>
+          <div className="text-[10px] text-white/30 mb-2">Classification signals</div>
           <div className="flex flex-wrap gap-1.5">
             {signals.map((signal, i) => (
               <span key={i} className="px-2 py-0.5 rounded bg-white/[0.04] text-[10px] text-white/50 font-mono">
                 {signal}
               </span>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* Warnings */}
-      {telemetry.forbidTriggered && telemetry.forbidTriggered.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-white/[0.04]">
-          <div className="flex items-center gap-1.5 text-amber-400/80">
-            <AlertCircle size={12} />
-            <span className="text-[10px] font-medium">Forbidden triggered: {telemetry.forbidTriggered.join(', ')}</span>
           </div>
         </div>
       )}
@@ -463,16 +388,16 @@ export default function ReplyBrainV1() {
           // Build AI config
           if (s.aiProvider && s.aiProvider !== 'none') {
             const config: AIConfig = { provider: s.aiProvider, apiKey: '' };
-            if (s.aiProvider === 'openai' && s.aiOpenaiApiKey) {
-              config.apiKey = s.aiOpenaiApiKey;
+            if (s.aiProvider === 'openai' && s.openaiApiKey) {
+              config.apiKey = s.openaiApiKey;
               config.model = s.aiModel || 'gpt-4o-mini';
-            } else if (s.aiProvider === 'anthropic' && s.aiAnthropicApiKey) {
-              config.apiKey = s.aiAnthropicApiKey;
+            } else if (s.aiProvider === 'anthropic' && s.anthropicApiKey) {
+              config.apiKey = s.anthropicApiKey;
               config.model = s.aiModel || 'claude-3-haiku-20240307';
-            } else if (s.aiProvider === 'azure' && s.aiAzureApiKey) {
-              config.apiKey = s.aiAzureApiKey;
-              config.azureEndpoint = s.aiAzureEndpoint;
-              config.azureDeployment = s.aiAzureDeployment || 'gpt-4o';
+            } else if (s.aiProvider === 'azure' && s.azureApiKey) {
+              config.apiKey = s.azureApiKey;
+              config.azureEndpoint = s.azureEndpoint;
+              config.azureDeployment = s.azureDeployment || 'gpt-4o';
             }
             if (config.apiKey) setAiConfig(config);
           }
@@ -641,11 +566,10 @@ export default function ReplyBrainV1() {
         stagePrimary: data.telemetry?.stagePrimary || 'UNKNOWN',
         stageSecondary: data.telemetry?.stageSecondary,
         runtimeMode: user?.id ? 'auth' : 'guest',
-        version: data.telemetry?.version || 'v20',
+        version: data.telemetry?.version || 'v21',
         inputHash: safeHash(latestReply.trim()),
         replyHash: safeHash(data.response || ''),
-        anchorQuality: data.telemetry?.anchorQuality,
-        pricingOverride: data.telemetry?.pricingOverrideApplied,
+        aiGenerated: data.telemetry?.aiGenerated,
       });
     } else {
       setError('Invalid response format');
@@ -745,14 +669,13 @@ export default function ReplyBrainV1() {
                 </div>
                 <div>
                   <h1 className="text-[15px] font-semibold text-white/90 tracking-[-0.01em]">Msg Simulator</h1>
-                  <p className="text-[11px] text-white/40">The seven minds</p>
+                  <p className="text-[11px] text-white/40">Reply generation</p>
                 </div>
               </div>
             </div>
 
-            {/* Version badge + Mode indicator */}
+            {/* Mode indicator */}
             <div className="flex items-center gap-3">
-              {/* Mode indicator - read from existing state */}
               {(() => {
                 const hasOutbound = thread.some(m => m.role === 'me');
                 const mode = hasOutbound ? 'full' : 'limited';
@@ -770,27 +693,7 @@ export default function ReplyBrainV1() {
 
               <div className="h-4 w-px bg-white/[0.08]" />
 
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/10 to-fuchsia-500/10 border border-violet-500/20">
-                <div className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400 animate-pulse" />
-                <Mail size={12} className="text-violet-300" />
-              </div>
-
-              <div className="h-4 w-px bg-white/[0.08]" />
-
-              <div className="flex items-center gap-1.5 text-[11px] text-white/30">
-                <div className="flex -space-x-1">
-                  {[...Array(7)].map((_, i) => (
-                    <div
-                      key={i}
-                      className="w-2 h-2 rounded-full border border-[#0A0A0A]"
-                      style={{
-                        background: `hsl(${260 + i * 20}, 70%, 60%)`,
-                      }}
-                    />
-                  ))}
-                </div>
-                <span>7 layers</span>
-              </div>
+              <span className="text-[10px] text-white/30 font-mono">v21</span>
             </div>
           </div>
         </div>
@@ -1011,69 +914,19 @@ export default function ReplyBrainV1() {
 
           {/* Right: Output Panel */}
           <div className="space-y-5">
-            {/* AI Layers Pipeline - The Seven Minds */}
-            <div className="rounded-2xl bg-gradient-to-b from-white/[0.03] to-transparent border border-white/[0.06] p-5">
-              <AILayersPipeline
-                data={result?.telemetry ? {
-                  compositeScore: result.telemetry.compositeScore,
-                  usedSelfCorrection: result.telemetry.usedSelfCorrection,
-                  selfCorrectionRounds: result.telemetry.selfCorrectionRounds,
-                  leverageScore: result.telemetry.leverageScore,
-                  deleteProbability: result.telemetry.deleteProbability,
-                  contextScore: result.telemetry.contextScore,
-                  momentumScore: result.telemetry.momentumScore,
-                  qualityGatePassed: result.telemetry.qualityGatePassed,
-                  qualityGateIssues: result.telemetry.qualityGateIssues,
-                  doctrineGuardianPassed: result.telemetry.doctrineGuardianPassed,
-                  doctrineGuardianViolations: result.telemetry.doctrineGuardianViolations,
-                  redTeamPassed: result.telemetry.redTeamPassed,
-                  redTeamRisks: result.telemetry.redTeamRisks,
-                  threadCoherencePassed: result.telemetry.threadCoherencePassed,
-                  threadCoherenceIssues: result.telemetry.threadCoherenceIssues,
-                  dealMomentumPassed: result.telemetry.dealMomentumPassed,
-                  dealMomentumIssues: result.telemetry.dealMomentumIssues,
-                  latencyMs: result.telemetry.latencyMs,
-                } : undefined}
-                isProcessing={isLoading}
-              />
-            </div>
-
-            {/* Stage Badge + Anchor Quality */}
+            {/* Stage Badge (classification telemetry) */}
             {result?.stage && (
               <div className="flex items-center gap-3">
                 <StageBadge
                   stage={result.stage}
                   secondary={result.telemetry?.stageSecondary}
                 />
-                {/* Anchor quality indicator - read from telemetry */}
-                {result.telemetry?.anchorQuality && (
-                  <div className={`flex items-center gap-1.5 text-[10px] ${
-                    result.telemetry.anchorQuality === 'good'
-                      ? 'text-emerald-400'
-                      : result.telemetry.anchorQuality === 'partial'
-                        ? 'text-amber-400'
-                        : 'text-white/40'
-                  }`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${
-                      result.telemetry.anchorQuality === 'good'
-                        ? 'bg-emerald-400'
-                        : result.telemetry.anchorQuality === 'partial'
-                          ? 'bg-amber-400'
-                          : 'bg-white/30'
-                    }`} />
-                    {result.telemetry.anchorQuality === 'good'
-                      ? 'Personalized'
-                      : result.telemetry.anchorQuality === 'partial'
-                        ? 'Partial context'
-                        : 'Generic'}
-                  </div>
-                )}
-                {result.debug?.compositeScore && (
-                  <span className="text-[10px] text-white/30">
-                    Score: {result.debug.compositeScore}
-                  </span>
-                )}
               </div>
+            )}
+
+            {/* Telemetry Panel - truthful UI */}
+            {result && (
+              <TelemetryPanel telemetry={result.telemetry} signals={result.signals} />
             )}
 
             {/* Interpretation */}
@@ -1098,29 +951,12 @@ export default function ReplyBrainV1() {
               copied={copiedField === 'response'}
               variant="primary"
             >
-              {/* Annotations - read from telemetry/result state */}
-              {(result?.telemetry?.anchorQuality === 'fallback' || result?.stage === 'PRICING' || result?.stage === 'NEGATIVE' || result?.stage === 'HOSTILE' || result?.telemetry?.usedSelfCorrection) && (
-                <div className="mt-3 pt-3 border-t border-white/[0.04] space-y-1">
-                  {result?.telemetry?.anchorQuality === 'fallback' && (
-                    <p className="text-[11px] text-white/30">
-                      This reply lacks context from your original message.
-                    </p>
-                  )}
-                  {result?.stage === 'PRICING' && (
-                    <p className="text-[11px] text-amber-400/60">
-                      Pricing always deflects to call.
-                    </p>
-                  )}
-                  {(result?.stage === 'NEGATIVE' || result?.stage === 'HOSTILE') && (
-                    <p className="text-[11px] text-white/30">
-                      Exit reply — no follow-up expected.
-                    </p>
-                  )}
-                  {result?.telemetry?.usedSelfCorrection && (
-                    <p className="text-[11px] text-violet-400/60">
-                      Reply was refined automatically.
-                    </p>
-                  )}
+              {/* Annotations - truthful notes only */}
+              {result && !result.telemetry?.aiGenerated && (
+                <div className="mt-3 pt-3 border-t border-white/[0.04]">
+                  <p className="text-[11px] text-amber-400/60">
+                    Fallback reply — configure AI in Settings for generated responses.
+                  </p>
                 </div>
               )}
             </ResultCard>

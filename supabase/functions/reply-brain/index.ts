@@ -1,10 +1,13 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 /**
- * Reply Brain Edge Function - v20
+ * Reply Brain Edge Function - v21
  *
- * Stage classification via pattern matching (Layer 0)
- * AI reply generation using provided aiConfig
+ * DOCTRINE (user.txt):
+ * - AI reply generation is ALWAYS unconditional
+ * - No intent, stage, or pattern may block or redirect generation
+ * - Classification is observational only (telemetry)
+ * - Single Connector prompt for ALL messages
  */
 
 const corsHeaders = {
@@ -14,22 +17,34 @@ const corsHeaders = {
 };
 
 // =============================================================================
-// AI REPLY GENERATION
+// SINGLE CONNECTOR PROMPT (replaces 12 stage-specific prompts)
 // =============================================================================
 
-const STAGE_PROMPTS: Record<string, string> = {
-  SCHEDULING: `Generate a short reply (max 50 words) to lock in a call. Be direct, confident. Suggest specific times or ask for their calendar link. No fluff.`,
-  PRICING: `Generate a short reply (max 50 words) deflecting the pricing question to a call. Never mention specific prices, fees, or percentages. Pivot to "easier to explain on a quick call" or similar.`,
-  PROOF: `Generate a short reply (max 50 words) acknowledging their request for proof/examples. Offer to share specifics on a call. Don't make up company names.`,
-  IDENTITY: `Generate a short reply (max 50 words) briefly explaining you're an independent connector who makes introductions. Keep it simple, then pivot to a call.`,
-  SCOPE: `Generate a short reply (max 50 words) clarifying what you do. You connect companies with service providers. Offer to explain more on a call.`,
-  INTEREST: `Generate a short reply (max 50 words) to move them to a call. They're interested, so be direct about next steps. Suggest a quick call this week.`,
-  CONFUSION: `Generate a short reply (max 50 words) clarifying the original outreach. Keep it simple and offer to explain on a call.`,
-  UNKNOWN: `Generate a short reply (max 50 words) gently probing what they're asking about. Keep it open and friendly.`,
-};
+const CONNECTOR_PROMPT = `You are a Connector.
+
+Your job is not to sell.
+Your job is to move the conversation forward toward a qualified introduction.
+
+You are replying to a real human email.
+
+Constraints:
+- Max 50 words
+- No pricing, no guarantees, no claims
+- Never push — always invite
+- Sound human, calm, selective
+- Assume intelligence on the other side
+- No emojis, no exclamation marks
+- Start lowercase unless starting with "I"
+- NEVER offer to make an intro directly — always suggest a quick call first
+- The next step is ALWAYS a call, not an intro
+
+Goal:
+Decide what to say next to advance the interaction by one step. The next step is a call.
+
+Output:
+One reply. No analysis. No labels.`;
 
 async function generateAIReply(
-  stage: string,
   inbound: string,
   outbound: string,
   aiConfig: RequestBody['aiConfig'],
@@ -42,23 +57,12 @@ async function generateAIReply(
   const anthropicKey = aiConfig.anthropicApiKey || (aiConfig.provider === 'anthropic' ? aiConfig.apiKey : undefined);
   const azureKey = aiConfig.azureApiKey || (aiConfig.provider === 'azure' ? aiConfig.apiKey : undefined);
 
-  const stagePrompt = STAGE_PROMPTS[stage] || STAGE_PROMPTS.UNKNOWN;
+  // Optional context - calendar link if available
   const calendarNote = operatorContext?.calendarLink
-    ? `Calendar link available: ${operatorContext.calendarLink}`
+    ? `\n\nCalendar link available: ${operatorContext.calendarLink}`
     : '';
 
-  const systemPrompt = `You are a connector helping facilitate B2B introductions. You write short, direct replies. No emojis. No exclamation marks. Lowercase preferred. Professional but casual tone.
-
-${stagePrompt}
-
-${calendarNote}
-
-Rules:
-- Max 50 words
-- No "I'd be happy to" or similar filler
-- No exclamation marks
-- Start with lowercase unless starting with "I"
-- End with a clear next step or question`;
+  const systemPrompt = `${CONNECTOR_PROMPT}${calendarNote}`;
 
   const userPrompt = `Original outreach sent:
 ${outbound || '(not provided)'}
@@ -482,45 +486,15 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    console.log('[reply-brain] Classifying inbound:', inbound.substring(0, 100));
+    console.log('[reply-brain] v21 processing inbound:', inbound.substring(0, 100));
 
-    // Layer 0: Pattern matching (deterministic)
+    // Classification runs as TELEMETRY ONLY - never gates reply generation
     const classification = classifyMultiIntent(inbound);
+    console.log('[reply-brain] Classification (telemetry):', classification.primary, classification.signals);
 
-    console.log('[reply-brain] Classification:', classification.primary, classification.signals);
-
-    // For NEGATIVE/HOSTILE/BOUNCE/OOO, no reply needed - return next_move as response
-    if (['NEGATIVE', 'HOSTILE', 'BOUNCE', 'OOO'].includes(classification.primary)) {
-      return new Response(
-        JSON.stringify({
-          stage: classification.primary,
-          meaning: STAGE_INTERPRETATIONS[classification.primary],
-          next_move: STAGE_NEXT_MOVES[classification.primary],
-          response: STAGE_NEXT_MOVES[classification.primary], // Use next_move as placeholder
-          signals: classification.signals,
-          negationDetected: classification.negationDetected,
-          telemetry: {
-            version: 'v20',
-            stagePrimary: classification.primary,
-            stageSecondary: classification.secondary,
-            compositeScore: 10,
-            usedSelfCorrection: false,
-            selfCorrectionRounds: 0,
-            leverageScore: 10,
-            deleteProbability: 1,
-            contextScore: 10,
-            momentumScore: 10,
-            latencyMs: 0,
-          },
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // For other stages, generate AI reply
+    // AI reply generation is ALWAYS unconditional
     const startTime = Date.now();
     const aiReply = await generateAIReply(
-      classification.primary,
       inbound,
       outbound || '',
       aiConfig,
@@ -528,27 +502,25 @@ Deno.serve(async (req: Request) => {
     );
     const latencyMs = Date.now() - startTime;
 
-    console.log('[reply-brain] AI reply generated:', aiReply ? 'yes' : 'no', `(${latencyMs}ms)`);
+    const aiGenerated = !!aiReply;
+    console.log('[reply-brain] AI reply:', aiGenerated ? 'generated' : 'failed (no AI config)', `(${latencyMs}ms)`);
 
     return new Response(
       JSON.stringify({
+        // Classification as telemetry (observational only)
         stage: classification.primary,
         meaning: STAGE_INTERPRETATIONS[classification.primary],
         next_move: STAGE_NEXT_MOVES[classification.primary],
-        response: aiReply || STAGE_NEXT_MOVES[classification.primary], // Fallback to next_move if AI fails
         signals: classification.signals,
         negationDetected: classification.negationDetected,
+        // The actual reply - AI generated or fallback
+        response: aiReply || STAGE_NEXT_MOVES[classification.primary],
+        // Truthful telemetry only
         telemetry: {
-          version: 'v20',
+          version: 'v21',
           stagePrimary: classification.primary,
           stageSecondary: classification.secondary,
-          compositeScore: aiReply ? 8 : 5,
-          usedSelfCorrection: false,
-          selfCorrectionRounds: 0,
-          leverageScore: 8,
-          deleteProbability: 2,
-          contextScore: 8,
-          momentumScore: 8,
+          aiGenerated,
           latencyMs,
         },
       }),
