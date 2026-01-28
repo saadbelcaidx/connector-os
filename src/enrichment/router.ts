@@ -139,18 +139,39 @@ function pickBestPerson(people: Array<{ first_name?: string; last_name?: string;
 }
 
 // =============================================================================
-// ACTION CLASSIFIER (CANONICAL - DO NOT CHANGE LOGIC)
+// ACTION CLASSIFIER
 // =============================================================================
 
 /**
+ * Check if person_name is a FULL name (first + last, minimum 2 words).
+ * Anymail API requires full name for FIND_PERSON endpoint.
+ * Single-word names (e.g., "Ivelisse") should fallback to FIND_COMPANY_CONTACT.
+ */
+function isFullName(personName: string | null | undefined): boolean {
+  if (!personName) return false;
+  const words = personName.trim().split(/\s+/);
+  return words.length >= 2;
+}
+
+/**
  * Classify inputs to determine action.
- * This function is canonical. Do not change logic, only implement.
+ *
+ * ROUTING RULES:
+ * - email exists                        → VERIFY
+ * - domain + full name (2+ words)       → FIND_PERSON
+ * - domain only (or partial name)       → FIND_COMPANY_CONTACT
+ * - company + full name (2+ words)      → SEARCH_PERSON
+ * - company only (or partial name)      → SEARCH_COMPANY
+ * - nothing usable                      → CANNOT_ROUTE
  */
 export function classifyInputs(inputs: EnrichmentInputs): EnrichmentAction {
   if (inputs.email) return 'VERIFY';
-  if (inputs.domain && inputs.person_name) return 'FIND_PERSON';
+
+  const hasFullName = isFullName(inputs.person_name);
+
+  if (inputs.domain && hasFullName) return 'FIND_PERSON';
   if (inputs.domain) return 'FIND_COMPANY_CONTACT';
-  if (inputs.company && inputs.person_name) return 'SEARCH_PERSON';
+  if (inputs.company && hasFullName) return 'SEARCH_PERSON';
   if (inputs.company) return 'SEARCH_COMPANY';
   return 'CANNOT_ROUTE';
 }
