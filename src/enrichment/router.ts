@@ -412,8 +412,8 @@ async function findPersonWithConnectorAgent(
       },
       body: JSON.stringify({
         domain,
-        first_name: firstName,
-        last_name: lastName,
+        firstName,
+        lastName,
       }),
     });
 
