@@ -148,10 +148,10 @@ async function analyzeReply(
   try {
     const { data, error } = await supabase.functions.invoke('reply-brain', {
       body: {
-        pastedReply: latestReply,
+        inbound: latestReply,
+        outbound: thread.find(m => m.role === 'me')?.content || '',
         side: replyType,
         thread: thread,
-        initialMessage: thread.find(m => m.role === 'me')?.content || '',
         userId: userId,
         aiConfig: aiConfig,
         replyConfig: replyConfig,
@@ -599,10 +599,10 @@ export default function ReplyBrainV1() {
 
     const { data, error: invokeError } = await supabase.functions.invoke('reply-brain', {
       body: {
-        pastedReply: latestReply.trim(),
+        inbound: latestReply.trim(),
+        outbound: outbound,
         side: replyType,
         thread: thread,
-        initialMessage: outbound,
         userId: user?.id,
         aiConfig: aiConfig,
         replyConfig: replyConfig,
