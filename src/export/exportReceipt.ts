@@ -9,6 +9,7 @@
 
 import type { EnrichmentResult } from '../enrichment';
 import { recordKey } from '../enrichment';
+import { isRoleBasedEmail } from '../schemas';
 
 // =============================================================================
 // TYPES
@@ -17,7 +18,10 @@ import { recordKey } from '../enrichment';
 export type FilterReason =
   | 'NO_MATCH'              // Not in matching results
   | 'NO_EMAIL'              // Enrichment didn't find email
-  | 'NOT_VERIFIED'          // Email exists but not verified
+  | 'NOT_VERIFIED'          // Email exists but not verified (generic)
+  | 'ROLE_BASED_EMAIL'      // Email is role-based (info@, contact@) — always blocked
+  | 'VERIFICATION_STALE'    // Verification older than 30 days
+  | 'VERIFICATION_FAILED'   // Verification attempted but failed
   | 'NO_INTRO'              // Intro not generated
   | 'DUPLICATE_DOMAIN'      // Same domain already exported
   | 'ENRICHMENT_FAILED'     // Enrichment threw error
@@ -87,15 +91,17 @@ export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
       continue;
     }
 
-    // Check email
-    if (!enrichResult.email) {
-      filtered.push({ domain, reason: 'NO_EMAIL' });
-      continue;
-    }
+    // Use detailed verification classifier (Gate 2/3 truth surfacing)
+    const blockReason = classifyEmailBlockReason(
+      enrichResult.email,
+      enrichResult.verified,
+      enrichResult.source || null,
+      null, // verifiedAt not used
+      enrichResult.outcome
+    );
 
-    // Check verified
-    if (!enrichResult.verified) {
-      filtered.push({ domain, reason: 'NOT_VERIFIED' });
+    if (blockReason) {
+      filtered.push({ domain, reason: blockReason });
       continue;
     }
 
@@ -183,15 +189,17 @@ export function buildSupplyReceipt(input: SupplyExportInput): ExportReceipt {
       continue;
     }
 
-    // Check email
-    if (!enrichResult.email) {
-      filtered.push({ domain, reason: 'NO_EMAIL' });
-      continue;
-    }
+    // Use detailed verification classifier (Gate 2/3 truth surfacing)
+    const blockReason = classifyEmailBlockReason(
+      enrichResult.email,
+      enrichResult.verified,
+      enrichResult.source || null,
+      null, // verifiedAt not used
+      enrichResult.outcome
+    );
 
-    // Check verified
-    if (!enrichResult.verified) {
-      filtered.push({ domain, reason: 'NOT_VERIFIED' });
+    if (blockReason) {
+      filtered.push({ domain, reason: blockReason });
       continue;
     }
 
@@ -250,6 +258,9 @@ export const REASON_LABELS: Record<FilterReason, string> = {
   NO_MATCH: 'Not matched',
   NO_EMAIL: 'Need email',
   NOT_VERIFIED: 'Email unverified',
+  ROLE_BASED_EMAIL: 'Role-based email',      // info@, contact@, etc.
+  VERIFICATION_STALE: 'Verification expired', // >30 days old
+  VERIFICATION_FAILED: 'Verification failed',
   NO_INTRO: 'Need intro',
   DUPLICATE_DOMAIN: 'Duplicate',
   ENRICHMENT_FAILED: 'Need enrichment',
@@ -280,4 +291,105 @@ export function formatReceiptSummary(receipt: ExportReceipt, side: 'demand' | 's
   }
 
   return lines.join('\n');
+}
+
+// =============================================================================
+// BLOCK REASON CLASSIFIER — Gate 2/3 Truth Surfacing
+// =============================================================================
+// This function ONLY classifies why a record would be blocked.
+// It does NOT change gate logic. It exposes truth.
+// =============================================================================
+
+/** Verification freshness threshold: 30 days in milliseconds */
+const VERIFICATION_FRESHNESS_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Classify why an email would be blocked by Gate 2/3.
+ *
+ * Order of checks (same as gate logic):
+ * 1. No email at all
+ * 2. Role-based email (info@, contact@)
+ * 3. Verification failed (enrichment outcome)
+ * 4. Not from trusted source (apollo, anymail, connectorAgent, existing)
+ *
+ * @returns FilterReason or null if email passes all checks
+ */
+export function classifyEmailBlockReason(
+  email: string | null,
+  emailVerified: boolean,
+  source: string | null,
+  _verifiedAt: string | null, // Unused but kept for API compatibility
+  enrichmentOutcome?: string
+): FilterReason | null {
+  // 1. No email
+  if (!email) {
+    return 'NO_EMAIL';
+  }
+
+  // 2. Role-based email (info@, contact@, etc.)
+  if (isRoleBasedEmail(email)) {
+    return 'ROLE_BASED_EMAIL';
+  }
+
+  // 3. Verification failed (enrichment returned INVALID)
+  if (enrichmentOutcome === 'INVALID') {
+    return 'VERIFICATION_FAILED';
+  }
+
+  // 4. Must be from trusted source (apollo, anymail, connectorAgent, existing)
+  // If source is 'none' or null, email wasn't found by a trusted provider
+  const trustedSources = ['apollo', 'anymail', 'connectorAgent', 'existing'];
+  if (!source || !trustedSources.includes(source)) {
+    return 'NOT_VERIFIED';
+  }
+
+  // Email passes all checks — trusted source found it
+  return null;
+}
+
+/**
+ * Block reason stats — aggregate counts for UI display.
+ */
+export interface BlockReasonStats {
+  total: number;
+  passed: number;
+  blocked: number;
+  breakdown: {
+    reason: FilterReason;
+    count: number;
+    label: string;
+  }[];
+}
+
+/**
+ * Build block reason stats from a list of classification results.
+ */
+export function buildBlockReasonStats(
+  results: Array<{ reason: FilterReason | null }>
+): BlockReasonStats {
+  const counts = new Map<FilterReason, number>();
+  let passed = 0;
+
+  for (const { reason } of results) {
+    if (reason === null) {
+      passed++;
+    } else {
+      counts.set(reason, (counts.get(reason) || 0) + 1);
+    }
+  }
+
+  const breakdown = Array.from(counts.entries())
+    .map(([reason, count]) => ({
+      reason,
+      count,
+      label: REASON_LABELS[reason],
+    }))
+    .sort((a, b) => b.count - a.count); // Highest count first
+
+  return {
+    total: results.length,
+    passed,
+    blocked: results.length - passed,
+    breakdown,
+  };
 }

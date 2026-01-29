@@ -13,6 +13,7 @@ import { LearnMore, LearnMoreCard, LearnMoreList } from './components/LearnMore'
 import type { AIConfig } from './services/AIService';
 import CsvUpload from './components/CsvUpload';
 import { RecentFlows } from './components/RecentFlows';
+import PrebuiltIntelligence from './components/PrebuiltIntelligence';
 
 // =============================================================================
 // TYPES
@@ -30,6 +31,10 @@ interface Settings {
   apolloApiKey: string;
   anymailApiKey: string;
   connectorAgentApiKey: string;
+  // Public Databases — ClinicalTrials.gov, FDA
+  publicDatabaseSources: ('clinicaltrials' | 'fda')[];
+  clinicalTrialsStatus: string; // RECRUITING, COMPLETED, etc.
+  clinicalTrialsCondition: string; // Optional condition filter
   // Sending provider
   sendingProvider: 'instantly' | 'plusvibe';
   instantlyApiKey: string;
@@ -66,6 +71,10 @@ const DEFAULT_SETTINGS: Settings = {
   apolloApiKey: '',
   anymailApiKey: '',
   connectorAgentApiKey: '',
+  // Public Databases
+  publicDatabaseSources: [],
+  clinicalTrialsStatus: 'RECRUITING',
+  clinicalTrialsCondition: '',
   // Sending provider
   sendingProvider: 'instantly',
   instantlyApiKey: '',
@@ -625,10 +634,22 @@ export default function Settings() {
               {/* Recent Flows — Resume saved sessions */}
               <RecentFlows className="rounded-xl bg-gradient-to-b from-white/[0.02] to-transparent border border-white/[0.06]" />
 
-              {/* CSV Upload — Single Source of Truth */}
+              {/* Pre-built Intelligence — Free data sources with demand + supply */}
+              <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.02] to-transparent border border-white/[0.06]">
+                <PrebuiltIntelligence
+                  onDataLoaded={(demand, supply) => {
+                    // Update counts when pre-built data is loaded
+                    setDemandCsvCount(demand.length);
+                    setSupplyCsvCount(supply.length);
+                    console.log('[Settings] Pre-built data loaded:', demand.length, 'demand,', supply.length, 'supply');
+                  }}
+                />
+              </div>
+
+              {/* CSV Upload — Manual Data Source */}
               <div>
                 <div className="flex items-center gap-2 mb-3">
-                  <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Data source</h2>
+                  <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Or upload your own</h2>
                 </div>
 
                 {/* Demand Card */}
@@ -895,32 +916,6 @@ export default function Settings() {
                     </div>
                   </LearnMoreCard>
                 </LearnMore>
-              </div>
-
-              {/* Best Practices */}
-              <div className="p-4 rounded-xl border border-dashed border-white/[0.08] bg-white/[0.01]">
-                <div className="flex items-center gap-2 mb-2">
-                  <TrendingUp size={14} className="text-white/30" />
-                  <span className="text-[11px] font-medium uppercase tracking-wider text-white/30">Best practices</span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                  <p className="text-[11px] text-white/40 flex items-start gap-2">
-                    <span className="text-emerald-400/50">✓</span>
-                    Use demand with timing signals
-                  </p>
-                  <p className="text-[11px] text-white/40 flex items-start gap-2">
-                    <span className="text-emerald-400/50">✓</span>
-                    Supply with verified emails saves cost
-                  </p>
-                  <p className="text-[11px] text-white/40 flex items-start gap-2">
-                    <span className="text-emerald-400/50">✓</span>
-                    Let the system match categories
-                  </p>
-                  <p className="text-[11px] text-white/40 flex items-start gap-2">
-                    <span className="text-emerald-400/50">✓</span>
-                    Richer data = richer intros
-                  </p>
-                </div>
               </div>
 
               <style>{`

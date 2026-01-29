@@ -86,11 +86,82 @@ export type SignalKind =
 
 /**
  * SignalMeta — The truth about what this record represents.
+ *
+ * ARCHITECTURAL INVARIANT:
+ * All source-specific fields go here. Never create new logic branches.
+ * Intro generation reads signalMeta — it doesn't know or care about source.
  */
 export interface SignalMeta {
   kind: SignalKind;
   label: string;
-  source: string;
+  source: string; // 'csv' | 'nih' | 'usaspending'
+
+  // === MONEY SIGNALS (source-agnostic) ===
+  grantAmount?: number;         // NIH: award_amount
+  awardAmount?: number;         // USASpending: Award Amount
+  totalCost?: number;           // NIH: total_cost from funding
+
+  // === TIMING SIGNALS ===
+  startDate?: string;           // Project/contract start
+  endDate?: string;             // Project/contract end
+  fiscalYear?: number;          // NIH: fiscal_year
+  isActive?: boolean;           // NIH: is_active
+  isNew?: boolean;              // NIH: is_new (fresh money)
+
+  // === THERAPEUTIC / INDUSTRY ===
+  nihInstitute?: string;        // NIH: NCI, NIAID, etc.
+  nihInstituteName?: string;    // NIH: "National Cancer Institute"
+  therapeuticArea?: string;     // Derived from nihInstitute
+  naicsCode?: string;           // USASpending: industry code
+  naicsDescription?: string;    // USASpending: industry description
+
+  // === ORGANIZATION SIGNALS ===
+  orgType?: string;             // NIH: organization_type.name
+  activityCode?: string;        // NIH: R01, U01, P01 (scale proxy)
+  fundingMechanism?: string;    // NIH: "R and D Contracts"
+  contractType?: string;        // USASpending: IDIQ, DELIVERY ORDER
+
+  // === AGENCY / CREDIBILITY ===
+  fundingAgency?: string;       // USASpending: who funded
+  awardingAgency?: string;      // USASpending: who awarded
+  congressionalDistrict?: string; // NIH: cong_dist
+
+  // === PROJECT DETAILS ===
+  projectTitle?: string;        // NIH: project_title
+  projectUrl?: string;          // NIH: credibility link
+  spendingCategories?: string;  // NIH: what work is funded
+  keywords?: string;            // NIH: pref_terms (matching)
+
+  // === LOCATION ===
+  performanceLocation?: string; // USASpending: place of performance
+}
+
+/**
+ * Email provenance — where did this email come from?
+ * Used to determine if verification is required before Gate 2.
+ */
+export type EmailSource = 'csv' | 'clinicaltrials' | 'nih' | 'apollo' | 'anymail' | 'connectorAgent' | 'manual' | null;
+
+/**
+ * Who verified this email?
+ * Only Anymail and ConnectorAgent may set emailVerified = true.
+ */
+export type EmailVerifier = 'anymail' | 'connectorAgent' | null;
+
+/**
+ * Role-based email prefixes that are high-risk for deliverability.
+ * Option A (strict): These are NEVER treated as verified.
+ */
+export const ROLE_BASED_PREFIXES = ['info', 'contact', 'admin', 'office', 'support', 'sales', 'hello', 'team', 'hr', 'careers', 'jobs', 'help'];
+
+/**
+ * Check if email is role-based (high-risk for deliverability).
+ * Role-based emails bypass individuals — higher bounce/spam risk.
+ */
+export function isRoleBasedEmail(email: string | null): boolean {
+  if (!email) return false;
+  const prefix = email.split('@')[0]?.toLowerCase();
+  return ROLE_BASED_PREFIXES.includes(prefix);
 }
 
 export interface NormalizedRecord {
@@ -102,6 +173,30 @@ export interface NormalizedRecord {
   lastName: string;
   fullName: string;
   email: string | null;
+  /**
+   * Email provenance — where did this email come from?
+   * Required for verification routing.
+   */
+  emailSource: EmailSource;
+  /**
+   * Email verification status.
+   * ONLY true if verified by Anymail or ConnectorAgent.
+   * Gate 2 requires: email exists AND emailVerified = true
+   * Option A (strict): Role-based emails are NEVER verified.
+   */
+  emailVerified: boolean;
+  /**
+   * Who verified this email?
+   * Only 'anymail' or 'connectorAgent' are trusted verifiers.
+   * Never infer verification from email format, domain, or API source.
+   */
+  verifiedBy: EmailVerifier;
+  /**
+   * When was this email verified?
+   * ISO timestamp. Used for freshness checks.
+   * Rule: if now - verifiedAt > 30 days → re-verify before sending
+   */
+  verifiedAt: string | null;
   title: string;
   linkedin: string | null;
   headline: string | null;
@@ -366,6 +461,13 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
     lastName,
     fullName,
     email,
+    // EMAIL VERIFICATION INVARIANT (user.txt contract):
+    // CSV emails are NEVER pre-verified. Gate 2 requires verification.
+    // Only Anymail and ConnectorAgent may set emailVerified = true.
+    emailSource: 'csv' as const,
+    emailVerified: false,
+    verifiedBy: null,
+    verifiedAt: null,
     title,
     linkedin,
     headline: null,

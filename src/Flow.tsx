@@ -2168,6 +2168,13 @@ export default function Flow() {
     let skipped = 0;  // Task 3: Track skipped (already generated)
 
     // Count must match all 3 gates used in the loop below
+    // Gate 3 uses FALLBACK — if matched supply has no email, check if ANY supply has email
+    const anySupplyHasEmail = matching.supplyAggregates?.some(agg => {
+      const aggKey = recordKey(agg.supply);
+      const aggEnriched = enrichedSupply.get(aggKey);
+      return agg.supply.email || (aggEnriched && isSuccessfulEnrichment(aggEnriched) && aggEnriched.email);
+    }) ?? false;
+
     const total = matching.demandMatches.filter(m => {
       const demandKey = recordKey(m.demand);
       const supplyKey = recordKey(m.supply);
@@ -2181,10 +2188,10 @@ export default function Flow() {
       const demandEmail = m.demand.email || (demandEnriched && isSuccessfulEnrichment(demandEnriched) ? demandEnriched.email : null);
       if (!demandEmail) return false;
 
-      // Gate 3: supply email (pre-existing OR enriched)
+      // Gate 3: supply email — matched supply OR fallback to any supply with email
       const supplyEnriched = enrichedSupply.get(supplyKey);
       const supplyEmail = m.supply.email || (supplyEnriched && isSuccessfulEnrichment(supplyEnriched) ? supplyEnriched.email : null);
-      if (!supplyEmail) return false;
+      if (!supplyEmail && !anySupplyHasEmail) return false;
 
       return true;
     }).length;
@@ -2257,11 +2264,32 @@ export default function Flow() {
         continue;
       }
 
-      // GATE 3: Check supply email (pre-existing OR enriched)
+      // GATE 3: Check supply email — FALLBACK to any supply with email if matched supply has none
       const supplyEnriched = enrichedSupply.get(supplyKey);
-      const supplyEmail = match.supply.email || (supplyEnriched && isSuccessfulEnrichment(supplyEnriched) ? supplyEnriched.email : null);
+      let supplyEmail = match.supply.email || (supplyEnriched && isSuccessfulEnrichment(supplyEnriched) ? supplyEnriched.email : null);
+      let effectiveSupply = match.supply;
+      let effectiveSupplyEnriched = supplyEnriched;
+      let effectiveSupplyKey = supplyKey;
+
+      // If matched supply has no email, find ANY supply with email
+      if (!supplyEmail && matching.supplyAggregates) {
+        for (const agg of matching.supplyAggregates) {
+          const aggKey = recordKey(agg.supply);
+          const aggEnriched = enrichedSupply.get(aggKey);
+          const aggEmail = agg.supply.email || (aggEnriched && isSuccessfulEnrichment(aggEnriched) ? aggEnriched.email : null);
+          if (aggEmail) {
+            console.log(`[COMPOSE] FALLBACK: ${match.demand.company} - using ${agg.supply.company} (has email) instead of ${match.supply.company}`);
+            supplyEmail = aggEmail;
+            effectiveSupply = agg.supply;
+            effectiveSupplyEnriched = aggEnriched;
+            effectiveSupplyKey = aggKey;
+            break;
+          }
+        }
+      }
+
       if (!supplyEmail) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - no supply email`);
+        console.log(`[COMPOSE] DROP: ${match.demand.company} - no supply with email found`);
         dropped++;
         continue;
       }
@@ -2298,8 +2326,8 @@ export default function Flow() {
         },
       };
 
-      // Build SupplyRecord with capability data
-      const supplyRaw = match.supply.raw || {};
+      // Build SupplyRecord with capability data — USE effectiveSupply (may be fallback)
+      const supplyRaw = effectiveSupply.raw || {};
 
       const capabilityFromProfile = match.capabilityProfile?.category;
       const capabilityLabel =
@@ -2320,22 +2348,22 @@ export default function Flow() {
         supplyRaw.capability ||
         supplyRaw.services ||
         capabilityLabel ||
-        match.supply.headline ||
-        match.supply.signal ||
-        match.supply.companyDescription?.slice(0, 100) ||
+        effectiveSupply.headline ||
+        effectiveSupply.signal ||
+        effectiveSupply.companyDescription?.slice(0, 100) ||
         'business services';
 
       const supplyRecord: SupplyRecord = {
-        domain: match.supply.domain,
-        company: match.supply.company,
-        contact: supplyEnriched?.firstName || match.supply.firstName || '',
+        domain: effectiveSupply.domain,
+        company: effectiveSupply.company,
+        contact: effectiveSupplyEnriched?.firstName || effectiveSupply.firstName || '',
         email: supplyEmail,
-        title: supplyEnriched?.title || match.supply.title || '',
+        title: effectiveSupplyEnriched?.title || effectiveSupply.title || '',
         capability: supplyCapability,
-        targetProfile: supplyRaw.targetProfile || (Array.isArray(match.supply.industry) ? (match.supply.industry as string[])[0] : match.supply.industry) || '',
+        targetProfile: supplyRaw.targetProfile || (Array.isArray(effectiveSupply.industry) ? (effectiveSupply.industry as string[])[0] : effectiveSupply.industry) || '',
         metadata: {
-          companyDescription: match.supply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
-          description: match.supply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
+          companyDescription: effectiveSupply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
+          description: effectiveSupply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
         },
       };
 
@@ -2363,7 +2391,7 @@ export default function Flow() {
         supplyRaw.company_description ||
         supplyRaw['Service Description'] ||
         supplyRaw.description ||
-        match.supply.companyDescription;
+        effectiveSupply.companyDescription;
 
       if (sourceHadSupplyDesc && !supplyRecord.metadata.companyDescription) {
         console.error('[REGRESSION_GUARD] SUPPLY DESCRIPTION LOST:', {
@@ -2375,11 +2403,11 @@ export default function Flow() {
         continue;
       }
 
-      // Collect work item
+      // Collect work item — use effectiveSupplyKey so intro is stored under correct supply
       const workItem: IntroWorkItem = {
-        id: `${demandKey}:${supplyKey}`,
+        id: `${demandKey}:${effectiveSupplyKey}`,
         demandKey,
-        supplyKey,
+        supplyKey: effectiveSupplyKey,
         demandRecord,
         supplyRecord,
         edge,
@@ -4116,12 +4144,20 @@ export default function Flow() {
                   })();
                   if (!demandHasEmail) return false;
 
-                  // Gate 3: Supply has email (pre-existing OR enriched success)
+                  // Gate 3: Supply has email (pre-existing OR enriched success) — OR FALLBACK
                   const supplyHasEmail = m.supply.email || (() => {
                     const e = state.enrichedSupply.get(supplyKey);
                     return e && isSuccessfulEnrichment(e) && e.email;
                   })();
-                  return supplyHasEmail;
+                  if (supplyHasEmail) return true;
+
+                  // FALLBACK: If matched supply has no email, check if ANY supply has email
+                  const anySupplyHasEmail = state.matchingResult?.supplyAggregates?.some(agg => {
+                    const aggKey = recordKey(agg.supply);
+                    const aggEnriched = state.enrichedSupply.get(aggKey);
+                    return agg.supply.email || (aggEnriched && isSuccessfulEnrichment(aggEnriched) && aggEnriched.email);
+                  }) ?? false;
+                  return anySupplyHasEmail;
                 }).length;
 
                 // Unique supply contacts (secondary stat)
@@ -4543,16 +4579,19 @@ export default function Flow() {
                 // Build message previews — 2 per side, dedupe supply
                 // FIX #5: Use match slices directly for stable keys (getDemandReactKey defined at component level)
                 const demandPreview = demandReady.slice(0, 2);
-                // Dedupe supply by company name
-                const seenSupply = new Set<string>();
-                const uniqueSupply: typeof demandReady = [];
-                for (const m of demandReady) {
-                  if (!seenSupply.has(m.supply.company)) {
-                    seenSupply.add(m.supply.company);
-                    uniqueSupply.push(m);
+
+                // UPSTREAM FIX: Build supply preview from supplies that ACTUALLY have intros
+                // Not from match.supply (which may have no email and fallback was used)
+                // This fixes the "Intro pending" bug when fallback supply is used
+                const suppliesWithIntros: Array<{ supply: NormalizedRecord; key: string }> = [];
+                state.supplyIntros.forEach((_, supplyKey) => {
+                  // Find the supply in supplyAggregates that matches this key
+                  const agg = supplyAggregates.find(a => recordKey(a.supply) === supplyKey);
+                  if (agg && !suppliesWithIntros.some(s => s.key === supplyKey)) {
+                    suppliesWithIntros.push({ supply: agg.supply, key: supplyKey });
                   }
-                }
-                const supplyPreview = uniqueSupply.slice(0, 2);
+                });
+                const supplyPreview = suppliesWithIntros.slice(0, 2);
 
                 return (
                   <div className="text-center">
@@ -4640,27 +4679,27 @@ export default function Flow() {
                         className="space-y-2"
                       >
                         <div className="flex items-center justify-end gap-1.5 pr-1">
-                          <span className="text-[10px] text-white/20">({uniqueSupply.length})</span>
+                          <span className="text-[10px] text-white/20">({suppliesWithIntros.length})</span>
                           <span className="text-[10px] font-medium text-white/40 uppercase tracking-wider">Supply</span>
                           <div className="w-5 h-5 rounded bg-violet-500/20 flex items-center justify-center">
                             <span className="text-[9px] font-bold text-violet-400">S</span>
                           </div>
                         </div>
-                        {supplyPreview.map((match, i) => (
+                        {supplyPreview.map((item, i) => (
                           <motion.div
-                            key={recordKey(match.supply)}
+                            key={item.key}
                             initial={{ opacity: 0, x: 10 }}
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: 0.35 + i * 0.08 }}
                           >
                             <div className="h-[130px] rounded-xl rounded-tr-sm bg-violet-500/[0.05] border border-violet-500/[0.10] text-left flex flex-col">
                               <div className="px-3 pt-2.5 pb-1.5 border-b border-violet-500/[0.06]">
-                                <p className="text-[10px] text-violet-400/70 font-medium">→ {match.supply.company}</p>
+                                <p className="text-[10px] text-violet-400/70 font-medium">→ {item.supply.company}</p>
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
                                 {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
                                 <p className="text-[11px] text-white/60 leading-[1.55]">
-                                  {state.supplyIntros.get(recordKey(match.supply)) ||
+                                  {state.supplyIntros.get(item.key) ||
                                     (state.step === 'generating' ? 'Generating intro...' :
                                       state.step === 'ready' ? 'Intro pending — click Generate' :
                                         'Awaiting intro generation')}
@@ -4669,8 +4708,8 @@ export default function Flow() {
                             </div>
                           </motion.div>
                         ))}
-                        {uniqueSupply.length > 2 && (
-                          <p className="text-[10px] text-white/25 text-right pr-1">+{uniqueSupply.length - 2} more</p>
+                        {suppliesWithIntros.length > 2 && (
+                          <p className="text-[10px] text-white/25 text-right pr-1">+{suppliesWithIntros.length - 2} more</p>
                         )}
                       </motion.div>
                     </div>
