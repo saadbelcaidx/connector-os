@@ -1554,7 +1554,7 @@ export default function Settings() {
                           style={{ colorScheme: 'dark' }}
                         >
                           <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fast)</option>
-                          <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Best)</option>
+                          <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Best)</option>
                         </select>
                         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/40">

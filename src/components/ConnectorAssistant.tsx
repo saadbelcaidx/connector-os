@@ -545,10 +545,41 @@ export function ConnectorAssistant() {
             hasClaudeKey: !!parsed.claudeApiKey
           });
 
-          // FORGIVING: Check ALL providers, not just the selected one
-          // Users often click wrong tab or forget to switch provider
+          // Respect user's aiProvider preference first, fall back to auto-detect
+          const preferred = parsed.aiProvider;
 
-          // Check Azure (needs endpoint + key)
+          // Try user's preferred provider first
+          if (preferred === 'anthropic' && parsed.claudeApiKey) {
+            setAiConfig({
+              provider: 'anthropic',
+              apiKey: parsed.claudeApiKey,
+              model: parsed.aiModel || 'claude-3-haiku-20240307',
+            });
+            console.log('[ConnectorAssistant] Anthropic config loaded (preferred)');
+            return;
+          }
+          if (preferred === 'azure' && parsed.azureEndpoint && parsed.azureApiKey) {
+            setAiConfig({
+              provider: 'azure',
+              apiKey: parsed.azureApiKey,
+              model: parsed.azureDeployment || 'gpt-4o-mini',
+              azureEndpoint: parsed.azureEndpoint,
+              azureDeployment: parsed.azureDeployment,
+            });
+            console.log('[ConnectorAssistant] Azure config loaded (preferred)');
+            return;
+          }
+          if (preferred === 'openai' && parsed.openaiApiKey) {
+            setAiConfig({
+              provider: 'openai',
+              apiKey: parsed.openaiApiKey,
+              model: parsed.aiModel || 'gpt-4o-mini',
+            });
+            console.log('[ConnectorAssistant] OpenAI config loaded (preferred)');
+            return;
+          }
+
+          // Fall back to auto-detect if preferred provider missing credentials
           if (parsed.azureEndpoint && parsed.azureApiKey) {
             setAiConfig({
               provider: 'azure',
@@ -557,27 +588,25 @@ export function ConnectorAssistant() {
               azureEndpoint: parsed.azureEndpoint,
               azureDeployment: parsed.azureDeployment,
             });
-            console.log('[ConnectorAssistant] Azure config loaded (auto-detected)');
+            console.log('[ConnectorAssistant] Azure config loaded (fallback)');
             return;
           }
-          // Check OpenAI
           if (parsed.openaiApiKey) {
             setAiConfig({
               provider: 'openai',
               apiKey: parsed.openaiApiKey,
               model: parsed.aiModel || 'gpt-4o-mini',
             });
-            console.log('[ConnectorAssistant] OpenAI config loaded (auto-detected)');
+            console.log('[ConnectorAssistant] OpenAI config loaded (fallback)');
             return;
           }
-          // Check Anthropic/Claude
           if (parsed.claudeApiKey) {
             setAiConfig({
               provider: 'anthropic',
               apiKey: parsed.claudeApiKey,
               model: parsed.aiModel || 'claude-3-haiku-20240307',
             });
-            console.log('[ConnectorAssistant] Anthropic config loaded (auto-detected)');
+            console.log('[ConnectorAssistant] Anthropic config loaded (fallback)');
             return;
           }
         } catch (e) {
