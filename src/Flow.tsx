@@ -1711,8 +1711,20 @@ export default function Flow() {
       progress: { current: 70, total: 100, message: 'Matching...' },
     }));
 
-    await runMatching(demandRecords, supplyRecords, demandSchema, supplySchema);
-  }, [state.demandRecords, state.supplyRecords, state.demandSchema, state.supplySchema]);
+    try {
+      await runMatching(demandRecords, supplyRecords, demandSchema, supplySchema);
+    } catch (err) {
+      // FIX: Error handling mirrors startFlow pattern (lines 1658-1668)
+      // Without this, errors leave step stuck at 'matching' and user must refresh
+      if (err instanceof FlowAbort) {
+        setFlowBlock(err.uxBlock);
+        return;
+      }
+      console.error('[Flow] Matching failed:', err);
+      const detail = err instanceof Error ? err.message : 'Unknown error';
+      setFlowBlock(BLOCKS.MATCHING_FAILED(detail));
+    }
+  }, [state.demandRecords, state.supplyRecords, state.demandSchema, state.supplySchema, setFlowBlock]);
 
   /**
    * User says "Wrong data" — go back to upload step.
