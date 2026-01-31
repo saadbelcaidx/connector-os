@@ -155,8 +155,8 @@ export function deriveRoutability(
   capabilities: DatasetCapabilities
 ): { state: RoutabilityState; missingFields?: string[]; blockReason?: string; derivedNote?: string } {
 
-  // ROUTABLE: Has explicit company + domain
-  if (capabilities.hasCompany && capabilities.hasDomain) {
+  // ROUTABLE: Has company (domain optional — enrichment falls back to SEARCH_COMPANY)
+  if (capabilities.hasCompany) {
     return { state: 'ROUTABLE' };
   }
 
