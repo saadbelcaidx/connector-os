@@ -63,8 +63,6 @@ interface Settings {
   enhanceIntro: boolean;  // When true, use AI-enhanced intros; when false, use templates
   // Pre-signal context (operator-written, keyed by domain)
   preSignalContext: Record<string, PreSignalContextEntry>;
-  // Signals toggle — fetch company signals for B2B Contacts (default false)
-  fetchSignals: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -104,8 +102,6 @@ const DEFAULT_SETTINGS: Settings = {
   enhanceIntro: false,  // Default OFF — user must opt-in to AI intros
   // Pre-signal context
   preSignalContext: {},
-  // Signals toggle (default off)
-  fetchSignals: false,
 };
 
 type Section = 'data' | 'outreach' | 'ai' | 'identity' | 'account';
@@ -327,7 +323,6 @@ export default function Settings() {
           apolloApiKey: data.enrichment_api_key || '',
           anymailApiKey: data.anymail_finder_api_key || '',
           connectorAgentApiKey: data.connector_agent_api_key || '',
-          fetchSignals: data.fetch_signals === true,
           // Sending provider
           sendingProvider: data.sending_provider || 'instantly',
           instantlyApiKey: data.instantly_api_key || '',
@@ -411,7 +406,6 @@ export default function Settings() {
           enrichment_api_key: settings.apolloApiKey,
           anymail_finder_api_key: settings.anymailApiKey,
           connector_agent_api_key: settings.connectorAgentApiKey,
-          fetch_signals: settings.fetchSignals,
           // Sending provider (always sent)
           sending_provider: settings.sendingProvider,
           // Instantly fields (always persist - campaign IDs are configuration)
@@ -1055,33 +1049,6 @@ export default function Settings() {
                   </div>
                 </div>
 
-                {/* Company Signals Toggle */}
-                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex items-start gap-3 flex-1">
-                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
-                        <Sparkles size={16} strokeWidth={1.5} className="text-amber-400/70" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[13px] font-medium text-white/90">Company Signals</span>
-                          <InfoTip content="Fetch funding, employees, and tech stack for B2B Contacts. One extra Apollo call per verified domain." />
-                        </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Optional metadata for verified contacts</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setSettings({ ...settings, fetchSignals: !settings.fetchSignals })}
-                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                        settings.fetchSignals ? 'bg-amber-500/70' : 'bg-white/[0.08]'
-                      }`}
-                    >
-                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${
-                        settings.fetchSignals ? 'left-6' : 'left-1'
-                      }`} />
-                    </button>
-                  </div>
-                </div>
               </div>
 
               {/* Sending Provider */}

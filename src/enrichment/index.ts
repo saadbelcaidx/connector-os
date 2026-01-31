@@ -69,7 +69,6 @@ export interface EnrichmentConfig {
   apolloApiKey?: string;
   anymailApiKey?: string;
   connectorAgentApiKey?: string;
-  fetchSignals?: boolean;
 }
 
 // =============================================================================

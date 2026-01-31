@@ -156,44 +156,6 @@ import { BTN } from './ui/primitives';
 // SIGNAL STATUS — Explicit 3-state for UX (no silent failures)
 // =============================================================================
 
-type SignalStatus = 'disabled' | 'unavailable' | 'available';
-
-/**
- * Derive signal status from settings + enrichment results.
- * Called once after enrichment completes. No per-record guessing.
- */
-function deriveSignalStatus(
-  fetchSignals: boolean,
-  enrichedDemand: Map<string, EnrichmentResult>,
-  enrichedSupply: Map<string, EnrichmentResult>
-): { status: SignalStatus; coverage: { available: number; total: number } } {
-  // State 1: Signals disabled in settings
-  if (!fetchSignals) {
-    return { status: 'disabled', coverage: { available: 0, total: 0 } };
-  }
-
-  // Count records with signals
-  let available = 0;
-  let total = 0;
-
-  for (const [, enriched] of enrichedDemand.entries()) {
-    total++;
-    if (enriched.signals) available++;
-  }
-  for (const [, enriched] of enrichedSupply.entries()) {
-    total++;
-    if (enriched.signals) available++;
-  }
-
-  // State 2: Enabled but no data available
-  if (available === 0) {
-    return { status: 'unavailable', coverage: { available: 0, total } };
-  }
-
-  // State 3: Signals available
-  return { status: 'available', coverage: { available, total } };
-}
-
 // =============================================================================
 // INTRO GENERATION — Now handled by IntroGenerator.ts
 // Rich context, 15 real examples, validation with regeneration
@@ -963,8 +925,6 @@ interface Settings {
   aiConfig: AIConfig | null;
   // LAYER 3: OpenAI key as fallback when Azure content filter blocks
   openaiApiKeyFallback?: string;
-  // Signals toggle — fetch company signals for B2B Contacts (default false)
-  fetchSignals?: boolean;
   // Enhance Intro toggle — when true use AI, when false use templates (default false)
   enhanceIntro?: boolean;
 }
@@ -1328,7 +1288,6 @@ export default function Flow() {
             supplyCampaignId,
             aiConfig,
             openaiApiKeyFallback,
-            fetchSignals: data?.fetch_signals === true, // default false
             enhanceIntro: data?.enhance_intro === true, // default false — user must opt-in to AI intros
           });
 
@@ -1381,7 +1340,6 @@ export default function Flow() {
           supplyCampaignId,
           aiConfig,
           openaiApiKeyFallback,
-          fetchSignals: s.fetchSignals === true, // default false
           enhanceIntro: s.enhanceIntro === true, // default false — user must opt-in to AI intros
         });
 
@@ -2001,7 +1959,6 @@ export default function Flow() {
       apolloApiKey: settings?.apolloApiKey,
       anymailApiKey: settings?.anymailApiKey,
       connectorAgentApiKey: settings?.connectorAgentApiKey,
-      fetchSignals: settings?.fetchSignals === true, // default false
     };
 
     // Run ID for this batch
@@ -2011,7 +1968,6 @@ export default function Flow() {
       hasApollo: !!config.apolloApiKey,
       hasAnymail: !!config.anymailApiKey,
       hasConnectorAgent: !!config.connectorAgentApiKey,
-      fetchSignals: config.fetchSignals,
       runId,
       concurrency: 5,
     });
