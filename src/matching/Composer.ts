@@ -378,6 +378,74 @@ function cleanDoubledPrepositions(text: string): string {
 }
 
 /**
+ * Sanitize evidence: if it looks like a job title/specialty, return generic fallback.
+ * Stripe doctrine: never output garbage, fail gracefully.
+ *
+ * BAD: "Healthcare Provider - Nurse Practitioner, Psych/Mental Health"
+ * GOOD: "is showing activity"
+ */
+function sanitizeEvidence(evidence: string): string {
+  if (!evidence || !evidence.trim()) {
+    return 'is showing activity';
+  }
+
+  const lower = evidence.toLowerCase();
+
+  // Detect job title / specialty patterns (not real signals)
+  const titlePatterns = [
+    /\bprovider\b/i,
+    /\bpractitioner\b/i,
+    /\bspecialist\b/i,
+    /\bnurse\b/i,
+    /\bphysician\b/i,
+    /\btherapist\b/i,
+    /\bcounselor\b/i,
+    /\bdoctor\b/i,
+    /\bpsych\b/i,
+    /\bmental health\b/i,
+    /\bhealthcare\b/i,
+    /\bmedical\b/i,
+    /\bclinical\b/i,
+    /\bcertified\b/i,
+    /\blicensed\b/i,
+    /\bregistered\b/i,
+    /\bceo\b/i,
+    /\bcfo\b/i,
+    /\bcto\b/i,
+    /\bowner\b/i,
+    /\bfounder\b/i,
+    /\bdirector\b/i,
+    /\bmanager\b/i,
+    /\bpresident\b/i,
+    /\bvice president\b/i,
+    /\bpartner\b/i,
+  ];
+
+  // If evidence matches title patterns, use fallback
+  if (titlePatterns.some(p => p.test(lower))) {
+    return 'is showing activity';
+  }
+
+  // If evidence is too short (< 5 chars) or doesn't start with a verb-like word, fix it
+  const trimmed = evidence.trim();
+  if (trimmed.length < 5) {
+    return 'is showing activity';
+  }
+
+  // If evidence doesn't start with "is", "has", "raised", "hiring", etc., prepend "is"
+  const startsWithVerb = /^(is|are|has|had|was|were|raised|hiring|expanding|scaling|growing|launched|announced|closed|secured|opened)/i.test(trimmed);
+  if (!startsWithVerb) {
+    // Check if it's a noun phrase that should have "is" prepended
+    // But only if it's a reasonable signal phrase
+    if (titlePatterns.some(p => p.test(lower))) {
+      return 'is showing activity';
+    }
+  }
+
+  return trimmed;
+}
+
+/**
  * Check if text looks like a raw persona label (not a capability).
  * Personas describe WHO they target, not WHAT they do.
  * Also catches job titles like "President of Company Name".
@@ -562,10 +630,13 @@ export function composeIntros(
   //
   // Worth an intro?
 
+  // Sanitize evidence to prevent garbage output (Stripe doctrine)
+  const safeEvidence = sanitizeEvidence(edge.evidence);
+
   const demandLines = [
     `Hey ${demandFirstName} —`,
     '',
-    `Noticed ${demandCompany} ${edge.evidence} — I'm connected to ${counterparty.contact} at ${supplyCompany} who ${supplyRelevance}.`,
+    `Noticed ${demandCompany} ${safeEvidence} — I'm connected to ${counterparty.contact} at ${supplyCompany} who ${supplyRelevance}.`,
     '',
     'Worth an intro?',
   ];
@@ -587,7 +658,7 @@ export function composeIntros(
   const supplyLines = [
     `Hey ${supplyFirstName} —`,
     '',
-    `${demandCompany} ${edge.evidence} — ${demand.contact} (${demandTitle}) is driving it.`,
+    `${demandCompany} ${safeEvidence} — ${demand.contact} (${demandTitle}) is driving it.`,
     '',
     'Worth a look?',
   ];

@@ -12,6 +12,8 @@
 import type { DemandRecord } from '../schemas/DemandRecord';
 import type { SupplyRecord } from '../schemas/SupplyRecord';
 import type { Edge } from '../schemas/Edge';
+import type { Counterparty } from '../schemas/IntroOutput';
+import { composeIntros } from '../matching/Composer';
 
 // =============================================================================
 // TYPES
@@ -156,8 +158,7 @@ DEMAND (the person you're emailing):
 - Company: ${cleanCompanyName(demand.company)}
 - Title: ${demand.title || 'decision maker'}
 - Industry: ${demand.industry || 'tech'}
-- Funding: ${fundingAmount || 'raised funding'}
-
+${fundingAmount ? `- Funding: ${fundingAmount}` : ''}
 SUPPLY (the provider you're offering):
 - Contact: ${supply.contact}
 - Company: ${cleanCompanyName(supply.company)}
@@ -694,6 +695,7 @@ export interface BatchIntroResult {
   supplyIntro: string;
   valueProps: ValueProps;
   error?: string;
+  source: 'ai' | 'ai-fallback';  // Track whether AI succeeded or fell back to Composer
 }
 
 /**
@@ -717,15 +719,28 @@ export async function generateIntrosBatch(
         demandIntro: intros.demandIntro,
         supplyIntro: intros.supplyIntro,
         valueProps: intros.valueProps,
+        source: 'ai',
       });
     } catch (e) {
-      console.error(`[IntroAI] Batch error for ${item.id}:`, e);
+      console.error(`[IntroAI] Fallback to Composer for ${item.id}:`, e);
+
+      // Silent fallback to Composer (Stripe doctrine: system keeps working)
+      const counterparty: Counterparty = {
+        company: item.supply.company,
+        contact: item.supply.contact || '',
+        email: item.supply.email || '',
+        title: item.supply.title || '',
+        fitReason: '',
+      };
+
+      const composed = composeIntros(item.demand, item.edge, counterparty, item.supply);
+
       results.push({
         id: item.id,
-        demandIntro: '',
-        supplyIntro: '',
+        demandIntro: composed.demandBody,
+        supplyIntro: composed.supplyBody,
         valueProps: { demandValueProp: '', supplyValueProp: '' },
-        error: String(e),
+        source: 'ai-fallback',
       });
     }
   }
@@ -762,18 +777,31 @@ export async function generateIntrosBatchParallel(
               demandIntro: intros.demandIntro,
               supplyIntro: intros.supplyIntro,
               valueProps: intros.valueProps,
+              source: 'ai',
             } as BatchIntroResult,
           };
         } catch (e) {
-          console.error(`[IntroAI] Parallel batch error for ${item.id}:`, e);
+          console.error(`[IntroAI] Fallback to Composer for ${item.id}:`, e);
+
+          // Silent fallback to Composer (Stripe doctrine: system keeps working)
+          const counterparty: Counterparty = {
+            company: item.supply.company,
+            contact: item.supply.contact || '',
+            email: item.supply.email || '',
+            title: item.supply.title || '',
+            fitReason: '',
+          };
+
+          const composed = composeIntros(item.demand, item.edge, counterparty, item.supply);
+
           return {
             index: i + idx,
             result: {
               id: item.id,
-              demandIntro: '',
-              supplyIntro: '',
+              demandIntro: composed.demandBody,
+              supplyIntro: composed.supplyBody,
               valueProps: { demandValueProp: '', supplyValueProp: '' },
-              error: String(e),
+              source: 'ai-fallback',
             } as BatchIntroResult,
           };
         }
