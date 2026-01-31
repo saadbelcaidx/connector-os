@@ -73,7 +73,7 @@ export type ProviderName = 'connectorAgent' | 'anymail' | 'apollo';
  */
 export const PROVIDER_CAPABILITIES: Record<ProviderName, EnrichmentAction[]> = {
   connectorAgent: ['VERIFY', 'FIND_PERSON'],
-  anymail: ['VERIFY', 'FIND_PERSON', 'FIND_COMPANY_CONTACT', 'SEARCH_PERSON'],
+  anymail: ['VERIFY', 'FIND_PERSON', 'FIND_COMPANY_CONTACT', 'SEARCH_PERSON', 'SEARCH_COMPANY'],
   apollo: ['FIND_PERSON', 'FIND_COMPANY_CONTACT', 'SEARCH_PERSON', 'SEARCH_COMPANY'],
 };
 
@@ -86,7 +86,7 @@ const PROVIDER_PRIORITY: Record<EnrichmentAction, ProviderName[]> = {
   'FIND_PERSON': ['anymail', 'connectorAgent', 'apollo'],
   'FIND_COMPANY_CONTACT': ['apollo', 'anymail'],  // Apollo FREE first, then Anymail fallback
   'SEARCH_PERSON': ['anymail', 'apollo'],
-  'SEARCH_COMPANY': ['apollo'],
+  'SEARCH_COMPANY': ['apollo', 'anymail'],
   'CANNOT_ROUTE': [],
 };
 
@@ -347,28 +347,34 @@ async function findPersonWithAnymail(
 
 /**
  * Find company contact with Anymail (find_decision_maker endpoint).
+ * Supports both domain and company_name — Anymail uses whichever is provided.
  */
 async function findCompanyContactWithAnymail(
-  domain: string,
+  domainOrCompany: { domain?: string | null; company_name?: string | null },
   config: RouterConfig
 ): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any }> {
-  // DEBUG: Log exact domain being sent to Anymail Finder
-  console.log(`[Router] findCompanyContactWithAnymail DOMAIN_SENT:`, {
-    domain,
-    domainLength: domain?.length,
-    domainType: typeof domain,
+  // DEBUG: Log what's being sent to Anymail Finder
+  console.log(`[Router] findCompanyContactWithAnymail:`, {
+    domain: domainOrCompany.domain,
+    company_name: domainOrCompany.company_name,
   });
 
   try {
+    const payload: any = {
+      type: 'find_decision_maker',
+      apiKey: config.anymailApiKey,
+      categories: ['ceo', 'sales', 'marketing', 'operations'],
+    };
+    if (domainOrCompany.domain) {
+      payload.domain = domainOrCompany.domain;
+    } else if (domainOrCompany.company_name) {
+      payload.company_name = domainOrCompany.company_name;
+    }
+
     const response = await fetch(`${config.supabaseFunctionsUrl}/anymail-finder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'find_decision_maker',
-        apiKey: config.anymailApiKey,
-        domain,
-        categories: ['ceo', 'sales', 'marketing', 'operations'],
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -1094,7 +1100,9 @@ export async function routeEnrichment(
           // Pass both domain AND company_name — Anymail uses domain first, falls back to company_name
           result = await findPersonWithAnymail({ domain: inputs.domain, company_name: inputs.company }, inputs.person_name!, config);
         } else if (action === 'FIND_COMPANY_CONTACT') {
-          result = await findCompanyContactWithAnymail(inputs.domain!, config);
+          result = await findCompanyContactWithAnymail({ domain: inputs.domain }, config);
+        } else if (action === 'SEARCH_COMPANY') {
+          result = await findCompanyContactWithAnymail({ company_name: inputs.company }, config);
         } else if (action === 'SEARCH_PERSON') {
           // DEBUG: Log actual values before SEARCH_PERSON call
           console.log(`[Router] SEARCH_PERSON values:`, {
