@@ -9,7 +9,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info, CheckCircle2, Key, Clock, CreditCard, User, Building2, Settings, AlertCircle, Search, Sparkles } from 'lucide-react';
+import { Workflow, ArrowLeft, Pencil, X, Check, Star, EyeOff, ArrowRight, ChevronRight, Info, CheckCircle2, Key, Clock, CreditCard, User, Building2, Settings, AlertCircle, Search, Sparkles, RefreshCw } from 'lucide-react';
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -435,8 +435,8 @@ interface ExportData {
   matchingResult: MatchingResult | null;
   enrichedDemand: Map<string, EnrichmentResult>;
   enrichedSupply: Map<string, EnrichmentResult>;
-  demandIntros: Map<string, string>;
-  supplyIntros: Map<string, string>;
+  demandIntros: Map<string, IntroEntry>;
+  supplyIntros: Map<string, IntroEntry>;
 }
 
 /**
@@ -456,7 +456,8 @@ function buildDemandExportRows(data: ExportData): (string | null)[][] {
     const email = match.demand.email || (enriched && isSuccessfulEnrichment(enriched) ? enriched.email : null);
     if (!email) continue;
 
-    const intro = data.demandIntros.get(key) || '';
+    const introEntry = data.demandIntros.get(key);
+    const intro = introEntry?.text || '';
     if (!intro) continue; // No intro = wouldn't be sent
 
     rows.push([
@@ -494,7 +495,8 @@ function buildSupplyExportRows(data: ExportData): (string | null)[][] {
     const email = agg.supply.email || (enriched && isSuccessfulEnrichment(enriched) ? enriched.email : null);
     if (!email) continue;
 
-    const intro = data.supplyIntros.get(key) || '';
+    const introEntry = data.supplyIntros.get(key);
+    const intro = introEntry?.text || '';
     if (!intro) continue; // No intro = wouldn't be sent
 
     // Calculate average match score
@@ -862,6 +864,29 @@ function analyzeDataForPreview(demandRecords: NormalizedRecord[], supplyRecords:
   };
 }
 
+// Intro entry with source tracking for badges
+interface IntroEntry {
+  text: string;
+  source: 'template' | 'ai' | 'ai-fallback';
+}
+
+// Badge component for intro source
+function IntroBadge({ source }: { source?: 'template' | 'ai' | 'ai-fallback' }) {
+  if (!source) return null;
+
+  const config = {
+    'template': { label: 'TEMPLATE', className: 'bg-white/[0.06] text-white/40 border-white/[0.08]' },
+    'ai': { label: 'AI', className: 'bg-violet-500/10 text-violet-400/80 border-violet-500/20' },
+    'ai-fallback': { label: 'AI-FALLBACK', className: 'bg-amber-500/10 text-amber-400/80 border-amber-500/20' },
+  }[source];
+
+  return (
+    <span className={`text-[8px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded border ${config.className}`}>
+      {config.label}
+    </span>
+  );
+}
+
 interface FlowState {
   step: 'upload' | 'validating' | 'preview' | 'matching' | 'matches_found' | 'no_matches' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
 
@@ -887,9 +912,9 @@ interface FlowState {
   enrichedDemand: Map<string, EnrichmentResult>;
   enrichedSupply: Map<string, EnrichmentResult>;
 
-  // Intros (AI-generated)
-  demandIntros: Map<string, string>;  // domain -> intro
-  supplyIntros: Map<string, string>;  // domain -> intro
+  // Intros (AI-generated or template-based)
+  demandIntros: Map<string, IntroEntry>;  // domain -> intro with source tracking
+  supplyIntros: Map<string, IntroEntry>;  // domain -> intro with source tracking
 
   // Progress
   progress: { current: number; total: number; message: string };
@@ -940,6 +965,8 @@ interface Settings {
   openaiApiKeyFallback?: string;
   // Signals toggle — fetch company signals for B2B Contacts (default false)
   fetchSignals?: boolean;
+  // Enhance Intro toggle — when true use AI, when false use templates (default false)
+  enhanceIntro?: boolean;
 }
 
 // =============================================================================
@@ -1069,8 +1096,15 @@ export default function Flow() {
       detectedEdges: new Map(Object.entries(data.detectedEdges || {})),
       enrichedDemand: new Map(Object.entries(data.enrichedDemand || {})),
       enrichedSupply: new Map(Object.entries(data.enrichedSupply || {})),
-      demandIntros: new Map(Object.entries(data.demandIntros || {})),
-      supplyIntros: new Map(Object.entries(data.supplyIntros || {})),
+      // Migrate old string intros to new IntroEntry format
+      demandIntros: new Map(Object.entries(data.demandIntros || {}).map(([k, v]) => [
+        k,
+        typeof v === 'string' ? { text: v, source: 'template' as const } : v as IntroEntry
+      ])),
+      supplyIntros: new Map(Object.entries(data.supplyIntros || {}).map(([k, v]) => [
+        k,
+        typeof v === 'string' ? { text: v, source: 'template' as const } : v as IntroEntry
+      ])),
       progress: data.progress || { current: 0, total: 0, message: '' },
       sentDemand: data.sentDemand || 0,
       sentSupply: data.sentSupply || 0,
@@ -1120,6 +1154,9 @@ export default function Flow() {
 
   // Restore message state (Task 5B: UX for downgrade)
   const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
+
+  // Fallback warning state (Enhance Intro feature: show when AI fallback rate > 20%)
+  const [fallbackWarning, setFallbackWarning] = useState<string | null>(null);
 
   // Restore state on mount (check URL param or latest incomplete flow)
   useEffect(() => {
@@ -1292,6 +1329,7 @@ export default function Flow() {
             aiConfig,
             openaiApiKeyFallback,
             fetchSignals: data?.fetch_signals === true, // default false
+            enhanceIntro: data?.enhance_intro === true, // default false — user must opt-in to AI intros
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
@@ -1344,6 +1382,7 @@ export default function Flow() {
           aiConfig,
           openaiApiKeyFallback,
           fetchSignals: s.fetchSignals === true, // default false
+          enhanceIntro: s.enhanceIntro === true, // default false — user must opt-in to AI intros
         });
 
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
@@ -2426,7 +2465,8 @@ export default function Flow() {
         match,
       };
 
-      if (introAIConfig) {
+      // Respect enhanceIntro toggle — AI only when user opts in AND has valid config
+      if (introAIConfig && settings.enhanceIntro) {
         aiWorkItems.push(workItem);
       } else {
         templateItems.push(workItem);
@@ -2467,6 +2507,10 @@ export default function Flow() {
 
       console.log(`[COMPOSE] Phase 3: Applying ${batchResults.length} AI results...`);
 
+      // Track AI success vs fallback for toast warning
+      let aiSuccess = 0;
+      let aiFallback = 0;
+
       for (let i = 0; i < batchResults.length; i++) {
         const result = batchResults[i];
         const workItem = aiWorkItems[i];
@@ -2477,12 +2521,32 @@ export default function Flow() {
           continue;
         }
 
-        demandIntros.set(workItem.demandKey, result.demandIntro);
-        supplyIntros.set(workItem.supplyKey, result.supplyIntro);
+        // Track source for fallback rate calculation
+        if (result.source === 'ai') {
+          aiSuccess++;
+        } else if (result.source === 'ai-fallback') {
+          aiFallback++;
+        }
 
-        console.log(`[COMPOSE] ✓ AI: ${workItem.demandRecord.company} → ${workItem.supplyRecord.company} (${workItem.edge.type})`);
+        // Store intro with source tracking for badges
+        demandIntros.set(workItem.demandKey, { text: result.demandIntro, source: result.source });
+        supplyIntros.set(workItem.supplyKey, { text: result.supplyIntro, source: result.source });
+
+        console.log(`[COMPOSE] ✓ ${result.source === 'ai' ? 'AI' : 'AI-Fallback'}: ${workItem.demandRecord.company} → ${workItem.supplyRecord.company} (${workItem.edge.type})`);
         composed++;
         progress++;
+      }
+
+      // Check fallback rate and show warning if > 20%
+      const totalAIAttempts = aiSuccess + aiFallback;
+      if (totalAIAttempts > 0) {
+        const fallbackRate = (aiFallback / totalAIAttempts) * 100;
+        console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
+        if (fallbackRate > 20) {
+          setFallbackWarning(`${Math.round(fallbackRate)}% of intros used template fallback. Check your API key or try a different provider.`);
+          // Auto-dismiss after 8 seconds
+          setTimeout(() => setFallbackWarning(null), 8000);
+        }
       }
     }
 
@@ -2505,8 +2569,9 @@ export default function Flow() {
 
         const composed_output = composeIntros(item.demandRecord, item.edge, counterparty, item.supplyRecord);
 
-        demandIntros.set(item.demandKey, composed_output.demandBody);
-        supplyIntros.set(item.supplyKey, composed_output.supplyBody);
+        // Store intro with source tracking for badges
+        demandIntros.set(item.demandKey, { text: composed_output.demandBody, source: 'template' });
+        supplyIntros.set(item.supplyKey, { text: composed_output.supplyBody, source: 'template' });
 
         console.log(`[COMPOSE] ✓ Template: ${item.demandRecord.company} → ${item.supplyRecord.company} (${item.edge.type})`);
         composed++;
@@ -2594,8 +2659,13 @@ export default function Flow() {
       return;
     }
 
-    // Generate intros
-    setState(prev => ({ ...prev, step: 'generating' }));
+    // Clear existing intros first to force regeneration
+    setState(prev => ({
+      ...prev,
+      step: 'generating',
+      demandIntros: new Map(),
+      supplyIntros: new Map(),
+    }));
     await runIntroGeneration(state.matchingResult, state.enrichedDemand, state.enrichedSupply);
     setState(prev => ({ ...prev, step: 'ready' }));
   }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply]);
@@ -2729,7 +2799,8 @@ export default function Flow() {
         const enriched = enrichedDemand.get(demandKey);
         const email = match.demand.email || enriched?.email;
 
-        const intro = state.demandIntros.get(demandKey) || generateDemandIntro({
+        const introEntry = state.demandIntros.get(demandKey);
+        const intro = introEntry?.text || generateDemandIntro({
           ...match.demand,
           firstName: enriched?.firstName || match.demand.firstName,
           email: email!,
@@ -2766,7 +2837,8 @@ export default function Flow() {
         const enriched = enrichedSupply.get(supplyKey);
         const email = agg.supply.email || enriched?.email;
 
-        const intro = state.supplyIntros.get(supplyKey) || generateSupplyIntro(
+        const introEntry = state.supplyIntros.get(supplyKey);
+        const intro = introEntry?.text || generateSupplyIntro(
           {
             ...agg.supply,
             firstName: enriched?.firstName || agg.supply.firstName,
@@ -3048,6 +3120,34 @@ export default function Flow() {
                   className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-all duration-200 flex-shrink-0 ml-2"
                 >
                   <X size={12} className="text-white/30" />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* AI Fallback warning toast — amber for warning */}
+      <AnimatePresence>
+        {fallbackWarning && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.98 }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed top-6 left-0 right-0 z-50 flex justify-center pointer-events-none"
+          >
+            <div className="pointer-events-auto px-5 py-3 rounded-2xl bg-amber-950/90 backdrop-blur-xl border border-amber-500/20">
+              <div className="flex items-center gap-3">
+                <AlertCircle size={16} className="text-amber-400/80 flex-shrink-0" />
+                <p className="text-[13px] text-amber-200/80 tracking-[-0.01em]">
+                  {fallbackWarning}
+                </p>
+                <button
+                  onClick={() => setFallbackWarning(null)}
+                  className="p-1.5 hover:bg-amber-500/10 rounded-lg transition-all duration-200 flex-shrink-0 ml-2"
+                >
+                  <X size={12} className="text-amber-400/50" />
                 </button>
               </div>
             </div>
@@ -4663,13 +4763,14 @@ export default function Flow() {
                             transition={{ delay: 0.3 + i * 0.08 }}
                           >
                             <div className="h-[130px] rounded-xl rounded-tl-sm bg-blue-500/[0.05] border border-blue-500/[0.10] text-left flex flex-col">
-                              <div className="px-3 pt-2.5 pb-1.5 border-b border-blue-500/[0.06]">
-                                <p className="text-[10px] text-blue-400/70 font-medium">→ {match.demand.company}</p>
+                              <div className="px-3 pt-2.5 pb-1.5 border-b border-blue-500/[0.06] flex items-center justify-between gap-2">
+                                <p className="text-[10px] text-blue-400/70 font-medium truncate">→ {match.demand.company}</p>
+                                <IntroBadge source={state.demandIntros.get(recordKey(match.demand))?.source} />
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
                                 {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
                                 <p className="text-[11px] text-white/60 leading-[1.55]">
-                                  {state.demandIntros.get(recordKey(match.demand)) ||
+                                  {state.demandIntros.get(recordKey(match.demand))?.text ||
                                     (state.step === 'generating' ? 'Generating intro...' :
                                       state.step === 'ready' ? 'Intro pending — click Generate' :
                                         'Awaiting intro generation')}
@@ -4705,13 +4806,14 @@ export default function Flow() {
                             transition={{ delay: 0.35 + i * 0.08 }}
                           >
                             <div className="h-[130px] rounded-xl rounded-tr-sm bg-violet-500/[0.05] border border-violet-500/[0.10] text-left flex flex-col">
-                              <div className="px-3 pt-2.5 pb-1.5 border-b border-violet-500/[0.06]">
-                                <p className="text-[10px] text-violet-400/70 font-medium">→ {item.supply.company}</p>
+                              <div className="px-3 pt-2.5 pb-1.5 border-b border-violet-500/[0.06] flex items-center justify-between gap-2">
+                                <p className="text-[10px] text-violet-400/70 font-medium truncate">→ {item.supply.company}</p>
+                                <IntroBadge source={state.supplyIntros.get(item.key)?.source} />
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
                                 {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
                                 <p className="text-[11px] text-white/60 leading-[1.55]">
-                                  {state.supplyIntros.get(item.key) ||
+                                  {state.supplyIntros.get(item.key)?.text ||
                                     (state.step === 'generating' ? 'Generating intro...' :
                                       state.step === 'ready' ? 'Intro pending — click Generate' :
                                         'Awaiting intro generation')}
@@ -4747,14 +4849,14 @@ export default function Flow() {
                               company: m.demand.company,
                               domain: m.demand.domain,
                               industry: m.demand.industry || '',
-                              intro: state.demandIntros.get(recordKey(m.demand)) || '',
+                              intro: state.demandIntros.get(recordKey(m.demand))?.text || '',
                               linkedin: m.demand.existingContact?.linkedin || '',
                             })), ...supplyNeedEmail.map(a => ({
                               type: 'supply',
                               company: a.supply.company,
                               domain: a.supply.domain,
                               industry: a.supply.industry || '',
-                              intro: state.supplyIntros.get(recordKey(a.supply)) || '',
+                              intro: state.supplyIntros.get(recordKey(a.supply))?.text || '',
                               linkedin: a.supply.linkedin || '',
                             }))];
                             const csv = [
@@ -4778,6 +4880,13 @@ export default function Flow() {
                         </button>
                       )}
                       <span className="text-white/10 mx-1">|</span>
+                      <button
+                        onClick={regenerateIntros}
+                        className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-[11px] text-white/30 hover:text-white/50 hover:bg-white/[0.03] transition-all"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        Regenerate
+                      </button>
                       <button onClick={reset} className="h-9 px-3 rounded-lg text-[11px] text-white/30 hover:text-white/50 hover:bg-white/[0.03] transition-all">
                         Start over
                       </button>
