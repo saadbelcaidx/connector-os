@@ -87,7 +87,8 @@ interface IntelligenceProps {
 // =============================================================================
 
 function getNodePosition(index: number, total: number): { top: string; left: string } {
-  const radius = 28; // Spread nodes wider — less dead space
+  // With max 8 nodes, single ring at radius 30 gives ~45° spacing minimum
+  const radius = total <= 6 ? 28 : 32;
   const angleOffset = -90;
   const angle = angleOffset + (index / total) * 360;
   const radians = (angle * Math.PI) / 180;
@@ -302,6 +303,18 @@ export default function Intelligence({
 
   const hasResults = response && response.results.length > 0;
 
+  // Structural: limit radar to top 8, ranked by opportunityScore from backend
+  const MAX_RADAR_NODES = 8;
+  const rankResult = (r: IntelligenceResult) =>
+    ((r.company as any).opportunityScore || 0)
+    + (r.contact?.email ? 20 : r.contact ? 10 : 0);
+  const radarResults = hasResults
+    ? [...response.results]
+        .sort((a, b) => rankResult(b) - rankResult(a))
+        .slice(0, MAX_RADAR_NODES)
+    : [];
+  const overflowCount = hasResults ? Math.max(0, response.results.length - MAX_RADAR_NODES) : 0;
+
   return (
     <div className="relative h-[85vh] radar-font overflow-hidden">
       {/* Grid background */}
@@ -341,32 +354,27 @@ export default function Intelligence({
 
       {/* CHANGE 5: Removed plumbing stats — breaks illusion */}
 
-      {/* MARKET ACTIVITY — Decisive, not decorative */}
+      {/* Market activity — one quiet line, pattern before companies */}
       {hasResults && (() => {
-        const hiring = response.results.filter(r => r.company.signalType === 'hiring').length;
-        const funding = response.results.filter(r => r.company.signalType === 'funding').length;
-        const expansion = response.results.filter(r => r.company.signalType === 'expansion').length;
-        const other = response.results.length - hiring - funding - expansion;
-        const total = response.results.length;
-
+        const ma = (response.meta as any)?.marketActivity;
+        if (!ma) return null;
+        const parts: string[] = [];
+        if (ma.hiring > 0) parts.push(`${ma.hiring} hiring`);
+        if (ma.funding > 0) parts.push(`${ma.funding} funding`);
+        if (ma.expansion > 0) parts.push(`${ma.expansion} expansion`);
+        if (ma.acquisition > 0) parts.push(`${ma.acquisition} acquisition`);
+        if (ma.exec_change > 0) parts.push(`${ma.exec_change} leadership change`);
+        if (parts.length === 0) return null;
         return (
-          <div className="absolute top-8 left-1/2 -translate-x-1/2 text-center z-10">
-            <div className="text-[15px] text-white/90 font-medium mb-1">
-              {total} {total === 1 ? 'company' : 'companies'} expanding right now
-            </div>
-            <div className="flex items-center justify-center gap-4 text-[13px] text-white/50">
-              {hiring > 0 && <span>{hiring} hiring now</span>}
-              {funding > 0 && <span>{funding} just raised</span>}
-              {expansion > 0 && <span>{expansion} expanding</span>}
-              {other > 0 && hiring === 0 && funding === 0 && expansion === 0 && <span>{other} active</span>}
-            </div>
+          <div className="absolute top-8 left-1/2 -translate-x-1/2 z-10">
+            <span className="text-[13px] text-white/40">Market activity: {parts.join(' · ')}</span>
           </div>
         );
       })()}
 
-      {/* Company nodes */}
-      {hasResults && response.results.map((result, i) => {
-        const pos = getNodePosition(i, response.results.length);
+      {/* Company nodes — top 8 by matchScore only */}
+      {hasResults && radarResults.map((result, i) => {
+        const pos = getNodePosition(i, radarResults.length);
         const isActive = hasLiveSignal(result);
         const isSelected = selectedResult?.company.companyDomain === result.company.companyDomain;
 
@@ -416,6 +424,13 @@ export default function Intelligence({
           </div>
         );
       })}
+
+      {/* Overflow counter */}
+      {overflowCount > 0 && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
+          <span className="text-[12px] text-white/30">+{overflowCount} more results</span>
+        </div>
+      )}
 
       {/* Search bar - BOTTOM, not center */}
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-6 z-20">
@@ -472,7 +487,7 @@ export default function Intelligence({
             <div className="flex items-start gap-3">
               <div className="flex-1">
                 <div className="text-[17px] font-medium text-white tracking-[-0.02em]">
-                  {companyIntel?.profile?.name || selectedResult.company.companyName}
+                  {selectedResult.company.companyName}
                 </div>
                 <div className="text-[12px] text-white/40 mt-1">
                   {companyIntel?.profile?.location || selectedResult.company.companyDomain || 'No domain'}
@@ -515,6 +530,13 @@ export default function Intelligence({
               <div className="text-[14px] text-white/90 leading-relaxed">
                 {companyIntel.summary.timingSignal}
               </div>
+            </div>
+          )}
+
+          {/* Opportunity reason */}
+          {(selectedResult.company as any).opportunityReason && (
+            <div className="text-[12px] text-white/40 mb-5">
+              {(selectedResult.company as any).opportunityReason}
             </div>
           )}
 

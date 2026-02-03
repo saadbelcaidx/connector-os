@@ -72,6 +72,8 @@ interface ExtractedCompany {
   sourceTitle: string;
   matchScore: number;
   confidence: number;
+  opportunityScore?: number;
+  opportunityReason?: string;
 }
 
 interface EnrichedContact {
@@ -140,6 +142,161 @@ function inferSeniorityLevel(title: string | null): 'c_suite' | 'vp' | 'director
   if (/\b(director|head of|principal)\b/.test(t)) return 'director';
   if (/\b(manager|lead|senior)\b/.test(t)) return 'manager';
   return 'other';
+}
+
+// News/media domain bases — match against domain containing these
+const NEWS_DOMAIN_BASES = [
+  'techcrunch', 'forbes', 'bloomberg', 'medium', 'reuters', 'cnbc',
+  'wsj', 'nytimes', 'bbc', 'theverge', 'wired', 'venturebeat',
+  'crunchbase', 'businessinsider', 'economist', 'entrepreneur',
+  'prnewswire', 'businesswire', 'globenewswire', 'yahoo', 'google',
+  'substack', 'github', 'reddit', 'twitter', 'fiercepharma',
+  'fiercebiotech', 'statnews', 'biopharmadive', 'endpts', 'evaluate',
+  'indeed', 'glassdoor', 'lever', 'greenhouse', 'seekingalpha',
+  'marketwatch', 'investopedia', 'benzinga', 'barrons', 'morningstar',
+  'pitchbook', 'dealogic', 'axios', 'politico', 'thehill',
+  'healthcaredive', 'pharmadive', 'biospace', 'labiotech',
+  'genengnews', 'drugdiscoverytoday',
+];
+
+// Exact matches for short/ambiguous domains
+const NEWS_DOMAINS_EXACT = new Set([
+  'ft.com', 'inc.com', 'x.com',
+]);
+
+// Media company names — never a real prospect
+const MEDIA_COMPANY_NAMES = new Set([
+  'reuters', 'bloomberg', 'forbes', 'wsj', 'wall street journal',
+  'cnbc', 'bbc', 'nytimes', 'new york times', 'the verge', 'wired',
+  'techcrunch', 'venturebeat', 'business insider', 'financial times',
+  'the economist', 'axios', 'politico', 'stat news', 'statnews',
+  'seeking alpha', 'marketwatch', 'barrons', 'morningstar',
+  'pitchbook', 'crunchbase', 'medium', 'substack',
+]);
+
+function isNewsDomain(domain: string | null): boolean {
+  if (!domain) return false;
+  const d = domain.toLowerCase().replace(/^www\./, '');
+  if (NEWS_DOMAINS_EXACT.has(d)) return true;
+  const base = d.split('.')[0];
+  return NEWS_DOMAIN_BASES.some(nb => base.includes(nb) || nb.includes(base));
+}
+
+function isMediaCompanyName(name: string): boolean {
+  if (!name) return false;
+  return MEDIA_COMPANY_NAMES.has(name.toLowerCase().trim());
+}
+
+// STEP 4 safeguard: company name should roughly match domain
+function domainMatchesCompany(domain: string | null, companyName: string): boolean {
+  if (!domain || !companyName) return true; // can't verify, pass through
+  const domainBase = domain.split('.')[0].toLowerCase();
+  const nameClean = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Short domains (2-3 chars) can't be reliably verified
+  if (domainBase.length <= 3) return true;
+  // Bidirectional containment check
+  if (nameClean.includes(domainBase)) return true;
+  if (domainBase.includes(nameClean.slice(0, Math.min(nameClean.length, 6)))) return true;
+  // Check if any significant word from company name appears in domain
+  const words = companyName.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+  return words.some(w => domainBase.includes(w.replace(/[^a-z0-9]/g, '')));
+}
+
+// ============================================================================
+// OPPORTUNITY INTENSITY SCORING
+// ============================================================================
+
+function computeOpportunityScore(company: ExtractedCompany): number {
+  let score = 0;
+  const title = (company.signalTitle || '').toLowerCase();
+
+  // Signal type scoring
+  switch (company.signalType) {
+    case 'funding': {
+      // Check recency via signalDate
+      const days = daysAgo(company.signalDate);
+      score += (days !== null && days <= 90) ? 30 : 15;
+      break;
+    }
+    case 'hiring':
+      score += 25;
+      // Executive role bonus
+      if (/\b(cfo|cro|cto|cmo|coo|vp|vice president|head of|chief|director|svp|evp)\b/i.test(title)) {
+        score += 10;
+      }
+      break;
+    case 'expansion':
+      score += 20;
+      break;
+    case 'exec_change':
+      score += 15;
+      break;
+    case 'acquisition':
+      score += 25;
+      break;
+    case 'partnership':
+      score += 10;
+      break;
+    case 'certification':
+      score += 5;
+      break;
+    default:
+      break;
+  }
+
+  // Signal recency bonus
+  const days = daysAgo(company.signalDate);
+  if (days !== null && days <= 30) {
+    score += 10;
+  }
+
+  // Penalties
+  if (company.signalTitle === 'Signal detected' || !company.signalTitle) {
+    score -= 15;
+  }
+  if (company.sourceType === 'news' && company.confidence < 0.7) {
+    score -= 20;
+  }
+
+  return Math.max(0, score);
+}
+
+function daysAgo(dateStr: string | null): number | null {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+  } catch {
+    return null;
+  }
+}
+
+const OPPORTUNITY_REASONS: Record<string, string> = {
+  hiring: 'Actively building team',
+  funding: 'Fresh budget available',
+  expansion: 'Entering new markets',
+  exec_change: 'Leadership transition',
+  acquisition: 'Acquisition activity',
+  partnership: 'New partnership forming',
+  certification: 'Compliance milestone',
+};
+
+// Multi-signal bonus: +15 if a domain appeared with 2+ different signal types before dedup
+function applyMultiSignalBonus(companies: ExtractedCompany[]): void {
+  const domainSignals = new Map<string, Set<string>>();
+  for (const c of companies) {
+    const key = (c.companyDomain || c.companyName).toLowerCase();
+    if (!domainSignals.has(key)) domainSignals.set(key, new Set());
+    domainSignals.get(key)!.add(c.signalType);
+  }
+  for (const c of companies) {
+    const key = (c.companyDomain || c.companyName).toLowerCase();
+    const types = domainSignals.get(key);
+    if (types && types.size >= 2) {
+      c.opportunityScore = (c.opportunityScore || 0) + 15;
+    }
+  }
 }
 
 // ============================================================================
@@ -308,12 +465,16 @@ function extractCompaniesFromTitles(exaResults: ExaResult[]): ExtractedCompany[]
     const domain = extractDomainFromUrl(result.url);
     if (!domain) continue;
 
-    // Skip non-company domains
-    if (/^(linkedin|twitter|facebook|youtube|medium|substack|github|techcrunch|forbes|bloomberg)\./.test(domain)) continue;
+    // Skip news/media domains and social platforms
+    if (isNewsDomain(domain)) continue;
+    if (/^(linkedin|facebook|youtube)\./.test(domain)) continue;
 
     // Extract company name from domain (e.g., "acme.com" → "Acme")
     const namePart = domain.split('.')[0];
     const companyName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+
+    // Skip if extracted name is a known media company
+    if (isMediaCompanyName(companyName)) continue;
 
     companies.push({
       companyName,
@@ -618,21 +779,48 @@ async function extractCompanies(
         }
         return passes;
       })
-      .map((c: any) => {
+      .flatMap((c: any) => {
         // Normalize field names (AI might return camelCase or snake_case)
         const name = c.companyName || c.company_name || c.name;
-        const domain = c.companyDomain || c.company_domain || c.domain;
         const signal = c.signalType || c.signal_type || c.type || 'other';
         const title = c.signalTitle || c.signal_title || c.title || 'Signal detected';
         const date = c.signalDate || c.signal_date || c.date || null;
         const srcType = c.sourceType || c.source_type || 'news';
         const srcTitle = c.sourceTitle || c.source_title || '';
         const conf = c.confidence ?? c.match_confidence ?? 0.8;
-        const idx = c.index ?? c.resultIndex ?? 0;
 
-        return {
+        // FIX: Drop entries with missing/invalid index — never default to 0
+        const rawIdx = c.index ?? c.resultIndex ?? undefined;
+        if (rawIdx === undefined || rawIdx < 0 || rawIdx >= exaResults.length) {
+          console.log('[Intelligence] Dropped (invalid index):', name, 'index:', rawIdx);
+          return [];
+        }
+        const idx = rawIdx;
+
+        // FIX: Domain comes from Exa URL only — never trust AI for domains
+        const companyDomain = extractDomainFromUrl(exaResults[idx]?.url || '');
+
+        // FIX: Skip news/media domains
+        if (isNewsDomain(companyDomain)) {
+          console.log('[Intelligence] Dropped (news domain):', name, '→', companyDomain);
+          return [];
+        }
+
+        // FIX: Skip media company names (Reuters, Bloomberg, etc.)
+        if (isMediaCompanyName(name)) {
+          console.log('[Intelligence] Dropped (media company name):', name);
+          return [];
+        }
+
+        // FIX: Safeguard — drop if company name clearly mismatches domain
+        if (!domainMatchesCompany(companyDomain, name)) {
+          console.log('[Intelligence] Dropped (name-domain mismatch):', name, '→', companyDomain);
+          return [];
+        }
+
+        return [{
           companyName: name,
-          companyDomain: domain || extractDomainFromUrl(exaResults[idx]?.url || ''),
+          companyDomain,
           signalType: signal,
           signalTitle: title,
           signalDate: date,
@@ -641,19 +829,28 @@ async function extractCompanies(
           sourceTitle: exaResults[idx]?.title || srcTitle,
           matchScore: Math.round((exaResults[idx]?.score || 0.5) * 100),
           confidence: conf,
-        };
+        }];
       });
 
     console.log('[Intelligence] After filter:', extracted.length, 'of', beforeFilter, 'companies passed');
 
-    // Deduplicate by domain
-    const seen = new Set<string>();
-    const deduplicated = extracted.filter(c => {
-      const key = c.companyDomain || c.companyName.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    // Compute opportunity scores (before dedup so multi-signal bonus sees all entries)
+    for (const c of extracted) {
+      c.opportunityScore = computeOpportunityScore(c);
+      c.opportunityReason = OPPORTUNITY_REASONS[c.signalType] || undefined;
+    }
+    applyMultiSignalBonus(extracted);
+
+    // Deduplicate by domain — keep highest opportunityScore per domain
+    const domainBest = new Map<string, ExtractedCompany>();
+    for (const c of extracted) {
+      const key = (c.companyDomain || c.companyName).toLowerCase();
+      const existing = domainBest.get(key);
+      if (!existing || (c.opportunityScore || 0) > (existing.opportunityScore || 0)) {
+        domainBest.set(key, c);
+      }
+    }
+    const deduplicated = Array.from(domainBest.values());
 
     console.log('[Intelligence] After dedup:', deduplicated.length, 'companies');
     return { companies: deduplicated, cost };
@@ -1073,6 +1270,14 @@ Deno.serve(async (req) => {
           } : null,
         }));
 
+        const cachedMarketActivity = {
+          hiring: results.filter(r => r.company.signalType === 'hiring').length,
+          funding: results.filter(r => r.company.signalType === 'funding').length,
+          expansion: results.filter(r => r.company.signalType === 'expansion').length,
+          acquisition: results.filter(r => r.company.signalType === 'acquisition').length,
+          exec_change: results.filter(r => r.company.signalType === 'exec_change').length,
+        };
+
         const response: IntelligenceResponse = {
           success: true,
           results,
@@ -1082,6 +1287,7 @@ Deno.serve(async (req) => {
             latencyMs: Date.now() - startTime,
             cached: true,
             costs: { exa: 0, ai: 0, enrichment: 0, total: 0 },
+            marketActivity: cachedMarketActivity,
           },
         };
 
@@ -1108,10 +1314,10 @@ Deno.serve(async (req) => {
       searchQueries = await generateSearchQueries(query, aiConfig);
 
       // Run parallel search
-      const rawResults = await parallelSearch(searchQueries, exaKey, 10);
+      const rawResults = await parallelSearch(searchQueries, exaKey, 15);
       console.log('[Search] Raw results:', rawResults.length);
 
-      exaResults = dedupeByDomain(rawResults, 20);
+      exaResults = dedupeByDomain(rawResults, 30);
       console.log('[Search] After dedupe:', exaResults.length);
 
       exaCost = searchQueries.length * 0.001;
@@ -1180,15 +1386,27 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fallback 2: Last resort - extract from titles/URLs if AI extraction failed completely
-    if (extraction.companies.length === 0 && exaResults.length > 0) {
-      console.log('[Extract] AI extraction failed, using title extraction fallback');
-      extraction.companies = extractCompaniesFromTitles(exaResults);
+    // Fallback 2: Title extraction when AI extraction yields too few results — merge, don't replace
+    if (extraction.companies.length < 5 && exaResults.length > 0) {
+      console.log('[Extract] Only', extraction.companies.length, 'companies, supplementing with title extraction');
+      const titleCompanies = extractCompaniesFromTitles(exaResults);
+      const existingDomains = new Set(extraction.companies.map(c => c.companyDomain || c.companyName.toLowerCase()));
+      const newCompanies = titleCompanies.filter(c => {
+        const key = c.companyDomain || c.companyName.toLowerCase();
+        return !existingDomains.has(key);
+      });
+      // Score fallback companies
+      for (const c of newCompanies) {
+        c.opportunityScore = computeOpportunityScore(c);
+      c.opportunityReason = OPPORTUNITY_REASONS[c.signalType] || undefined;
+      }
+      extraction.companies = [...extraction.companies, ...newCompanies];
       usedFallback = true;
-      console.log('[Extract] Title extraction found:', extraction.companies.length, 'companies');
+      console.log('[Extract] After title supplement:', extraction.companies.length, 'companies');
     }
 
-    // Descriptive queries get more results (up to 15)
+    // Sort by opportunityScore DESC, then slice
+    extraction.companies.sort((a, b) => (b.opportunityScore || 0) - (a.opportunityScore || 0));
     const effectiveNumResults = isDescriptive ? Math.max(numResults, 15) : numResults;
     const companies = extraction.companies.slice(0, effectiveNumResults);
 
@@ -1225,6 +1443,36 @@ Deno.serve(async (req) => {
     } else {
       results.push(...companies.map(c => ({ company: c, contact: null })));
     }
+
+    // Final dedup by domain — keep highest opportunityScore per company
+    const domainMap = new Map<string, IntelligenceResult>();
+    for (const r of results) {
+      const key = (r.company.companyDomain || r.company.companyName).toLowerCase();
+      const existing = domainMap.get(key);
+      if (!existing) {
+        domainMap.set(key, r);
+      } else {
+        const scoreExisting = (existing.company.opportunityScore || 0)
+          + (existing.contact?.email ? 20 : existing.contact ? 10 : 0);
+        const scoreNew = (r.company.opportunityScore || 0)
+          + (r.contact?.email ? 20 : r.contact ? 10 : 0);
+        if (scoreNew > scoreExisting) {
+          domainMap.set(key, r);
+        }
+      }
+    }
+
+    // Rank by opportunityScore + contact bonus
+    const rankedResults = Array.from(domainMap.values()).sort((a, b) => {
+      const scoreA = (a.company.opportunityScore || 0) + (a.contact?.email ? 20 : a.contact ? 10 : 0);
+      const scoreB = (b.company.opportunityScore || 0) + (b.contact?.email ? 20 : b.contact ? 10 : 0);
+      return scoreB - scoreA;
+    });
+
+    // Replace results with deduped + ranked
+    results.length = 0;
+    results.push(...rankedResults);
+    console.log('[Intelligence] After final dedup + rank:', results.length, 'results');
 
     // Cache results if we have Supabase
     if (supabase && results.length > 0) {
@@ -1303,6 +1551,16 @@ Deno.serve(async (req) => {
 
     // Build response
     const totalCost = exaCost + aiCost + enrichmentCost;
+
+    // Compute market activity summary
+    const marketActivity = {
+      hiring: results.filter(r => r.company.signalType === 'hiring').length,
+      funding: results.filter(r => r.company.signalType === 'funding').length,
+      expansion: results.filter(r => r.company.signalType === 'expansion').length,
+      acquisition: results.filter(r => r.company.signalType === 'acquisition').length,
+      exec_change: results.filter(r => r.company.signalType === 'exec_change').length,
+    };
+
     const response: IntelligenceResponse = {
       success: true,
       results,
@@ -1317,6 +1575,7 @@ Deno.serve(async (req) => {
           enrichment: enrichmentCost,
           total: totalCost,
         },
+        marketActivity,
       },
       // Debug info (remove in production)
       _debug: {
