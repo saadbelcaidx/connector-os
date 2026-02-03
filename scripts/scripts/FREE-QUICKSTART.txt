@@ -1,0 +1,97 @@
+================================================================================
+MYO SCRAPERS — FREE QUICKSTART
+================================================================================
+
+Pull real leads in 2 minutes. No API keys. No payment. Just run it.
+
+
+================================================================================
+SETUP (ONE TIME)
+================================================================================
+
+1. Install Python from python.org (check "Add to PATH")
+2. Open terminal, run: pip install requests
+
+Done.
+
+
+================================================================================
+STEP 1: GET DEMAND (Healthcare Providers)
+================================================================================
+
+Default (~900 leads):
+  python myo-demand-healthcare.py
+
+Medium (~2500 leads):
+  python myo-demand-healthcare.py --volume medium
+
+High (~5000 leads):
+  python myo-demand-healthcare.py --volume high
+
+Output: demand_healthcare.csv
+
+
+================================================================================
+STEP 2: GET SUPPLY (Healthtech Startups)
+================================================================================
+
+Default (~110 startups):
+  python myo-supply-healthcare-startups.py
+
+Medium (~160 startups):
+  python myo-supply-healthcare-startups.py --volume medium
+
+High (~210 startups):
+  python myo-supply-healthcare-startups.py --volume high
+
+Output: supply_healthtech.csv
+
+
+================================================================================
+STEP 3: CONNECT THEM
+================================================================================
+
+1. Upload both CSVs to Connector OS
+2. Match demand to supply
+3. Send intros to both sides
+4. Collect 10-20% when deal closes
+
+
+================================================================================
+THE MODEL
+================================================================================
+
+  DEMAND                         SUPPLY
+  Healthcare providers    <->    Healthtech startups
+  (need software)                (sell software)
+              \                 /
+               ----> YOU <-----
+                     |
+              You take a cut
+
+
+================================================================================
+VOLUME CHEAT SHEET
+================================================================================
+
+DEMAND (myo-demand-healthcare.py):
+  low     ~900 leads   (4 states, fast)
+  medium  ~2500 leads  (6 states)
+  high    ~5000 leads  (10 states)
+
+SUPPLY (myo-supply-healthcare-startups.py):
+  low     ~110 startups  (10 curated + ProductHunt)
+  medium  ~160 startups  (40 curated + ProductHunt)
+  high    ~210 startups  (90 curated + ProductHunt)
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+"python not found"     -> Reinstall Python, check "Add to PATH"
+"No module requests"   -> Run: pip install requests
+Empty CSV              -> Wait 5 min, try again
+
+
+================================================================================

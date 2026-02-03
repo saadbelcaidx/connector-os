@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload, Download, X } from 'lucide-react';
+import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload, Download, X, Lock, Globe, Palette } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useAuth } from './AuthContext';
 import Dock from './Dock';
@@ -31,6 +31,9 @@ interface Settings {
   apolloApiKey: string;
   anymailApiKey: string;
   connectorAgentApiKey: string;
+  exaApiKey: string; // Platform Intelligence semantic search
+  predictLeadsApiKey: string; // Platform Intelligence company intel
+  predictLeadsApiToken: string;
   // Public Databases — ClinicalTrials.gov, FDA
   publicDatabaseSources: ('clinicaltrials' | 'fda')[];
   clinicalTrialsStatus: string; // RECRUITING, COMPLETED, etc.
@@ -70,6 +73,9 @@ const DEFAULT_SETTINGS: Settings = {
   apolloApiKey: '',
   anymailApiKey: '',
   connectorAgentApiKey: '',
+  exaApiKey: '',
+  predictLeadsApiKey: '',
+  predictLeadsApiToken: '',
   // Public Databases
   publicDatabaseSources: [],
   clinicalTrialsStatus: 'RECRUITING',
@@ -263,6 +269,7 @@ export default function Settings() {
   // Intro Preview Modal
   const [showIntroPreview, setShowIntroPreview] = useState(false);
 
+
   // Computed: check if any AI API key is configured
   const hasAIKey = !!(
     (settings.aiProvider === 'openai' && settings.openaiApiKey) ||
@@ -323,6 +330,9 @@ export default function Settings() {
           apolloApiKey: data.enrichment_api_key || '',
           anymailApiKey: data.anymail_finder_api_key || '',
           connectorAgentApiKey: data.connector_agent_api_key || '',
+          exaApiKey: data.exa_api_key || '',
+          predictLeadsApiKey: data.predictleads_api_key || '',
+          predictLeadsApiToken: data.predictleads_api_token || '',
           // Sending provider
           sendingProvider: data.sending_provider || 'instantly',
           instantlyApiKey: data.instantly_api_key || '',
@@ -397,6 +407,14 @@ export default function Settings() {
         enhanceIntro: settings.enhanceIntro,
       }));
 
+      // Always save Platform Intelligence keys to localStorage (for /platform/* routes)
+      localStorage.setItem('platform_keys', JSON.stringify({
+        exaApiKey: settings.exaApiKey,
+        apolloApiKey: settings.apolloApiKey,
+        predictLeadsApiKey: settings.predictLeadsApiKey,
+        predictLeadsApiToken: settings.predictLeadsApiToken,
+      }));
+
       if (isGuest) {
         localStorage.setItem('guest_settings', JSON.stringify({ settings }));
       } else {
@@ -406,6 +424,9 @@ export default function Settings() {
           enrichment_api_key: settings.apolloApiKey,
           anymail_finder_api_key: settings.anymailApiKey,
           connector_agent_api_key: settings.connectorAgentApiKey,
+          exa_api_key: settings.exaApiKey,
+          predictleads_api_key: settings.predictLeadsApiKey,
+          predictleads_api_token: settings.predictLeadsApiToken,
           // Sending provider (always sent)
           sending_provider: settings.sendingProvider,
           // Instantly fields (always persist - campaign IDs are configuration)
@@ -1045,6 +1066,55 @@ export default function Settings() {
                     </div>
                     <div className="w-[200px]">
                       <Input type="password" value={settings.connectorAgentApiKey} onChange={(v) => setSettings({ ...settings, connectorAgentApiKey: v })} placeholder="ca_..." />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Exa.ai - Platform Intelligence */}
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1] mb-3">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="flex items-start gap-3 flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                        <Sparkles size={16} strokeWidth={1.5} className="text-cyan-400/70" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-white/90">Exa</span>
+                          <InfoTip content="Semantic search for Platform Intelligence. Find companies by meaning, not keywords." />
+                          <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-[11px] text-white/30 hover:text-white/50 transition-colors">
+                            Get key
+                          </a>
+                        </div>
+                        <p className="text-[12px] text-white/40 mt-0.5">Semantic company search</p>
+                      </div>
+                    </div>
+                    <div className="w-[200px]">
+                      <Input type="password" value={settings.exaApiKey} onChange={(v) => setSettings({ ...settings, exaApiKey: v })} placeholder="sk-..." />
+                    </div>
+                  </div>
+                </div>
+
+                {/* PredictLeads - Platform Intelligence */}
+                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1] mb-3">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="flex items-start gap-3 flex-1">
+                      <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                        <Database size={16} strokeWidth={1.5} className="text-violet-400/70" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-white/90">PredictLeads</span>
+                          <InfoTip content="Deep company intel — funding, news, jobs, competitors, tech stack." />
+                          <a href="https://predictleads.com" target="_blank" rel="noopener noreferrer" className="text-[11px] text-white/30 hover:text-white/50 transition-colors">
+                            Get keys
+                          </a>
+                        </div>
+                        <p className="text-[12px] text-white/40 mt-0.5">Company intel and signals</p>
+                      </div>
+                    </div>
+                    <div className="w-[200px] space-y-2">
+                      <Input type="password" value={settings.predictLeadsApiKey} onChange={(v) => setSettings({ ...settings, predictLeadsApiKey: v })} placeholder="Key" />
+                      <Input type="password" value={settings.predictLeadsApiToken} onChange={(v) => setSettings({ ...settings, predictLeadsApiToken: v })} placeholder="Token" />
                     </div>
                   </div>
                 </div>

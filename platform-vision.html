@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Platform Intelligence</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #08090a;
+      color: #fff;
+      font-family: 'SF Mono', 'Fira Code', 'Monaco', 'Consolas', monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1200px;
+      height: 90vh;
+      position: relative;
+    }
+
+    /* Subtle grid background */
+    .grid-bg {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 60px 60px;
+      opacity: 0.5;
+    }
+
+    /* Radar circles */
+    .radar-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 50%;
+    }
+
+    .radar-ring-1 { width: 200px; height: 200px; }
+    .radar-ring-2 { width: 400px; height: 400px; }
+    .radar-ring-3 { width: 600px; height: 600px; }
+    .radar-ring-4 { width: 800px; height: 800px; }
+
+    /* Center pulse */
+    .center-point {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 8px;
+      height: 8px;
+      background: rgba(255,255,255,0.3);
+      border-radius: 50%;
+    }
+
+    .center-pulse {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 8px;
+      height: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 50%;
+      animation: centerPulse 3s ease-out infinite;
+    }
+
+    @keyframes centerPulse {
+      0% { width: 8px; height: 8px; opacity: 0.3; }
+      100% { width: 120px; height: 120px; opacity: 0; }
+    }
+
+    /* Company nodes */
+    .node {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .node:hover {
+      transform: translate(-50%, -50%) scale(1.05);
+    }
+
+    .node-dot {
+      width: 12px;
+      height: 12px;
+      background: rgba(255,255,255,0.6);
+      border-radius: 50%;
+      margin: 0 auto 8px;
+      position: relative;
+    }
+
+    .node-label {
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+      white-space: nowrap;
+      letter-spacing: -0.02em;
+    }
+
+    .node-signal {
+      font-size: 10px;
+      color: rgba(255,255,255,0.35);
+      margin-top: 2px;
+    }
+
+    /* Active signal node */
+    .node.active .node-dot {
+      background: #3b82f6;
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .node.active .node-dot::before {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      border-radius: 50%;
+      animation: signalPulse 2s ease-out infinite;
+    }
+
+    .node.active .node-dot::after {
+      content: '';
+      position: absolute;
+      inset: -8px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 50%;
+      animation: signalPulse 2s ease-out infinite 0.5s;
+    }
+
+    @keyframes signalPulse {
+      0% { transform: scale(1); opacity: 1; }
+      100% { transform: scale(2); opacity: 0; }
+    }
+
+    .node.active .node-label {
+      color: rgba(255,255,255,0.95);
+    }
+
+    .node.active .node-signal {
+      color: #3b82f6;
+    }
+
+    /* Connection lines */
+    .connections {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .connection {
+      stroke: rgba(255,255,255,0.06);
+      stroke-width: 1;
+      fill: none;
+    }
+
+    /* Bottom context bar */
+    .context-bar {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 16px 32px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+    }
+
+    .context-query {
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 0.02em;
+    }
+
+    .context-divider {
+      width: 1px;
+      height: 16px;
+      background: rgba(255,255,255,0.1);
+    }
+
+    .context-stat {
+      font-size: 11px;
+      color: rgba(255,255,255,0.35);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .context-stat .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+    }
+
+    .context-stat .dot.live {
+      background: #3b82f6;
+    }
+
+    /* Top left status */
+    .status {
+      position: absolute;
+      top: 32px;
+      left: 32px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      background: #22c55e;
+      border-radius: 50%;
+      animation: statusBlink 2s ease-in-out infinite;
+    }
+
+    @keyframes statusBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .status-text {
+      font-size: 10px;
+      color: rgba(255,255,255,0.4);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    /* Top right timestamp */
+    .timestamp {
+      position: absolute;
+      top: 32px;
+      right: 32px;
+      font-size: 10px;
+      color: rgba(255,255,255,0.25);
+      letter-spacing: 0.02em;
+    }
+
+    /* Detail panel (appears on click) */
+    .detail-panel {
+      position: absolute;
+      top: 50%;
+      right: 60px;
+      transform: translateY(-50%);
+      width: 320px;
+      padding: 24px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      opacity: 0;
+      animation: panelFadeIn 0.4s ease forwards;
+    }
+
+    @keyframes panelFadeIn {
+      from { opacity: 0; transform: translateY(-50%) translateX(20px); }
+      to { opacity: 1; transform: translateY(-50%) translateX(0); }
+    }
+
+    .detail-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .detail-name {
+      font-size: 16px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.95);
+      letter-spacing: -0.02em;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    .detail-location {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      margin-top: 4px;
+    }
+
+    .detail-signal-badge {
+      padding: 4px 10px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 6px;
+      font-size: 10px;
+      color: #3b82f6;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .detail-description {
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.6;
+      margin-bottom: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    .detail-signal {
+      padding: 16px;
+      background: rgba(59, 130, 246, 0.05);
+      border: 1px solid rgba(59, 130, 246, 0.15);
+      border-radius: 10px;
+      margin-bottom: 16px;
+    }
+
+    .detail-signal-label {
+      font-size: 9px;
+      color: rgba(59, 130, 246, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+
+    .detail-signal-text {
+      font-size: 13px;
+      color: rgba(255,255,255,0.85);
+      line-height: 1.5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    .detail-signal-time {
+      font-size: 10px;
+      color: rgba(255,255,255,0.3);
+      margin-top: 8px;
+    }
+
+    .detail-contact {
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+    }
+
+    .detail-contact-label {
+      font-size: 9px;
+      color: rgba(255,255,255,0.35);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+
+    .detail-contact-name {
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    .detail-contact-title {
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      margin-top: 2px;
+    }
+
+    /* Node positions - arranged like a constellation */
+    .node-monroe { top: 35%; left: 62%; }
+    .node-solgen { top: 55%; left: 35%; }
+    .node-crg { top: 30%; left: 40%; }
+    .node-comvest { top: 60%; left: 55%; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Background grid -->
+    <div class="grid-bg"></div>
+
+    <!-- Radar rings -->
+    <div class="radar-ring radar-ring-1"></div>
+    <div class="radar-ring radar-ring-2"></div>
+    <div class="radar-ring radar-ring-3"></div>
+    <div class="radar-ring radar-ring-4"></div>
+
+    <!-- Center pulse -->
+    <div class="center-point"></div>
+    <div class="center-pulse"></div>
+
+    <!-- Connection lines (SVG) -->
+    <svg class="connections" viewBox="0 0 1200 900" preserveAspectRatio="xMidYMid meet">
+      <line class="connection" x1="600" y1="450" x2="744" y2="315" />
+      <line class="connection" x1="600" y1="450" x2="420" y2="495" />
+      <line class="connection" x1="600" y1="450" x2="480" y2="270" />
+      <line class="connection" x1="600" y1="450" x2="660" y2="540" />
+    </svg>
+
+    <!-- Company nodes -->
+    <div class="node active node-monroe">
+      <div class="node-dot"></div>
+      <div class="node-label">Monroe Capital</div>
+      <div class="node-signal">Hiring now</div>
+    </div>
+
+    <div class="node node-solgen">
+      <div class="node-dot"></div>
+      <div class="node-label">Solgen Capital</div>
+      <div class="node-signal">$10-50M healthcare</div>
+    </div>
+
+    <div class="node node-crg">
+      <div class="node-dot"></div>
+      <div class="node-label">CRG</div>
+      <div class="node-signal">$4B healthcare credit</div>
+    </div>
+
+    <div class="node node-comvest">
+      <div class="node-dot"></div>
+      <div class="node-label">Comvest</div>
+      <div class="node-signal">Middle market</div>
+    </div>
+
+    <!-- Status indicator -->
+    <div class="status">
+      <div class="status-dot"></div>
+      <div class="status-text">Live</div>
+    </div>
+
+    <!-- Timestamp -->
+    <div class="timestamp">Updated 2 min ago · 47 sources</div>
+
+    <!-- Context bar -->
+    <div class="context-bar">
+      <div class="context-query">Private credit · Healthcare · Middle market · $10-50M</div>
+      <div class="context-divider"></div>
+      <div class="context-stat">
+        <span class="dot"></span>
+        <span>4 matches</span>
+      </div>
+      <div class="context-stat">
+        <span class="dot live"></span>
+        <span>1 signal</span>
+      </div>
+    </div>
+
+    <!-- Detail panel (shown for Monroe) -->
+    <div class="detail-panel">
+      <div class="detail-header">
+        <div>
+          <div class="detail-name">Monroe Capital</div>
+          <div class="detail-location">Chicago · 11 offices</div>
+        </div>
+        <div class="detail-signal-badge">Signal</div>
+      </div>
+
+      <div class="detail-description">
+        Premier asset management firm specializing in private credit. $40B+ in financings for middle market healthcare.
+      </div>
+
+      <div class="detail-signal">
+        <div class="detail-signal-label">Live Signal</div>
+        <div class="detail-signal-text">
+          Hiring Director, Healthcare Originations — actively seeking healthcare deals, east coast PE relationships
+        </div>
+        <div class="detail-signal-time">Posted 2 days ago · Last seen today</div>
+      </div>
+
+      <div class="detail-contact">
+        <div class="detail-contact-label">Decision Maker</div>
+        <div class="detail-contact-name">Matthew Evans</div>
+        <div class="detail-contact-title">Managing Director, Head of Healthcare Finance</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

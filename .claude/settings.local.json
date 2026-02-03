@@ -73,7 +73,29 @@
       "WebFetch(domain:assets.skool.com)",
       "WebFetch(domain:pbs.twimg.com)",
       "Bash(git fetch:*)",
-      "Bash(APOLLO_API_KEY=rHDOni_cmi9doRLhgHzN8A ANYMAIL_API_KEY=zHEUdr3EDlV9sLAcpnTu3ysM npx vitest:*)"
+      "Bash(APOLLO_API_KEY=rHDOni_cmi9doRLhgHzN8A ANYMAIL_API_KEY=zHEUdr3EDlV9sLAcpnTu3ysM npx vitest:*)",
+      "WebFetch(domain:docs.google.com)",
+      "WebFetch(domain:doc-0o-88-sheets.googleusercontent.com)",
+      "Bash(netstat:*)",
+      "WebFetch(domain:api.reporter.nih.gov)",
+      "WebFetch(domain:clinicaltrials.gov)",
+      "WebFetch(domain:stripe.com)",
+      "WebFetch(domain:docs.stripe.com)",
+      "WebFetch(domain:linear.app)",
+      "Bash(del supabasemigrations20260129100000_add_supply_verification_columns.sql)",
+      "Bash(git stash:*)",
+      "Bash(while read hash msg)",
+      "Bash(do echo \"=== $hash $msg ===\")",
+      "Bash(done)",
+      "WebFetch(domain:exa.ai)",
+      "WebFetch(domain:docs.exa.ai)",
+      "WebFetch(domain:explee.com)",
+      "WebFetch(domain:docs.predictleads.com)",
+      "Bash(ConvertTo-Json -Depth 10)",
+      "WebFetch(domain:www.postman.com)",
+      "Bash(Select-Object -First 100)",
+      "WebFetch(domain:summationcapital.com)",
+      "Bash(npm run test)"
     ]
   }
 }

@@ -1,0 +1,100 @@
+================================================================================
+MYO TOOLKIT — PRIVATE GUIDE
+================================================================================
+
+MYOPROCESS PRIVATE TOOLKIT
+
+================================================================================
+SETUP (ONE TIME)
+================================================================================
+
+1. Install Python from python.org (check "Add to PATH")
+2. Open terminal, run: pip install requests
+
+Done.
+
+
+================================================================================
+YOUR FULL TOOLKIT — ALL VERTICALS
+================================================================================
+
+File: myo-toolkit-everything.py
+
+VERTICALS:
+  healthtech   Healthcare providers -> Healthtech startups
+  fintech      Financial advisors -> Fintech startups
+  enterprise   Funded YC companies -> New YC startups
+  saas         B2B companies -> Dev tool startups
+
+VOLUME OPTIONS:
+  --volume low      ~1000 leads  (default, fast)
+  --volume medium   ~3000 leads  (10 states)
+  --volume high     ~6000 leads  (20 states)
+
+COMMANDS:
+  python myo-toolkit-everything.py --vertical healthtech
+  python myo-toolkit-everything.py --vertical healthtech --volume medium
+  python myo-toolkit-everything.py --vertical healthtech --volume high
+  python myo-toolkit-everything.py --vertical fintech --volume high
+  python myo-toolkit-everything.py --vertical enterprise --volume high
+  python myo-toolkit-everything.py --vertical saas --volume high
+
+OUTPUT:
+  demand_<vertical>.csv   <- Buyers
+  supply_<vertical>.csv   <- Sellers
+
+
+================================================================================
+THE FREE DEMO SCRIPTS (WHAT YOU GIVE AWAY)
+================================================================================
+
+Files to give away:
+  - myo-demand-healthcare.py
+  - myo-supply-healthcare-startups.py
+  - FREE-QUICKSTART.txt
+
+DEMAND (Healthcare Providers):
+  python myo-demand-healthcare.py                   # ~900 leads
+  python myo-demand-healthcare.py --volume medium   # ~2500 leads
+  python myo-demand-healthcare.py --volume high     # ~5000 leads
+
+SUPPLY (Healthtech Startups):
+  python myo-supply-healthcare-startups.py                   # ~110 startups
+  python myo-supply-healthcare-startups.py --volume medium   # ~160 startups
+  python myo-supply-healthcare-startups.py --volume high     # ~210 startups
+
+
+================================================================================
+THE MODEL
+================================================================================
+
+  DEMAND                              SUPPLY
+  (Companies who NEED something)      (Companies who SELL something)
+           \                         /
+            \                       /
+             -----> YOU <----------
+                    |
+             You take 10-20%
+
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Run toolkit -> get CSVs
+2. Upload to Connector OS
+3. Match demand to supply
+4. Send intros
+5. Collect fees
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+"python not found"     -> Reinstall Python, check "Add to PATH"
+"No module requests"   -> Run: pip install requests
+Empty CSV              -> API might be down, wait 5 min
+
+
+================================================================================

@@ -1,0 +1,701 @@
+/**
+ * Widget Design System — iOS + JP Morgan Enterprise
+ *
+ * Design Philosophy:
+ * - iOS: Rounded corners, soft shadows, smooth transitions
+ * - JP Morgan: Premium, authoritative, enterprise-grade
+ * - True black background, subtle glass effects
+ */
+
+/* =============================================================================
+   CSS VARIABLES — iOS Design Tokens
+   ============================================================================= */
+
+:root {
+  /* Colors — True Black Foundation */
+  --widget-bg-primary: #000000;
+  --widget-bg-secondary: #0a0a0a;
+  --widget-bg-card: rgba(255, 255, 255, 0.05);         /* FIXED: 5% for visibility */
+  --widget-bg-card-hover: rgba(255, 255, 255, 0.08);   /* FIXED: 8% for hover */
+  --widget-bg-elevated: rgba(255, 255, 255, 0.10);     /* FIXED: 10% for modals */
+
+  /* Text — High Contrast Hierarchy */
+  --widget-text-primary: rgba(255, 255, 255, 0.95);
+  --widget-text-secondary: rgba(255, 255, 255, 0.70);
+  --widget-text-tertiary: rgba(255, 255, 255, 0.50);
+  --widget-text-muted: rgba(255, 255, 255, 0.40);
+
+  /* Borders — Subtle Definition (FIXED: Borders create depth on black) */
+  --widget-border-subtle: rgba(255, 255, 255, 0.08);
+  --widget-border-default: rgba(255, 255, 255, 0.12);
+  --widget-border-hover: rgba(255, 255, 255, 0.18);
+
+  /* Accent Colors — Enterprise Palette */
+  --widget-accent-primary: #3b82f6;
+  --widget-accent-success: #22c55e;
+  --widget-accent-warning: #f59e0b;
+  --widget-accent-error: #ef4444;
+  --widget-accent-info: #06b6d4;
+
+  /* Semantic — Match Quality */
+  --widget-tier-a: #22c55e;
+  --widget-tier-b: #3b82f6;
+  --widget-tier-c: #6b7280;
+
+  /* Spacing — iOS Grid */
+  --widget-spacing-xs: 4px;
+  --widget-spacing-sm: 8px;
+  --widget-spacing-md: 12px;
+  --widget-spacing-lg: 16px;
+  --widget-spacing-xl: 24px;
+  --widget-spacing-2xl: 32px;
+
+  /* Border Radius — iOS Rounded */
+  --widget-radius-sm: 6px;
+  --widget-radius-md: 8px;
+  --widget-radius-lg: 12px;
+  --widget-radius-xl: 16px;
+  --widget-radius-2xl: 20px;
+  --widget-radius-full: 9999px;
+
+  /* Shadows — FIXED: Light shadows for dark backgrounds */
+  --widget-shadow-sm: 0 1px 2px rgba(255, 255, 255, 0.03);
+  --widget-shadow-md: 0 4px 12px rgba(255, 255, 255, 0.06);
+  --widget-shadow-lg: 0 8px 24px rgba(255, 255, 255, 0.08);
+  --widget-shadow-xl: 0 12px 40px rgba(255, 255, 255, 0.10);
+  --widget-shadow-glow: 0 0 20px rgba(59, 130, 246, 0.20);
+  --widget-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* Transitions — Smooth iOS Feel */
+  --widget-transition-fast: 150ms ease;
+  --widget-transition-base: 200ms ease;
+  --widget-transition-slow: 300ms ease;
+  --widget-transition-bounce: 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Typography */
+  --widget-font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  --widget-font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+/* =============================================================================
+   BASE STYLES
+   ============================================================================= */
+
+.widget-root {
+  font-family: var(--widget-font-sans);
+  background: var(--widget-bg-primary);
+  color: var(--widget-text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =============================================================================
+   CARD COMPONENTS — iOS Glass Morphism
+   ============================================================================= */
+
+.widget-card {
+  background: var(--widget-bg-card);
+  border: 1px solid var(--widget-border-default);
+  border-radius: var(--widget-radius-xl);
+  padding: var(--widget-spacing-lg);
+  box-shadow: var(--widget-shadow-md), var(--widget-shadow-inner);
+  transition: all var(--widget-transition-base);
+}
+
+.widget-card:hover {
+  background: var(--widget-bg-card-hover);
+  border-color: var(--widget-border-hover);
+  box-shadow: var(--widget-shadow-lg), var(--widget-shadow-inner);
+  transform: translateY(-1px);
+}
+
+.widget-card-elevated {
+  background: var(--widget-bg-elevated);
+  border: 1px solid var(--widget-border-default);
+  border-radius: var(--widget-radius-xl);
+  padding: var(--widget-spacing-xl);
+  box-shadow: var(--widget-shadow-lg);
+}
+
+/* =============================================================================
+   MATCH CARD — Premium Display
+   ============================================================================= */
+
+.match-card {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  border: 1px solid var(--widget-border-subtle);
+  border-radius: var(--widget-radius-xl);
+  padding: var(--widget-spacing-xl);
+  box-shadow: var(--widget-shadow-md);
+  transition: all var(--widget-transition-base);
+  position: relative;
+  overflow: hidden;
+}
+
+.match-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
+}
+
+.match-card:hover {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.06) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  border-color: var(--widget-border-hover);
+  box-shadow: var(--widget-shadow-lg);
+  transform: translateY(-2px);
+}
+
+.match-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: var(--widget-spacing-lg);
+}
+
+.match-card-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--widget-text-primary);
+  letter-spacing: -0.02em;
+}
+
+.match-card-subtitle {
+  font-size: 13px;
+  color: var(--widget-text-tertiary);
+  margin-top: var(--widget-spacing-xs);
+}
+
+.match-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--widget-spacing-md);
+}
+
+.match-card-rationale {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--widget-spacing-md);
+  padding: var(--widget-spacing-sm) 0;
+}
+
+.match-card-rationale-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--widget-accent-success);
+  margin-top: 2px;
+}
+
+.match-card-rationale-text {
+  font-size: 14px;
+  color: var(--widget-text-secondary);
+  line-height: 1.5;
+}
+
+/* =============================================================================
+   TIER BADGES — Quality Indicators
+   ============================================================================= */
+
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--widget-spacing-xs);
+  padding: var(--widget-spacing-xs) var(--widget-spacing-sm);
+  border-radius: var(--widget-radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tier-badge-a {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--widget-tier-a);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.tier-badge-b {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--widget-tier-b);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.tier-badge-c {
+  background: rgba(107, 114, 128, 0.15);
+  color: var(--widget-tier-c);
+  border: 1px solid rgba(107, 114, 128, 0.25);
+}
+
+/* =============================================================================
+   BUTTONS — iOS Touch Targets
+   ============================================================================= */
+
+.widget-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--widget-spacing-sm);
+  padding: var(--widget-spacing-md) var(--widget-spacing-xl);
+  border-radius: var(--widget-radius-lg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--widget-transition-base);
+  border: none;
+  outline: none;
+  min-height: 44px;
+  min-width: 44px;
+  touch-action: manipulation;
+}
+
+.widget-button:active {
+  transform: scale(0.98);
+}
+
+.widget-button:focus-visible {
+  outline: 2px solid var(--widget-accent-primary);
+  outline-offset: 2px;
+}
+
+.widget-button-primary {
+  background: var(--widget-accent-primary);
+  color: white;
+  box-shadow: var(--widget-shadow-sm), var(--widget-shadow-glow);
+}
+
+.widget-button-primary:hover {
+  background: #2563eb;
+  box-shadow: var(--widget-shadow-md), 0 0 30px rgba(59, 130, 246, 0.25);
+}
+
+.widget-button-secondary {
+  background: var(--widget-bg-elevated);
+  color: var(--widget-text-primary);
+  border: 1px solid var(--widget-border-default);
+}
+
+.widget-button-secondary:hover {
+  background: var(--widget-bg-card-hover);
+  border-color: var(--widget-border-hover);
+}
+
+.widget-button-ghost {
+  background: transparent;
+  color: var(--widget-text-secondary);
+}
+
+.widget-button-ghost:hover {
+  background: var(--widget-bg-card);
+  color: var(--widget-text-primary);
+}
+
+/* =============================================================================
+   INPUT FIELDS — iOS Style
+   ============================================================================= */
+
+.widget-input {
+  width: 100%;
+  padding: var(--widget-spacing-md) var(--widget-spacing-lg);
+  background: var(--widget-bg-card);
+  border: 1px solid var(--widget-border-default);
+  border-radius: var(--widget-radius-lg);
+  font-size: 14px;
+  color: var(--widget-text-primary);
+  transition: all var(--widget-transition-base);
+  outline: none;
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+.widget-input::placeholder {
+  color: var(--widget-text-muted);
+}
+
+.widget-input:focus {
+  border-color: var(--widget-accent-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.widget-input:focus-visible {
+  outline: 2px solid var(--widget-accent-primary);
+  outline-offset: 2px;
+}
+
+.widget-input:hover:not(:focus) {
+  border-color: var(--widget-border-hover);
+}
+
+/* =============================================================================
+   STATUS INDICATORS
+   ============================================================================= */
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--widget-spacing-sm);
+  padding: var(--widget-spacing-md) var(--widget-spacing-lg);
+  border-radius: var(--widget-radius-lg);
+  font-size: 13px;
+}
+
+.status-indicator-success {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--widget-accent-success);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.status-indicator-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--widget-accent-error);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.status-indicator-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--widget-accent-warning);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.status-indicator-info {
+  background: rgba(6, 182, 212, 0.1);
+  color: var(--widget-accent-info);
+  border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+/* =============================================================================
+   LOADING STATES
+   ============================================================================= */
+
+.widget-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--widget-border-subtle);
+  border-top-color: var(--widget-accent-primary);
+  border-radius: 50%;
+  animation: widget-spin 0.8s linear infinite;
+}
+
+@keyframes widget-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.widget-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--widget-bg-card) 25%,
+    var(--widget-bg-elevated) 50%,
+    var(--widget-bg-card) 75%
+  );
+  background-size: 200% 100%;
+  animation: widget-shimmer 1.5s infinite;
+  border-radius: var(--widget-radius-md);
+}
+
+@keyframes widget-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* =============================================================================
+   EMPTY STATES
+   ============================================================================= */
+
+.widget-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--widget-spacing-2xl);
+  text-align: center;
+}
+
+.widget-empty-state-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--widget-text-muted);
+  margin-bottom: var(--widget-spacing-lg);
+}
+
+.widget-empty-state-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--widget-text-secondary);
+  margin-bottom: var(--widget-spacing-sm);
+}
+
+.widget-empty-state-description {
+  font-size: 14px;
+  color: var(--widget-text-tertiary);
+  max-width: 280px;
+}
+
+/* =============================================================================
+   ANIMATIONS — Smooth iOS Transitions
+   ============================================================================= */
+
+@keyframes widget-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes widget-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes widget-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: widget-fade-in var(--widget-transition-base) ease both;
+}
+
+.animate-scale-in {
+  animation: widget-scale-in var(--widget-transition-base) ease both;
+}
+
+.animate-slide-up {
+  animation: widget-slide-up var(--widget-transition-slow) ease both;
+}
+
+/* Staggered children */
+.stagger-children > * {
+  animation: widget-fade-in var(--widget-transition-base) ease both;
+}
+
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+
+/* =============================================================================
+   UTILITY CLASSES
+   ============================================================================= */
+
+.widget-flex { display: flex; }
+.widget-flex-col { flex-direction: column; }
+.widget-items-center { align-items: center; }
+.widget-justify-center { justify-content: center; }
+.widget-justify-between { justify-content: space-between; }
+.widget-gap-sm { gap: var(--widget-spacing-sm); }
+.widget-gap-md { gap: var(--widget-spacing-md); }
+.widget-gap-lg { gap: var(--widget-spacing-lg); }
+
+.widget-text-primary { color: var(--widget-text-primary); }
+.widget-text-secondary { color: var(--widget-text-secondary); }
+.widget-text-muted { color: var(--widget-text-muted); }
+.widget-text-success { color: var(--widget-accent-success); }
+.widget-text-error { color: var(--widget-accent-error); }
+
+.widget-font-medium { font-weight: 500; }
+.widget-font-semibold { font-weight: 600; }
+
+.widget-text-sm { font-size: 13px; }
+.widget-text-base { font-size: 14px; }
+.widget-text-lg { font-size: 16px; }
+.widget-text-xl { font-size: 18px; }
+
+/* =============================================================================
+   ACCESSIBILITY — WCAG 2.1 AA Compliance
+   ============================================================================= */
+
+/* Ensure minimum touch target size */
+.widget-interactive {
+  min-height: 44px;
+  min-width: 44px;
+  touch-action: manipulation;
+}
+
+/* Button group spacing (minimum 8px between targets) */
+.widget-button-group {
+  display: flex;
+  gap: var(--widget-spacing-md);
+}
+
+.widget-button-group > * + * {
+  margin-left: 0; /* Use gap instead */
+}
+
+/* Screen reader only content */
+.widget-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip to content link */
+.widget-skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  background: var(--widget-accent-primary);
+  color: white;
+  padding: var(--widget-spacing-md);
+  z-index: 100;
+}
+
+.widget-skip-link:focus {
+  top: 0;
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .widget-card {
+    border-width: 2px;
+  }
+
+  .widget-button {
+    border: 2px solid currentColor;
+  }
+}
+
+/* =============================================================================
+   RESPONSIVE BREAKPOINTS
+   ============================================================================= */
+
+/* Match grid layout */
+.match-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--widget-spacing-lg);
+}
+
+/* Mobile: < 640px — Single column, 44px tap targets */
+@media (max-width: 640px) {
+  /* Reduced padding */
+  .widget-card {
+    padding: var(--widget-spacing-lg);
+  }
+
+  .widget-card-elevated {
+    padding: 20px;
+  }
+
+  .match-card {
+    padding: 20px;
+  }
+
+  /* Larger touch targets (44px minimum) */
+  .widget-button {
+    min-height: 44px;
+    padding: 12px 20px;
+    width: 100%;
+  }
+
+  .widget-input {
+    min-height: 44px;
+    padding: 12px 16px;
+  }
+
+  /* Stacked rationale layout */
+  .match-card-rationale {
+    flex-direction: column;
+    gap: var(--widget-spacing-sm);
+  }
+
+  .match-card-rationale-icon {
+    margin-top: 0;
+  }
+
+  /* Smaller text on mobile */
+  .match-card-title {
+    font-size: 16px;
+  }
+
+  .match-card-rationale-text {
+    font-size: 13px;
+  }
+
+  /* Widget root padding */
+  .widget-root {
+    padding: var(--widget-spacing-lg);
+  }
+}
+
+/* Tablet: 640-1024px — Two columns */
+@media (min-width: 640px) and (max-width: 1024px) {
+  .match-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--widget-spacing-lg);
+  }
+
+  .widget-root {
+    padding: var(--widget-spacing-xl);
+  }
+}
+
+/* Desktop: > 1024px — Three columns */
+@media (min-width: 1024px) {
+  .match-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  .widget-root {
+    padding: var(--widget-spacing-2xl);
+  }
+}

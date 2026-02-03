@@ -1,0 +1,596 @@
+/**
+ * STRATEGIC ALIGNMENT PLATFORM — iOS DESIGN TOKENS
+ * Version: 1.0
+ * Reference: Spec Section 6
+ *
+ * Design Philosophy:
+ * - True black foundation (#000000)
+ * - Light shadows on dark backgrounds
+ * - iOS-style rounded corners
+ * - Smooth 200ms transitions
+ * - 44px minimum touch targets
+ */
+
+/* =============================================================================
+   CSS CUSTOM PROPERTIES — DESIGN TOKENS
+   ============================================================================= */
+
+:root {
+  /* Colors — True Black Foundation */
+  --platform-bg-primary: #000000;
+  --platform-bg-secondary: #0a0a0a;
+  --platform-bg-card: rgba(255, 255, 255, 0.05);
+  --platform-bg-card-hover: rgba(255, 255, 255, 0.08);
+  --platform-bg-elevated: rgba(255, 255, 255, 0.10);
+
+  /* Text Hierarchy */
+  --platform-text-primary: rgba(255, 255, 255, 0.95);
+  --platform-text-secondary: rgba(255, 255, 255, 0.70);
+  --platform-text-tertiary: rgba(255, 255, 255, 0.50);
+  --platform-text-muted: rgba(255, 255, 255, 0.40);
+
+  /* Borders */
+  --platform-border-subtle: rgba(255, 255, 255, 0.06);
+  --platform-border-default: rgba(255, 255, 255, 0.10);
+  --platform-border-strong: rgba(255, 255, 255, 0.15);
+
+  /* Shadows — Light on Dark (CRITICAL) */
+  --platform-shadow-sm: 0 1px 2px rgba(255, 255, 255, 0.03);
+  --platform-shadow-md: 0 4px 12px rgba(255, 255, 255, 0.06);
+  --platform-shadow-lg: 0 8px 24px rgba(255, 255, 255, 0.08);
+  --platform-shadow-xl: 0 12px 40px rgba(255, 255, 255, 0.10);
+  --platform-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  /* Border Radius — iOS Rounded */
+  --platform-radius-sm: 6px;
+  --platform-radius-md: 8px;
+  --platform-radius-lg: 12px;
+  --platform-radius-xl: 16px;
+  --platform-radius-2xl: 20px;
+
+  /* Transitions */
+  --platform-transition-fast: 150ms ease;
+  --platform-transition-base: 200ms ease;
+  --platform-transition-slow: 300ms ease;
+
+  /* Typography */
+  --platform-font-size-xs: 0.75rem;    /* 12px */
+  --platform-font-size-sm: 0.875rem;   /* 14px */
+  --platform-font-size-base: 1rem;     /* 16px */
+  --platform-font-size-lg: 1.125rem;   /* 18px */
+  --platform-font-size-xl: 1.25rem;    /* 20px */
+  --platform-font-size-2xl: 1.5rem;    /* 24px */
+
+  /* Spacing */
+  --platform-space-1: 4px;
+  --platform-space-2: 8px;
+  --platform-space-3: 12px;
+  --platform-space-4: 16px;
+  --platform-space-5: 20px;
+  --platform-space-6: 24px;
+  --platform-space-8: 32px;
+
+  /* Touch Targets */
+  --platform-touch-min: 44px;
+}
+
+/* =============================================================================
+   BASE STYLES
+   ============================================================================= */
+
+.platform-container {
+  min-height: 100vh;
+  background: var(--platform-bg-primary);
+  color: var(--platform-text-primary);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =============================================================================
+   CARDS
+   ============================================================================= */
+
+.platform-card {
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-lg);
+  padding: var(--platform-space-5);
+  box-shadow: var(--platform-shadow-md), var(--platform-shadow-inner);
+  transition: all var(--platform-transition-base);
+}
+
+.platform-card:hover {
+  background: var(--platform-bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--platform-shadow-lg);
+}
+
+.platform-card-elevated {
+  background: var(--platform-bg-elevated);
+  border: 1px solid var(--platform-border-strong);
+  border-radius: var(--platform-radius-xl);
+  padding: var(--platform-space-6);
+  box-shadow: var(--platform-shadow-lg);
+}
+
+/* =============================================================================
+   BUTTONS
+   ============================================================================= */
+
+.platform-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--platform-touch-min);
+  padding: var(--platform-space-3) var(--platform-space-5);
+  font-size: var(--platform-font-size-sm);
+  font-weight: 500;
+  border-radius: var(--platform-radius-md);
+  border: none;
+  cursor: pointer;
+  transition: all var(--platform-transition-base);
+  touch-action: manipulation;
+}
+
+.platform-button-primary {
+  background: var(--platform-text-primary);
+  color: var(--platform-bg-primary);
+}
+
+.platform-button-primary:hover {
+  opacity: 0.9;
+  transform: scale(1.02);
+}
+
+.platform-button-primary:active {
+  transform: scale(0.98);
+}
+
+.platform-button-secondary {
+  background: var(--platform-bg-card);
+  color: var(--platform-text-primary);
+  border: 1px solid var(--platform-border-default);
+}
+
+.platform-button-secondary:hover {
+  background: var(--platform-bg-card-hover);
+  border-color: var(--platform-border-strong);
+}
+
+.platform-button-ghost {
+  background: transparent;
+  color: var(--platform-text-secondary);
+}
+
+.platform-button-ghost:hover {
+  background: var(--platform-bg-card);
+  color: var(--platform-text-primary);
+}
+
+/* =============================================================================
+   INPUTS
+   ============================================================================= */
+
+.platform-input {
+  min-height: var(--platform-touch-min);
+  width: 100%;
+  padding: var(--platform-space-3) var(--platform-space-4);
+  font-size: var(--platform-font-size-base);
+  color: var(--platform-text-primary);
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-lg);
+  transition: all var(--platform-transition-base);
+}
+
+.platform-input::placeholder {
+  color: var(--platform-text-muted);
+}
+
+.platform-input:focus {
+  outline: none;
+  border-color: var(--platform-border-strong);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+}
+
+/* =============================================================================
+   MODE SELECTOR
+   ============================================================================= */
+
+.platform-mode-selector {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--platform-space-4);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.platform-mode-card {
+  background: var(--platform-bg-card);
+  border: 2px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-xl);
+  padding: var(--platform-space-6);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--platform-transition-base);
+}
+
+.platform-mode-card:hover {
+  background: var(--platform-bg-card-hover);
+  border-color: var(--platform-border-strong);
+  transform: translateY(-2px);
+}
+
+.platform-mode-card.selected {
+  border-color: var(--platform-text-primary);
+  background: var(--platform-bg-elevated);
+}
+
+.platform-mode-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--platform-space-4);
+  color: var(--platform-text-secondary);
+}
+
+.platform-mode-title {
+  font-size: var(--platform-font-size-lg);
+  font-weight: 600;
+  color: var(--platform-text-primary);
+  margin-bottom: var(--platform-space-2);
+}
+
+.platform-mode-description {
+  font-size: var(--platform-font-size-sm);
+  color: var(--platform-text-tertiary);
+}
+
+/* =============================================================================
+   MATCH CARDS
+   ============================================================================= */
+
+.platform-match-card {
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-lg);
+  padding: var(--platform-space-5);
+  transition: all var(--platform-transition-base);
+}
+
+.platform-match-card:hover {
+  background: var(--platform-bg-card-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--platform-shadow-lg);
+}
+
+.platform-match-name {
+  font-size: var(--platform-font-size-lg);
+  font-weight: 600;
+  color: var(--platform-text-primary);
+  margin-bottom: var(--platform-space-1);
+}
+
+.platform-match-meta {
+  font-size: var(--platform-font-size-sm);
+  color: var(--platform-text-tertiary);
+  margin-bottom: var(--platform-space-4);
+}
+
+.platform-signal-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--platform-space-2);
+  padding: var(--platform-space-2) var(--platform-space-3);
+  font-size: var(--platform-font-size-xs);
+  background: var(--platform-bg-elevated);
+  border-radius: var(--platform-radius-md);
+  margin-right: var(--platform-space-2);
+  margin-bottom: var(--platform-space-2);
+}
+
+/* =============================================================================
+   LOADING STATES
+   ============================================================================= */
+
+.platform-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--platform-space-8);
+}
+
+.platform-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--platform-border-default);
+  border-top-color: var(--platform-text-primary);
+  border-radius: 50%;
+  animation: platform-spin 0.8s linear infinite;
+}
+
+@keyframes platform-spin {
+  to { transform: rotate(360deg); }
+}
+
+.platform-progress-bar {
+  width: 200px;
+  height: 4px;
+  background: var(--platform-bg-card);
+  border-radius: var(--platform-radius-sm);
+  overflow: hidden;
+  margin-top: var(--platform-space-4);
+}
+
+.platform-progress-fill {
+  height: 100%;
+  background: var(--platform-text-primary);
+  border-radius: var(--platform-radius-sm);
+  transition: width var(--platform-transition-slow);
+}
+
+/* =============================================================================
+   ERROR STATES
+   ============================================================================= */
+
+.platform-error {
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-lg);
+  padding: var(--platform-space-6);
+  text-align: center;
+}
+
+.platform-error-icon {
+  width: 32px;
+  height: 32px;
+  color: var(--platform-text-muted);
+  margin-bottom: var(--platform-space-4);
+}
+
+.platform-error-title {
+  font-size: var(--platform-font-size-base);
+  font-weight: 500;
+  color: var(--platform-text-primary);
+  margin-bottom: var(--platform-space-2);
+}
+
+.platform-error-description {
+  font-size: var(--platform-font-size-sm);
+  color: var(--platform-text-tertiary);
+  margin-bottom: var(--platform-space-4);
+}
+
+/* =============================================================================
+   ANIMATIONS
+   ============================================================================= */
+
+@keyframes platform-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes platform-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.platform-animate-fade-in {
+  animation: platform-fade-in var(--platform-transition-slow) ease both;
+}
+
+.platform-animate-scale-in {
+  animation: platform-scale-in var(--platform-transition-base) ease both;
+}
+
+/* =============================================================================
+   ACCESSIBILITY
+   ============================================================================= */
+
+.platform-button:focus-visible,
+.platform-input:focus-visible,
+.platform-mode-card:focus-visible {
+  outline: 2px solid var(--platform-text-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =============================================================================
+   RESPONSIVE — MOBILE FIRST
+   ============================================================================= */
+
+@media (max-width: 768px) {
+  .platform-mode-selector {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-card,
+  .platform-match-card {
+    padding: var(--platform-space-4);
+  }
+
+  .platform-button {
+    width: 100%;
+  }
+
+  .platform-mode-card {
+    padding: var(--platform-space-5);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1024px) {
+  .platform-match-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--platform-space-4);
+  }
+}
+
+@media (min-width: 1024px) {
+  .platform-match-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--platform-space-5);
+  }
+}
+
+/* =============================================================================
+   DASHBOARD STYLES
+   ============================================================================= */
+
+.platform-dashboard {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.dashboard-brand-card {
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-xl);
+  padding: var(--platform-space-6);
+  margin-bottom: var(--platform-space-6);
+}
+
+.dashboard-url-card {
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-xl);
+  padding: var(--platform-space-6);
+  margin-bottom: var(--platform-space-6);
+}
+
+.url-display {
+  display: flex;
+  align-items: center;
+  gap: var(--platform-space-3);
+  margin-top: var(--platform-space-3);
+}
+
+.url-display code {
+  flex: 1;
+  background: var(--platform-bg-elevated);
+  padding: var(--platform-space-3);
+  border-radius: var(--platform-radius-md);
+  font-family: 'Geist Mono', 'SF Mono', 'Monaco', monospace;
+  font-size: 13px;
+  color: var(--platform-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--platform-bg-elevated);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-md);
+  cursor: pointer;
+  transition: all var(--platform-transition-base);
+}
+
+.icon-button:hover {
+  background: var(--platform-bg-card-hover);
+  border-color: var(--platform-border-strong);
+}
+
+.dashboard-actions {
+  display: flex;
+  gap: var(--platform-space-4);
+  margin-bottom: var(--platform-space-6);
+}
+
+.primary-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--platform-space-2);
+  min-height: var(--platform-touch-min);
+  background: var(--platform-text-primary);
+  color: var(--platform-bg-primary);
+  border: none;
+  border-radius: var(--platform-radius-lg);
+  font-weight: 600;
+  font-size: var(--platform-font-size-sm);
+  transition: all var(--platform-transition-base);
+  cursor: pointer;
+}
+
+.primary-button:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.primary-button:active {
+  transform: translateY(0);
+}
+
+.secondary-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--platform-space-2);
+  min-height: var(--platform-touch-min);
+  background: transparent;
+  color: var(--platform-text-primary);
+  border: 1px solid var(--platform-border-default);
+  border-radius: var(--platform-radius-lg);
+  font-weight: 600;
+  font-size: var(--platform-font-size-sm);
+  transition: all var(--platform-transition-base);
+  cursor: pointer;
+}
+
+.secondary-button:hover {
+  background: var(--platform-bg-card);
+  border-color: var(--platform-border-strong);
+}
+
+.dashboard-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  text-align: center;
+}
+
+.dashboard-status {
+  padding: var(--platform-space-4);
+  background: var(--platform-bg-card);
+  border: 1px solid var(--platform-border-subtle);
+  border-radius: var(--platform-radius-lg);
+}
+
+@media (max-width: 768px) {
+  .dashboard-actions {
+    flex-direction: column;
+  }
+}

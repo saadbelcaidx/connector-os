@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, Lock, Workflow, Eye } from 'lucide-react';
+import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, Lock, Workflow, Eye, Globe } from 'lucide-react';
 import { FEATURES } from './config/features';
 
 // Chess King Icon — Strategic moves, the operator makes the play
@@ -127,6 +127,15 @@ const apps: AppCard[] = [
     route: '/connector-agent',
     ssmOnly: true,
     comingSoon: !FEATURES.CONNECTOR_AGENT_ENABLED,
+  },
+  // 10. Strategic Alignment Platform — White-labeled live demo tool (SSM only)
+  {
+    id: 'strategic-platform',
+    title: 'Strategic Platform',
+    description: 'Access-controlled network intelligence',
+    icon: Globe,
+    route: '/platform-dashboard',
+    ssmOnly: true,
   },
 ];
 

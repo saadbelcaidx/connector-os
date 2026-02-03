@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Platform Intelligence — Command Center</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #08090a;
+      --surface: #0c0d0f;
+      --border: rgba(255,255,255,0.06);
+      --text-primary: rgba(255,255,255,0.9);
+      --text-secondary: rgba(255,255,255,0.5);
+      --text-muted: rgba(255,255,255,0.3);
+      --violet: #8b5cf6;
+      --violet-dim: rgba(139,92,246,0.15);
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 32px;
+      letter-spacing: -0.02em;
+    }
+
+    /* ============================================
+       HEADER — Status + Input
+       ============================================ */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--violet);
+    }
+
+    .status-text {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .search-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .search-input {
+      width: 280px;
+      height: 36px;
+      padding: 0 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 13px;
+      outline: none;
+      transition: all 0.15s;
+    }
+
+    .search-input:focus {
+      border-color: rgba(139,92,246,0.4);
+      background: rgba(255,255,255,0.05);
+    }
+
+    .search-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       PRESET CHIPS — Quick filters
+       ============================================ */
+    .chips {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 32px;
+    }
+
+    .chip {
+      height: 32px;
+      padding: 0 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .chip:hover {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-primary);
+    }
+
+    .chip.active {
+      background: var(--violet-dim);
+      border-color: rgba(139,92,246,0.3);
+      color: var(--violet);
+    }
+
+    /* ============================================
+       MARKET PULSE — Default view, never blank
+       ============================================ */
+    .section-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 16px;
+    }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 32px;
+    }
+
+    /* ============================================
+       COMPANY LIST — Scannable in 0.5s
+       ============================================ */
+    .company-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .company-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .company-row:hover {
+      background: rgba(255,255,255,0.03);
+      border-color: rgba(255,255,255,0.1);
+    }
+
+    .company-row.selected {
+      background: rgba(139,92,246,0.06);
+      border-color: rgba(139,92,246,0.2);
+    }
+
+    .company-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .company-name {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .company-signal {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .company-signal strong {
+      color: var(--violet);
+      font-weight: 500;
+    }
+
+    .signal-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--violet-dim);
+      border-radius: 6px;
+    }
+
+    .signal-badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--violet);
+    }
+
+    .signal-badge-text {
+      font-size: 11px;
+      color: var(--violet);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ============================================
+       DETAIL PANEL — Intel on click
+       ============================================ */
+    .detail-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      height: fit-content;
+    }
+
+    .detail-header {
+      margin-bottom: 24px;
+    }
+
+    .detail-company {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .detail-domain {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .detail-section {
+      margin-bottom: 20px;
+    }
+
+    .detail-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 10px;
+    }
+
+    .detail-content {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .detail-highlight {
+      padding: 16px;
+      background: var(--violet-dim);
+      border: 1px solid rgba(139,92,246,0.15);
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+
+    .detail-highlight-label {
+      font-size: 10px;
+      color: rgba(139,92,246,0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+    }
+
+    .detail-highlight-text {
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    .hiring-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .hiring-item {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .hiring-item strong {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .contact-card {
+      padding: 16px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
+    .contact-name {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 2px;
+    }
+
+    .contact-title {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+
+    .contact-email {
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--violet);
+    }
+
+    /* ============================================
+       LOADING STATE — Subtle, not theatrical
+       ============================================ */
+    .loading-row {
+      padding: 16px 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      opacity: 0.5;
+    }
+
+    .loading-bar {
+      height: 16px;
+      width: 40%;
+      background: rgba(255,255,255,0.06);
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+
+    .loading-bar.short {
+      width: 60%;
+      height: 13px;
+    }
+
+    /* ============================================
+       FALLBACK STATE — Never empty
+       ============================================ */
+    .fallback-message {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .fallback-pivot {
+      margin-top: 16px;
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .fallback-link {
+      color: var(--violet);
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    /* ============================================
+       FOOTER — Data attribution (subtle)
+       ============================================ */
+    .footer {
+      margin-top: 48px;
+      text-align: center;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* ============================================
+       DEMO CONTROLS — For prototype only
+       ============================================ */
+    .demo-controls {
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .demo-btn {
+      padding: 8px 14px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .demo-btn:hover {
+      background: rgba(255,255,255,0.08);
+      color: var(--text-primary);
+    }
+
+    .demo-btn.active {
+      background: var(--violet-dim);
+      border-color: rgba(139,92,246,0.3);
+      color: var(--violet);
+    }
+
+    /* States */
+    .state { display: none; }
+    .state.active { display: block; }
+
+  </style>
+</head>
+<body>
+
+  <!-- ============================================
+       HEADER
+       ============================================ -->
+  <div class="header">
+    <div class="status">
+      <div class="status-dot"></div>
+      <span class="status-text">Live</span>
+    </div>
+
+    <div class="search-container">
+      <input
+        type="text"
+        class="search-input"
+        placeholder="biotech series A"
+        id="searchInput"
+      >
+    </div>
+  </div>
+
+  <!-- ============================================
+       PRESET CHIPS
+       ============================================ -->
+  <div class="chips">
+    <div class="chip active">Recent signals</div>
+    <div class="chip">Funding</div>
+    <div class="chip">Hiring spikes</div>
+    <div class="chip">Leadership changes</div>
+    <div class="chip">Expansion</div>
+  </div>
+
+  <!-- ============================================
+       STATE: DEFAULT — Market Pulse
+       ============================================ -->
+  <div class="state active" id="stateDefault">
+    <div class="section-label">Market Pulse — Last 7 days</div>
+
+    <div class="main-grid">
+      <div class="company-list">
+        <div class="company-row selected">
+          <div class="company-info">
+            <div class="company-name">Strand Therapeutics</div>
+            <div class="company-signal"><strong>Series B</strong> · Hiring 4 regulatory roles</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Funding</div>
+          </div>
+        </div>
+
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">Terray Therapeutics</div>
+            <div class="company-signal"><strong>12 new roles</strong> · Engineering & clinical</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Hiring</div>
+          </div>
+        </div>
+
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">Centaur Labs</div>
+            <div class="company-signal"><strong>Series A</strong> · $20M raised</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Funding</div>
+          </div>
+        </div>
+
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">Recursion Pharma</div>
+            <div class="company-signal"><strong>New CTO</strong> · Leadership change</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Leadership</div>
+          </div>
+        </div>
+
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">Insitro</div>
+            <div class="company-signal"><strong>8 roles</strong> · ML & data science</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Hiring</div>
+          </div>
+        </div>
+
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">Generate Biomedicines</div>
+            <div class="company-signal"><strong>New office</strong> · Boston expansion</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Expansion</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detail Panel -->
+      <div class="detail-panel">
+        <div class="detail-header">
+          <div class="detail-company">Strand Therapeutics</div>
+          <div class="detail-domain">strandtx.com · Boston, MA</div>
+        </div>
+
+        <div class="detail-highlight">
+          <div class="detail-highlight-label">Timing Signal</div>
+          <div class="detail-highlight-text">High activity — Series B + active hiring</div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-label">What they do</div>
+          <div class="detail-content">
+            mRNA therapeutics company building programmable medicines. Developing
+            self-amplifying RNA platform for oncology and rare diseases.
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-label">Hiring · 4 roles</div>
+          <div class="hiring-list">
+            <div class="hiring-item"><strong>VP Regulatory Affairs</strong> · Boston</div>
+            <div class="hiring-item"><strong>Director, Clinical Ops</strong> · Boston</div>
+            <div class="hiring-item"><strong>Senior Scientist, mRNA</strong> · Boston</div>
+            <div class="hiring-item"><strong>QA Manager</strong> · Remote</div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-label">Decision Maker</div>
+          <div class="contact-card">
+            <div class="contact-name">Jake Becraft, PhD</div>
+            <div class="contact-title">Co-founder & CEO</div>
+            <div class="contact-email">jake@strandtx.com</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       STATE: LOADING — Subtle
+       ============================================ -->
+  <div class="state" id="stateLoading">
+    <div class="section-label">Loading...</div>
+
+    <div class="main-grid">
+      <div class="company-list">
+        <div class="loading-row">
+          <div class="loading-bar"></div>
+          <div class="loading-bar short"></div>
+        </div>
+        <div class="loading-row">
+          <div class="loading-bar"></div>
+          <div class="loading-bar short"></div>
+        </div>
+        <div class="loading-row">
+          <div class="loading-bar"></div>
+          <div class="loading-bar short"></div>
+        </div>
+      </div>
+
+      <div class="detail-panel" style="opacity: 0.3;">
+        <div class="loading-bar" style="width: 50%; height: 20px; margin-bottom: 16px;"></div>
+        <div class="loading-bar" style="width: 30%; height: 13px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       STATE: THIN RESULTS — Auto-pivot
+       ============================================ -->
+  <div class="state" id="stateThin">
+    <div class="section-label">Results · 2 found</div>
+
+    <div class="main-grid">
+      <div class="company-list">
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">NovaBio Partners</div>
+            <div class="company-signal"><strong>Series A</strong> · Early stage</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Funding</div>
+          </div>
+        </div>
+
+        <div class="company-row">
+          <div class="company-info">
+            <div class="company-name">CellGenix</div>
+            <div class="company-signal"><strong>3 roles</strong> · R&D hiring</div>
+          </div>
+          <div class="signal-badge">
+            <div class="signal-badge-dot"></div>
+            <div class="signal-badge-text">Hiring</div>
+          </div>
+        </div>
+
+        <!-- Fallback suggestion -->
+        <div class="fallback-message">
+          <div>Narrow results for this query</div>
+          <div class="fallback-pivot">
+            <span class="fallback-link">Recent funding events</span>
+            <span style="color: var(--text-muted)">·</span>
+            <span class="fallback-link">Hiring spikes</span>
+            <span style="color: var(--text-muted)">·</span>
+            <span class="fallback-link">All biotech</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-panel" style="opacity: 0.5;">
+        <div class="detail-header">
+          <div class="detail-company" style="color: var(--text-muted);">Select a company</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================
+       FOOTER
+       ============================================ -->
+  <div class="footer">
+    Data from Exa · PredictLeads · Apollo
+  </div>
+
+  <!-- ============================================
+       DEMO CONTROLS
+       ============================================ -->
+  <div class="demo-controls">
+    <button class="demo-btn active" onclick="showState('stateDefault')">Default</button>
+    <button class="demo-btn" onclick="showState('stateLoading')">Loading</button>
+    <button class="demo-btn" onclick="showState('stateThin')">Thin Results</button>
+  </div>
+
+  <script>
+    function showState(stateId) {
+      // Hide all states
+      document.querySelectorAll('.state').forEach(el => el.classList.remove('active'));
+      // Show selected state
+      document.getElementById(stateId).classList.add('active');
+      // Update buttons
+      document.querySelectorAll('.demo-btn').forEach(el => el.classList.remove('active'));
+      event.target.classList.add('active');
+    }
+
+    // Chips interaction
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+      });
+    });
+
+    // Row selection
+    document.querySelectorAll('.company-row').forEach(row => {
+      row.addEventListener('click', () => {
+        document.querySelectorAll('.company-row').forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
+      });
+    });
+
+    // Enter key search
+    document.getElementById('searchInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        showState('stateLoading');
+        setTimeout(() => showState('stateDefault'), 800);
+      }
+    });
+  </script>
+
+</body>
+</html>

@@ -36,6 +36,8 @@ import ComingSoon from './components/ComingSoon';
 import VslWatch from './VslWatch';
 import { FEATURES } from './config/features';
 import ConnectorAssistant from './components/ConnectorAssistant';
+import PlatformApp from './platform/PlatformApp';
+import PlatformDashboard from './platform/PlatformDashboard';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -131,6 +133,34 @@ function AppRoutes() {
             <SSMGate featureName="Connector Hub">
               <div className="page-fade">
                 <ConnectorHub />
+              </div>
+            </SSMGate>
+          </PrivateRoute>
+        }
+      />
+
+      {/* Strategic Alignment Platform - Dashboard (SSM gated) */}
+      <Route
+        path="/platform-dashboard"
+        element={
+          <PrivateRoute>
+            <SSMGate featureName="Strategic Platform">
+              <div className="page-fade">
+                <PlatformDashboard />
+              </div>
+            </SSMGate>
+          </PrivateRoute>
+        }
+      />
+
+      {/* Strategic Alignment Platform - White-labeled live demo tool (SSM gated) */}
+      <Route
+        path="/platform/:slug"
+        element={
+          <PrivateRoute>
+            <SSMGate featureName="Strategic Platform">
+              <div className="page-fade">
+                <PlatformApp />
               </div>
             </SSMGate>
           </PrivateRoute>
