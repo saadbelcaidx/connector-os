@@ -87,7 +87,7 @@ interface IntelligenceProps {
 // =============================================================================
 
 function getNodePosition(index: number, total: number): { top: string; left: string } {
-  const radius = 22;
+  const radius = 28; // Spread nodes wider — less dead space
   const angleOffset = -90;
   const angle = angleOffset + (index / total) * 360;
   const radians = (angle * Math.PI) / 180;
@@ -96,6 +96,39 @@ function getNodePosition(index: number, total: number): { top: string; left: str
   const y = 50 + radius * Math.sin(radians);
 
   return { top: `${y}%`, left: `${x}%` };
+}
+
+/**
+ * CHANGE 3: Dynamic signal shortening
+ * Trims trailing detail after key event phrase — no hardcoded values
+ */
+function shortenSignal(signal: string | undefined, maxLength: number = 32): string {
+  if (!signal) return 'Active signal';
+
+  // Trim at common detail separators (from, in, with, &, at, for)
+  const separators = [' from ', ' in ', ' with ', ' & ', ' at ', ' for ', ' to '];
+  let shortened = signal;
+
+  for (const sep of separators) {
+    const idx = signal.toLowerCase().indexOf(sep);
+    if (idx > 10 && idx < signal.length - 5) {
+      // Keep text before separator if it's meaningful (>10 chars) and separator isn't at the end
+      shortened = signal.slice(0, idx);
+      break;
+    }
+  }
+
+  // If still too long, truncate cleanly
+  if (shortened.length > maxLength) {
+    shortened = shortened.slice(0, maxLength).trim();
+    // Don't cut mid-word
+    const lastSpace = shortened.lastIndexOf(' ');
+    if (lastSpace > maxLength - 10) {
+      shortened = shortened.slice(0, lastSpace);
+    }
+  }
+
+  return shortened || 'Active signal';
 }
 
 // =============================================================================
@@ -289,45 +322,47 @@ export default function Intelligence({
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[450px] h-[450px] rounded-full border border-white/[0.04]" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full border border-white/[0.03]" />
 
-      {/* Radar sweep when loading */}
-      {isLoading && (
-        <div
-          className="absolute top-1/2 left-1/2 w-[300px] h-[2px] origin-left"
-          style={{
-            background: 'linear-gradient(90deg, rgba(139,92,246,0.5), transparent)',
-            animation: 'radarSweep 2s linear infinite',
-          }}
-        />
-      )}
+      {/* CHANGE 6: Removed radar sweep — too theatrical */}
 
       {/* Center point */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white/40" />
 
-      {/* Center pulse when loading */}
-      {isLoading && (
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-400/30"
-          style={{ animation: 'centerPulse 2s ease-out infinite' }}
-        />
-      )}
+      {/* CHANGE 6: Removed center pulse — too theatrical */}
 
-      {/* Status - top left */}
+      {/* CHANGE 1: Dim status — operators don't announce readiness */}
       <div className="absolute top-8 left-8 flex items-center gap-2 z-10">
         <div
-          className={`w-2 h-2 rounded-full ${isLoading ? 'bg-violet-400' : 'bg-white/60'}`}
-          style={{ animation: 'statusBlink 2s ease-in-out infinite' }}
+          className={`w-2 h-2 rounded-full ${isLoading ? 'bg-violet-400 animate-pulse' : 'bg-white/20'}`}
         />
-        <span className="text-[11px] text-white/50 uppercase tracking-widest">
-          {isLoading ? 'Scanning' : 'Ready'}
+        <span className="text-[11px] text-white/20 uppercase tracking-widest">
+          {isLoading ? 'Loading' : ''}
         </span>
       </div>
 
-      {/* Stats - top right */}
-      {hasResults && (
-        <div className="absolute top-8 right-8 text-[11px] text-white/30 z-10">
-          {response.meta.latencyMs}ms · {response.meta.resultCount} sources
-        </div>
-      )}
+      {/* CHANGE 5: Removed plumbing stats — breaks illusion */}
+
+      {/* MARKET ACTIVITY — Decisive, not decorative */}
+      {hasResults && (() => {
+        const hiring = response.results.filter(r => r.company.signalType === 'hiring').length;
+        const funding = response.results.filter(r => r.company.signalType === 'funding').length;
+        const expansion = response.results.filter(r => r.company.signalType === 'expansion').length;
+        const other = response.results.length - hiring - funding - expansion;
+        const total = response.results.length;
+
+        return (
+          <div className="absolute top-8 left-1/2 -translate-x-1/2 text-center z-10">
+            <div className="text-[15px] text-white/90 font-medium mb-1">
+              {total} {total === 1 ? 'company' : 'companies'} expanding right now
+            </div>
+            <div className="flex items-center justify-center gap-4 text-[13px] text-white/50">
+              {hiring > 0 && <span>{hiring} hiring now</span>}
+              {funding > 0 && <span>{funding} just raised</span>}
+              {expansion > 0 && <span>{expansion} expanding</span>}
+              {other > 0 && hiring === 0 && funding === 0 && expansion === 0 && <span>{other} active</span>}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Company nodes */}
       {hasResults && response.results.map((result, i) => {
@@ -343,37 +378,38 @@ export default function Intelligence({
               top: pos.top,
               left: pos.left,
               transform: 'translate(-50%, -50%)',
-              animation: `nodeFadeIn 0.5s ease ${i * 0.08}s both`,
+              /* CHANGE 3: No staggered animation — instant appear */
               zIndex: isSelected ? 20 : 10,
             }}
             onClick={() => setSelectedResult(isSelected ? null : result)}
           >
             <div className="relative flex flex-col items-center">
               <div
-                className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                className={`w-4 h-4 rounded-full transition-all duration-300 ${
                   isActive
-                    ? 'bg-violet-500 shadow-[0_0_24px_rgba(139,92,246,0.5)]'
-                    : 'bg-white/70 group-hover:bg-white'
-                } ${isSelected ? 'ring-2 ring-white/50 ring-offset-2 ring-offset-[#08090a]' : ''}`}
+                    ? 'bg-violet-500 shadow-[0_0_30px_rgba(139,92,246,0.6)]'
+                    : 'bg-white/80 group-hover:bg-white'
+                } ${isSelected ? 'ring-2 ring-white/60 ring-offset-2 ring-offset-[#08090a]' : ''}`}
               />
               {isActive && (
                 <>
                   <div
-                    className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border border-violet-400/50"
+                    className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full border border-violet-400/50"
                     style={{ animation: 'signalPulse 2s ease-out infinite' }}
                   />
                   <div
-                    className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full border border-violet-400/30"
+                    className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full border border-violet-400/30"
                     style={{ animation: 'signalPulse 2s ease-out infinite 0.6s' }}
                   />
                 </>
               )}
-              <div className="mt-2.5 text-center whitespace-nowrap">
-                <div className={`text-[13px] ${isActive || isSelected ? 'text-white' : 'text-white/80'}`}>
+              {/* CHANGE 3 & 4: Brighter signal, bolder company name */}
+              <div className="mt-4 text-center whitespace-nowrap">
+                <div className={`text-[15px] font-semibold tracking-tight ${isActive || isSelected ? 'text-white' : 'text-white/80'}`}>
                   {result.company.companyName}
                 </div>
-                <div className={`text-[10px] mt-0.5 ${isActive ? 'text-violet-400' : 'text-white/40'}`}>
-                  {result.company.signalTitle?.slice(0, 30) || 'Match'}
+                <div className={`text-[17px] font-bold mt-2 ${isActive ? 'text-violet-300' : 'text-white'}`}>
+                  {shortenSignal(result.company.signalTitle || result.company.companyDescription)}
                 </div>
               </div>
             </div>
@@ -383,16 +419,9 @@ export default function Intelligence({
 
       {/* Search bar - BOTTOM, not center */}
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-6 z-20">
-        {/* Context info above search when results exist */}
-        {hasResults && (
-          <div className="flex items-center justify-center gap-4 mb-3 text-[11px] text-white/40">
-            <span>{response.meta.resultCount} matches</span>
-            <span>·</span>
-            <span>{response.results.filter(hasLiveSignal).length} signals</span>
-          </div>
-        )}
+        {/* CHANGE 5: Removed stats above search — plumbing */}
 
-        {/* Search input */}
+        {/* Search input — always active, always reusable */}
         <div className="relative">
           <input
             ref={inputRef}
@@ -400,23 +429,28 @@ export default function Intelligence({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder=""
-            className="w-full h-14 px-6 pr-24 rounded-2xl bg-white/[0.04] border border-white/[0.1]
-              text-white text-[15px] placeholder:text-white/30
-              focus:outline-none focus:border-violet-500/40 focus:bg-white/[0.06]
-              transition-all"
+            placeholder="Type to search..."
+            className={`w-full h-14 px-6 ${!hasResults ? 'pr-24' : 'pr-6'} rounded-2xl
+              bg-white/[0.06] border border-white/[0.15]
+              text-white text-[15px] placeholder:text-white/40
+              focus:outline-none focus:border-violet-500/50 focus:bg-white/[0.08]
+              hover:border-white/20 hover:bg-white/[0.07]
+              transition-all cursor-text`}
             disabled={isLoading}
           />
-          <button
-            onClick={handleSearch}
-            disabled={!query.trim() || isLoading}
-            className="absolute right-2 top-1/2 -translate-y-1/2 h-10 px-5 rounded-xl
-              bg-violet-500 text-white text-[13px] font-medium
-              disabled:opacity-30 disabled:cursor-not-allowed
-              hover:bg-violet-400 active:scale-[0.98] transition-all"
-          >
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Scan'}
-          </button>
+          {/* Button only in empty state — Enter always works */}
+          {!hasResults && (
+            <button
+              onClick={handleSearch}
+              disabled={!query.trim() || isLoading}
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-10 px-5 rounded-xl
+                bg-violet-500 text-white text-[13px] font-medium
+                disabled:opacity-30 disabled:cursor-not-allowed
+                hover:bg-violet-400 active:scale-[0.98] transition-all"
+            >
+              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Scan'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -605,13 +639,15 @@ export default function Intelligence({
         </div>
       )}
 
-      {/* No results message */}
-      {response && !hasResults && !isLoading && !error && (
+      {/* CHANGE 1: Default state — never blank */}
+      {!response && !isLoading && !error && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center z-10">
-          <div className="text-[13px] text-white/50 mb-2">No matches found</div>
-          <div className="text-[11px] text-white/30">Try a different ICP description</div>
+          <div className="text-[13px] text-white/30">Intelligence ready</div>
         </div>
       )}
+
+      {/* CHANGE 2: No "No matches found" — system always has something */}
+      {/* Removed empty results message — backend should always return results */}
 
       {/* Error */}
       {error && (
