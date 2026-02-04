@@ -4,10 +4,11 @@
  * Design: Linear + Apple iOS — light, fast, "launching a rocket"
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../AuthContext';
 import Intelligence from './Intelligence';
 import ErrorState from './ErrorState';
 import type { PlatformConfig } from './types';
@@ -35,9 +36,11 @@ type AppState = 'loading' | 'ready' | 'error';
 export default function PlatformApp() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [state, setState] = useState<AppState>('loading');
   const [config, setConfig] = useState<PlatformConfig | null>(null);
+  const [showEditLink, setShowEditLink] = useState(false);
 
   // API keys for Intelligence (multi-provider support)
   const [apiKeys, setApiKeys] = useState<{
@@ -119,6 +122,21 @@ export default function PlatformApp() {
     }
   }, []);
 
+  // Shift+B: reveal edit link for owner (prospect-safe)
+  const isOwner = !!(user?.id && config?.user_id && user.id === config.user_id);
+
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.shiftKey && e.key === 'B' && isOwner) {
+      setShowEditLink(true);
+      setTimeout(() => setShowEditLink(false), 10_000);
+    }
+  }, [isOwner]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
   // Load platform config
   useEffect(() => {
     injectStyles();
@@ -130,7 +148,7 @@ export default function PlatformApp() {
     try {
       const { data, error } = await supabase
         .from('platform_configs')
-        .select('id, slug, brand_name, logo_url, primary_color, headline, subheadline, cta_text')
+        .select('id, user_id, slug, brand_name, logo_url, primary_color, headline, subheadline, cta_text')
         .eq('slug', platformSlug.toLowerCase())
         .eq('enabled', true)
         .maybeSingle();
@@ -189,6 +207,14 @@ export default function PlatformApp() {
           <span className="text-[14px] font-medium text-white/80">
             {config?.brand_name || 'Platform'}
           </span>
+          {showEditLink && (
+            <button
+              onClick={() => navigate('/platform-settings')}
+              className="ml-2 text-[11px] text-white/30 hover:text-white/60 transition-colors"
+            >
+              Customize
+            </button>
+          )}
         </div>
       </header>
 

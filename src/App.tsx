@@ -38,6 +38,7 @@ import { FEATURES } from './config/features';
 import ConnectorAssistant from './components/ConnectorAssistant';
 import PlatformApp from './platform/PlatformApp';
 import PlatformDashboard from './platform/PlatformDashboard';
+import PlatformSettings from './platform/PlatformSettings';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -147,6 +148,20 @@ function AppRoutes() {
             <SSMGate featureName="Strategic Platform">
               <div className="page-fade">
                 <PlatformDashboard />
+              </div>
+            </SSMGate>
+          </PrivateRoute>
+        }
+      />
+
+      {/* Strategic Alignment Platform - Branding edit (SSM gated) */}
+      <Route
+        path="/platform-settings"
+        element={
+          <PrivateRoute>
+            <SSMGate featureName="Strategic Platform">
+              <div className="page-fade">
+                <PlatformSettings />
               </div>
             </SSMGate>
           </PrivateRoute>

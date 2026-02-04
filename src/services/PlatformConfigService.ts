@@ -27,6 +27,7 @@ interface UpdateConfigInput {
   logo_url?: string;
   primary_color?: string;
   headline?: string;
+  subheadline?: string;
   cta_text?: string;
   enabled?: boolean;
 }
