@@ -5,7 +5,7 @@
  * 1. LOADING: authLoading=true OR loading=true
  * 2. NO_USER: authLoading=false, user=null (shouldn't happen behind PrivateRoute)
  * 3. NO_CONFIG: user exists, config=null → show setup form
- * 4. HAS_CONFIG: user exists, config exists → AUTO-REDIRECT to /platform/:slug
+ * 4. HAS_CONFIG: user exists, config exists → AUTO-REDIRECT to /p/:slug
  */
 
 import { useEffect, useState, useRef } from 'react';
@@ -47,7 +47,7 @@ export default function PlatformDashboard() {
   // AUTO-REDIRECT: If user has config, go directly to their platform
   useEffect(() => {
     if (!loading && config?.slug) {
-      navigate(`/platform/${config.slug}`, { replace: true });
+      navigate(`/p/${config.slug}`, { replace: true });
     }
   }, [loading, config, navigate]);
 

@@ -155,7 +155,7 @@ function AppRoutes() {
 
       {/* Strategic Alignment Platform - White-labeled live demo tool (SSM gated) */}
       <Route
-        path="/platform/:slug"
+        path="/p/:slug"
         element={
           <PrivateRoute>
             <SSMGate featureName="Strategic Platform">

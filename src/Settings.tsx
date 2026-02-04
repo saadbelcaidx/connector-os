@@ -407,7 +407,7 @@ export default function Settings() {
         enhanceIntro: settings.enhanceIntro,
       }));
 
-      // Always save Platform Intelligence keys to localStorage (for /platform/* routes)
+      // Always save Platform Intelligence keys to localStorage (for /p/* routes)
       localStorage.setItem('platform_keys', JSON.stringify({
         exaApiKey: settings.exaApiKey,
         apolloApiKey: settings.apolloApiKey,
