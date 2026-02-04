@@ -133,6 +133,33 @@ function shortenSignal(signal: string | undefined, maxLength: number = 32): stri
 }
 
 // =============================================================================
+// FALLBACK QUERIES — vertical-aware, used when primary returns empty
+// =============================================================================
+
+const FALLBACK_QUERIES: Record<string, string> = {
+  recruitment: 'companies hiring VP Sales CFO Head of People',
+  wealth: 'recent acquisitions IPO filings founder exits',
+  biotech: 'Phase 2 trial biotech partnering licensing',
+  pe: 'growth equity raise founder-led expansion',
+  general: 'companies expanding hiring leadership scaling operations',
+};
+
+const FALLBACK_KEYWORDS: Record<string, string[]> = {
+  recruitment: ['hiring', 'recruit', 'talent', 'staffing', 'headhunt', 'hr', 'people'],
+  wealth: ['wealth', 'advisor', 'hnw', 'family office', 'asset', 'portfolio'],
+  biotech: ['biotech', 'pharma', 'clinical', 'trial', 'therapeutics', 'drug'],
+  pe: ['private equity', 'pe ', 'growth equity', 'buyout', 'portfolio company', 'fund'],
+};
+
+function detectFallbackVertical(query: string): string {
+  const lower = query.toLowerCase();
+  for (const [vertical, keywords] of Object.entries(FALLBACK_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw))) return vertical;
+  }
+  return 'general';
+}
+
+// =============================================================================
 // COMPONENT
 // =============================================================================
 
@@ -157,8 +184,8 @@ export default function Intelligence({
   const [selectedResult, setSelectedResult] = useState<IntelligenceResult | null>(null);
   const [companyIntel, setCompanyIntel] = useState<CompanyIntel | null>(null);
   const [loadingIntel, setLoadingIntel] = useState(false);
-
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastSuccessfulResponse = useRef<IntelligenceResponse | null>(null);
 
   // PredictLeads keys for deep intel
   const predictLeadsKeys: PredictLeadsKeys = {
@@ -240,14 +267,60 @@ export default function Intelligence({
         keys
       );
 
+      // Step 1: "Never empty" fallback — if results are empty, retry with vertical-aware query
+      if (result.success && result.results.length === 0) {
+        console.log('[Intelligence] Empty results — firing vertical fallback');
+        const vertical = detectFallbackVertical(query);
+        const fallbackQuery = FALLBACK_QUERIES[vertical];
+        console.log(`[Intelligence] Fallback vertical: ${vertical}, query: "${fallbackQuery}"`);
+
+        try {
+          const fallbackResult = await queryIntelligence(
+            {
+              query: fallbackQuery,
+              prospectDomain,
+              numResults: 8,
+              includeContacts: !!apolloKey,
+            },
+            keys
+          );
+
+          if (fallbackResult.success && fallbackResult.results.length > 0) {
+            setResponse(fallbackResult);
+            lastSuccessfulResponse.current = fallbackResult;
+            return; // Radar populated — done
+          }
+        } catch (fallbackErr) {
+          console.error('[Intelligence] Fallback query also failed:', fallbackErr);
+        }
+      }
+
       setResponse(result);
 
+      if (result.success) {
+        lastSuccessfulResponse.current = result;
+      }
+
+      // Step 3: Call-safe error — never show raw error to user
       if (!result.success && result.error) {
-        setError(result.error);
+        console.error('[Intelligence] API error (hidden from UI):', result.error);
+        if (lastSuccessfulResponse.current) {
+          // Show cached results + muted delay notice
+          setResponse(lastSuccessfulResponse.current);
+          setError('delayed');
+        } else {
+          setError('no_results');
+        }
       }
     } catch (err) {
       console.error('[Intelligence] Query failed:', err);
-      setError(err instanceof Error ? err.message : 'Query failed');
+      // Step 3: Never expose raw error — use cached results or calm placeholder
+      if (lastSuccessfulResponse.current) {
+        setResponse(lastSuccessfulResponse.current);
+        setError('delayed');
+      } else {
+        setError('no_results');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -620,7 +693,7 @@ export default function Intelligence({
           )}
 
           {/* Decision Maker */}
-          {selectedResult.contact?.fullName && (
+          {selectedResult.contact?.fullName ? (
             <div className="p-5 bg-white/[0.02] border border-white/[0.06] rounded-xl mb-5">
               <div className="text-[9px] text-white/40 uppercase tracking-widest mb-3">
                 Decision Maker
@@ -647,6 +720,10 @@ export default function Intelligence({
                 </div>
               )}
             </div>
+          ) : (
+            <div className="mb-5">
+              <span className="text-[12px] text-white/30">Contact available on routing</span>
+            </div>
           )}
 
           {onConnect && (
@@ -671,19 +748,15 @@ export default function Intelligence({
       {/* CHANGE 2: No "No matches found" — system always has something */}
       {/* Removed empty results message — backend should always return results */}
 
-      {/* Error */}
-      {error && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center z-30">
-          <div className="p-6 bg-red-500/10 border border-red-500/20 rounded-2xl max-w-sm">
-            <div className="text-[13px] text-red-400 mb-2">Scan failed</div>
-            <div className="text-[12px] text-white/50 mb-4">{error}</div>
-            <button
-              onClick={() => setError(null)}
-              className="text-[12px] text-white/60 hover:text-white transition-colors"
-            >
-              Dismiss
-            </button>
-          </div>
+      {/* Call-safe error states — never red, never raw */}
+      {error === 'delayed' && (
+        <div className="absolute top-8 right-8 z-30" style={{ animation: 'fadeIn 0.5s ease' }}>
+          <span className="text-[11px] text-white/30">Results may be delayed</span>
+        </div>
+      )}
+      {error === 'no_results' && !hasResults && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center z-10">
+          <div className="text-[13px] text-white/30">Scanning market signals...</div>
         </div>
       )}
     </div>
