@@ -338,6 +338,8 @@ Rules:
 - Queries should find the COMPANIES being described, not articles ABOUT the industry
 - Be specific: include company size, industry, and signals mentioned
 - Include year "2024" or "2025" for recency
+- If the description refers to PEOPLE (founders, executives, advisors, etc.), search for the EVENTS that create them (exits, acquisitions, IPOs, expansion, funding), not services targeting them
+- Prefer event-driven queries that indicate companies actively moving or changing
 
 Return ONLY a JSON array of 5 strings. No explanation.`;
 
