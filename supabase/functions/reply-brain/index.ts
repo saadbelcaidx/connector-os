@@ -218,7 +218,7 @@ const STAGE_PATTERNS: Record<Stage, RegExp> = {
   IDENTITY: /\b(what'?s the catch|who are you|what company are you with|are you an agency|are you affiliated|why are you reaching out|how do you work|how does this work|how exactly does this work|what'?s (your |the )?process|what'?s the model|walk me through|explain how|how do you operate|what do you do|what is this|what are you offering|is there a cost)\b/i,
   SCOPE: /\b(is what you('re| are) proposing|so you mean|are you saying|to confirm|just to clarify|you're introducing|introduce us to|what exactly are you offering|what's the offer|what industr|which industr|deal size|timeline|requirements|criteria|what type|what kind|typical|focus on|specialize|mid-?sized|companies that want to sell|what size|what stage|what geography)/i,
   INTEREST: /\b(interested|i'm interested|i am interested|i would be interested|sure|yes|yeah|yep|sounds good|happy to|open to|that works|works for me|i'm in|count me in|absolutely|definitely|perfect|alright|go ahead|intro me|connect me|make the intro|let's do it|let's|sounds interesting|tell me more|i'd like to learn|curious)\b/i,
-  CONFUSION: /\b(i don't understand|not sure what|not sure i understand|confused|what do you mean|can you explain|remind me|what was this about|is this about|thought you meant|i don't follow|lost me|not following|unclear|maybe)\b/i,
+  CONFUSION: /\b(i don't understand|not sure what|not sure i understand|confused|what do you mean|can you explain|remind me|what was this about|is this about|thought you meant|i don't follow|lost me|not following|unclear|maybe|elaborate|tell me more)\b|provide (a bit )?more (of an )?(explanation|details?|context)|expand on (that|this)/i,
   UNKNOWN: /.*/,
 };
 
@@ -404,6 +404,12 @@ function classifyMultiIntent(inbound: string): MultiIntent {
   if (intents.length === 0) {
     if (isPricing(text)) {
       return { primary: 'PRICING', secondary: [], signals: ['pricing_failsafe'], negationDetected };
+    }
+    // Polite question heuristic — catches "could you explain...", "can you provide details..." etc.
+    if (/\?/.test(text) || /^(could you|can you|would you)/i.test(text)) {
+      if (/(explain|details?|elaborate|clarify|provide|expand|tell me more)/i.test(text)) {
+        return { primary: 'CONFUSION', secondary: [], signals: ['polite_question_heuristic'], negationDetected };
+      }
     }
     return { primary: 'UNKNOWN', secondary: [], signals: ['no_match'], negationDetected };
   }
