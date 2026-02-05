@@ -378,71 +378,51 @@ function cleanDoubledPrepositions(text: string): string {
 }
 
 /**
- * Sanitize evidence: if it looks like a job title/specialty, return generic fallback.
- * Stripe doctrine: never output garbage, fail gracefully.
+ * Sanitize evidence: remove junk, preserve valid presignal evidence.
  *
- * BAD: "Healthcare Provider - Nurse Practitioner, Psych/Mental Health"
- * GOOD: "is showing activity"
+ * CSV/presignal inputs contain real signals (ClinicalTrials, NIH, USASpending).
+ * Only strip true garbage: raw job titles used AS the entire signal,
+ * scraped fragments, empty strings, formatting noise.
+ *
+ * NEVER rewrite readable English signals.
  */
 function sanitizeEvidence(evidence: string): string {
   if (!evidence || !evidence.trim()) {
+    console.log('[Evidence] BEFORE:', evidence, '→ AFTER: is showing activity (empty)');
     return 'is showing activity';
   }
 
-  const lower = evidence.toLowerCase();
-
-  // Detect job title / specialty patterns (not real signals)
-  const titlePatterns = [
-    /\bprovider\b/i,
-    /\bpractitioner\b/i,
-    /\bspecialist\b/i,
-    /\bnurse\b/i,
-    /\bphysician\b/i,
-    /\btherapist\b/i,
-    /\bcounselor\b/i,
-    /\bdoctor\b/i,
-    /\bpsych\b/i,
-    /\bmental health\b/i,
-    /\bhealthcare\b/i,
-    /\bmedical\b/i,
-    /\bclinical\b/i,
-    /\bcertified\b/i,
-    /\blicensed\b/i,
-    /\bregistered\b/i,
-    /\bceo\b/i,
-    /\bcfo\b/i,
-    /\bcto\b/i,
-    /\bowner\b/i,
-    /\bfounder\b/i,
-    /\bdirector\b/i,
-    /\bmanager\b/i,
-    /\bpresident\b/i,
-    /\bvice president\b/i,
-    /\bpartner\b/i,
-  ];
-
-  // If evidence matches title patterns, use fallback
-  if (titlePatterns.some(p => p.test(lower))) {
-    return 'is showing activity';
-  }
-
-  // If evidence is too short (< 5 chars) or doesn't start with a verb-like word, fix it
   const trimmed = evidence.trim();
+
+  // Too short to be meaningful (< 5 chars)
   if (trimmed.length < 5) {
+    console.log('[Evidence] BEFORE:', trimmed, '→ AFTER: is showing activity (too short)');
     return 'is showing activity';
   }
 
-  // If evidence doesn't start with "is", "has", "raised", "hiring", etc., prepend "is"
-  const startsWithVerb = /^(is|are|has|had|was|were|raised|hiring|expanding|scaling|growing|launched|announced|closed|secured|opened)/i.test(trimmed);
-  if (!startsWithVerb) {
-    // Check if it's a noun phrase that should have "is" prepended
-    // But only if it's a reasonable signal phrase
-    if (titlePatterns.some(p => p.test(lower))) {
-      return 'is showing activity';
-    }
+  // JUNK DETECTION: Only catch raw job titles used AS the entire signal.
+  // Pattern: the ENTIRE evidence is just a title/role with no verb or context.
+  // e.g. "Healthcare Provider - Nurse Practitioner" or "CEO" or "Director of Sales"
+  // But NOT "is hiring a Director of Sales" or "clinical trial Phase 3 started"
+  const isRawTitle = /^([\w\s,/.-]+)$/i.test(trimmed) && (
+    // Entire string is ONLY a title pattern (no verb, no action, no context)
+    /^(nurse|physician|therapist|counselor|doctor|practitioner|specialist)\b/i.test(trimmed) ||
+    /^(ceo|cfo|cto|coo|cmo|cro|owner|founder|president|vice president|partner|managing director)\b/i.test(trimmed) ||
+    /^(director|manager|head|vp)\s+(of\s+)?[\w\s]+$/i.test(trimmed) ||
+    // "Healthcare Provider - Nurse Practitioner, Psych/Mental Health" pattern
+    /^[\w\s]+(provider|practitioner|specialist)\s*[-–—]\s*[\w\s,/]+$/i.test(trimmed)
+  );
+
+  if (isRawTitle && trimmed.length < 80) {
+    console.log('[Evidence] BEFORE:', trimmed, '→ AFTER: is showing activity (raw title)');
+    return 'is showing activity';
   }
 
-  return trimmed;
+  // Clean up duplicate whitespace / formatting noise
+  const cleaned = trimmed.replace(/\s{2,}/g, ' ');
+
+  console.log('[Evidence] BEFORE:', evidence.trim(), '→ AFTER:', cleaned);
+  return cleaned;
 }
 
 /**
