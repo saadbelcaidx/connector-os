@@ -2493,15 +2493,20 @@ export default function Flow() {
         progress++;
       }
 
-      // Check fallback rate and show warning if > 20%
-      const totalAIAttempts = aiSuccess + aiFallback;
-      if (totalAIAttempts > 0) {
-        const fallbackRate = (aiFallback / totalAIAttempts) * 100;
-        console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
-        if (fallbackRate > 20) {
-          setFallbackWarning(`${Math.round(fallbackRate)}% of intros used template fallback. Check your API key or try a different provider.`);
-          // Auto-dismiss after 8 seconds
-          setTimeout(() => setFallbackWarning(null), 8000);
+      // Check fallback rate — only warn when AI was explicitly enabled and attempted
+      if (settings.enhanceIntro) {
+        const totalAIAttempts = aiSuccess + aiFallback;
+        if (totalAIAttempts > 0) {
+          const fallbackRate = (aiFallback / totalAIAttempts) * 100;
+          console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
+          if (fallbackRate === 100) {
+            // AI completely unavailable — clear signal, once per session
+            setFallbackWarning('AI unavailable — using templates');
+            setTimeout(() => setFallbackWarning(null), 8000);
+          } else if (fallbackRate > 20) {
+            setFallbackWarning(`${Math.round(fallbackRate)}% of intros used template fallback. Check your API key or try a different provider.`);
+            setTimeout(() => setFallbackWarning(null), 8000);
+          }
         }
       }
     }

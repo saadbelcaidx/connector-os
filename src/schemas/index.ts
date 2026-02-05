@@ -384,6 +384,20 @@ function getFlexibleField(record: any, ...keys: string[]): string {
 }
 
 /**
+ * Strip full URLs from text fields (company names, signals).
+ * Removes https/http URLs and www.domain.tld/path patterns.
+ * Preserves domain-style brand names (Hire.io, Scale.ai, Angel.co).
+ */
+function stripUrls(input: string): string {
+  if (!input) return input;
+  return input
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\bwww\.[a-z0-9-]+\.[a-z]{2,}[^\s)]+/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
  * Normalize a CSV record to common shape.
  *
  * HARD VALIDATION (user.txt contract):
@@ -406,14 +420,14 @@ export function normalize(record: any, schema: Schema): NormalizedRecord {
   const title = getFlexibleField(record, 'Title', 'title', 'Job Title', 'job_title', 'Position', 'Role');
   const linkedin = getFlexibleField(record, 'LinkedIn URL', 'linkedin_url', 'linkedin', 'LinkedIn') || null;
 
-  const company = getFlexibleField(record, 'Company Name', 'company_name', 'companyName', 'Company', 'company', 'Organization');
+  const company = stripUrls(getFlexibleField(record, 'Company Name', 'company_name', 'companyName', 'Company', 'company', 'Organization'));
   const rawDomain = getFlexibleField(record, 'Domain', 'domain', 'Website', 'website', 'Company Website', 'company_domain');
   const domain = rawDomain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   const industry = getFlexibleField(record, 'Industry', 'industry', 'Target Industries') || null;
   const size = getFlexibleField(record, 'Company Size', 'company_size', 'Size', 'Employees') || null;
   const companyDescription = getFlexibleField(record, 'Context', 'Company Description', 'company_description', 'companyDescription', 'Description', 'description', 'Service Description');
 
-  const signal = getFlexibleField(record, 'Signal', 'signal', 'Hiring Signal', 'hiring_signal');
+  const signal = stripUrls(getFlexibleField(record, 'Signal', 'signal', 'Hiring Signal', 'hiring_signal'));
 
   // Location
   const city = getFlexibleField(record, 'City', 'city') || null;
