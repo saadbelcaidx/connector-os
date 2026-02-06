@@ -67,11 +67,17 @@ async function loadBundle(path: string): Promise<BizGraphBundle | null> {
     }
 
     // Try DecompressionStream for gzipped content
-    if (typeof DecompressionStream !== 'undefined' && path.endsWith('.gz')) {
-      const ds = new DecompressionStream('gzip');
-      const decompressedStream = response.body!.pipeThrough(ds);
-      const decompressedResponse = new Response(decompressedStream);
-      return await decompressedResponse.json();
+    // Guard: response.body can be null in Safari
+    if (typeof DecompressionStream !== 'undefined' && path.endsWith('.gz') && response.body) {
+      try {
+        const ds = new DecompressionStream('gzip');
+        const decompressedStream = response.body.pipeThrough(ds);
+        const decompressedResponse = new Response(decompressedStream);
+        return await decompressedResponse.json();
+      } catch (decompressErr) {
+        console.warn('[BizGraph] DecompressionStream failed, falling back to JSON:', decompressErr);
+        // Fall through to JSON fallback
+      }
     }
 
     // Fallback: assume JSON if gzip not supported

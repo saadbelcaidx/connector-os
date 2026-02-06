@@ -94,13 +94,29 @@ export async function loadSemanticBundle(): Promise<SemanticBundle | null> {
       const gzippedData = await response.arrayBuffer();
 
       // Decompress using DecompressionStream (modern browsers)
-      const decompressedStream = new Response(
-        new Blob([gzippedData]).stream().pipeThrough(new DecompressionStream('gzip'))
-      );
-      const jsonText = await decompressedStream.text();
-
-      // Parse JSON
-      bundleCache = JSON.parse(jsonText) as SemanticBundle;
+      // Safari guard: Check for DecompressionStream and Blob.stream() support
+      if (typeof DecompressionStream !== 'undefined') {
+        try {
+          const blob = new Blob([gzippedData]);
+          if (typeof blob.stream === 'function') {
+            const decompressedStream = new Response(
+              blob.stream().pipeThrough(new DecompressionStream('gzip'))
+            );
+            const jsonText = await decompressedStream.text();
+            bundleCache = JSON.parse(jsonText) as SemanticBundle;
+          } else {
+            // Blob.stream() not supported (older Safari)
+            console.warn('[SemanticV2] Blob.stream() not supported, skipping bundle load');
+            return null;
+          }
+        } catch (decompressErr) {
+          console.warn('[SemanticV2] DecompressionStream failed:', decompressErr);
+          return null;
+        }
+      } else {
+        console.warn('[SemanticV2] DecompressionStream not supported');
+        return null;
+      }
 
       const elapsed = Date.now() - startTime;
       console.log(`[SemanticV2] Bundle loaded in ${elapsed}ms:`, {

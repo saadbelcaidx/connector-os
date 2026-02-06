@@ -194,6 +194,16 @@ export async function matchRecords(
   mode?: ConnectorMode  // Optional: for buyer-seller validation
 ): Promise<MatchingResult> {
 
+  // Safari guard: Ensure arrays are valid before iteration
+  if (!demand || !Array.isArray(demand)) {
+    console.error('[matchRecords] Invalid demand array:', demand);
+    return { demandMatches: [], supplyAggregates: [], stats: { totalDemand: 0, totalSupply: 0, totalMatches: 0, avgScore: 0 } };
+  }
+  if (!supply || !Array.isArray(supply)) {
+    console.error('[matchRecords] Invalid supply array:', supply);
+    return { demandMatches: [], supplyAggregates: [], stats: { totalDemand: 0, totalSupply: supply?.length || 0, totalMatches: 0, avgScore: 0 } };
+  }
+
   const totalComparisons = demand.length * supply.length;
   console.log(`[matchRecords] ENTER: ${demand.length} demand × ${supply.length} supply = ${totalComparisons} comparisons, mode=${mode || 'none'}`);
   const startTime = performance.now();
@@ -291,6 +301,16 @@ export function matchRecordsSync(
   supply: NormalizedRecord[],
   mode?: ConnectorMode  // Optional: for buyer-seller validation
 ): MatchingResult {
+
+  // Safari guard: Ensure arrays are valid before iteration
+  if (!demand || !Array.isArray(demand)) {
+    console.error('[matchRecordsSync] Invalid demand array:', demand);
+    return { demandMatches: [], supplyAggregates: [], stats: { totalDemand: 0, totalSupply: 0, totalMatches: 0, avgScore: 0 } };
+  }
+  if (!supply || !Array.isArray(supply)) {
+    console.error('[matchRecordsSync] Invalid supply array:', supply);
+    return { demandMatches: [], supplyAggregates: [], stats: { totalDemand: 0, totalSupply: supply?.length || 0, totalMatches: 0, avgScore: 0 } };
+  }
 
   const allMatches: Match[] = [];
   let buyerSellerFiltered = 0;
