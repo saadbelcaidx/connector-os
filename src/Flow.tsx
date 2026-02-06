@@ -70,10 +70,7 @@ import {
 } from './services/IntroReliability';
 
 // Sender Adapter (Instantly, Plusvibe, etc.)
-import { resolveSender, buildSenderConfig, SenderAdapter, SenderConfig } from './services/senders';
-
-// Instantly Rate Limiter — ALL Instantly calls MUST go through this
-import { instantlyLimiter, QueueProgress } from './services/InstantlyRateLimiter';
+import { resolveSender, buildSenderConfig, SenderAdapter, SenderConfig, getLimiter, QueueProgress } from './services/senders';
 
 // Connector Hub Adapter (side-channel - does NOT modify existing flow)
 import { isFromHub, hasHubContacts, getHubBothSides, clearHubContacts } from './services/ConnectorHubAdapter';
@@ -2831,16 +2828,20 @@ export default function Flow() {
     // ==========================================================================
     // PHASE 2: SEND VIA RATE-LIMITED QUEUE
     // ==========================================================================
-    // ALL Instantly calls go through instantlyLimiter — never fire inline.
-    // Rate limits: 80/10s burst, 480/min sustained, concurrency=4
+    // ALL sends go through provider-specific rate limiter — never fire inline.
+    // Instantly: 80/10s burst, 480/min sustained, concurrency=4
+    // Plusvibe: 5/sec, concurrency=2
     // 429 handling: pause bucket, retry with backoff, never skip
     // ==========================================================================
 
+    // Get limiter for this provider
+    const limiter = getLimiter(senderId);
+
     // Reset limiter for this batch
-    instantlyLimiter.reset();
+    limiter.reset();
 
     // Set progress callback
-    instantlyLimiter.setProgressCallback((progress: QueueProgress) => {
+    limiter.setProgressCallback((progress: QueueProgress) => {
       setState(prev => ({
         ...prev,
         progress: {
@@ -2854,7 +2855,7 @@ export default function Flow() {
     // Handle abort
     const originalAbortRef = abortRef.current;
     if (abortRef.current) {
-      instantlyLimiter.abort();
+      limiter.abort();
       return;
     }
 
@@ -2866,8 +2867,8 @@ export default function Flow() {
       }
 
       try {
-        // ALL Instantly calls MUST go through the limiter
-        const result = await instantlyLimiter.enqueue(senderConfig, item.params);
+        // ALL sends MUST go through the provider's rate limiter
+        const result = await limiter.enqueue(senderConfig, item.params);
         return { item, result };
       } catch (err) {
         return {
@@ -2948,7 +2949,7 @@ export default function Flow() {
     }
 
     // Clean up limiter
-    instantlyLimiter.setProgressCallback(null);
+    limiter.setProgressCallback(null);
 
     // Complete — with breakdown
     setState(prev => ({

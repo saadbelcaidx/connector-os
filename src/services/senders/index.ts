@@ -8,6 +8,8 @@
 export type { SenderAdapter, SenderConfig, SendLeadParams, SendResult, SenderId } from './SenderAdapter';
 export { InstantlySender } from './InstantlySender';
 export { PlusvibeSender } from './PlusvibeSender';
+export { getLimiter, instantlyLimiter } from './limiters';
+export type { QueueProgress, ProgressCallback } from './limiters';
 
 import type { SenderAdapter, SenderId, SenderConfig } from './SenderAdapter';
 import { InstantlySender } from './InstantlySender';
