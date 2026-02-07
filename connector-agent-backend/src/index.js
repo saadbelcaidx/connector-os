@@ -1528,7 +1528,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
   `).get(emailLower);
   if (foundEmail) {
     console.log(`[Verify] CACHE HIT from email_cache: ${emailLower}`);
-    return res.json({ email: emailToVerify, status: 'valid' });
+    return res.json({ email: emailToVerify });
   }
 
   // Check quota first (don't deduct yet)
@@ -1556,11 +1556,11 @@ app.post('/api/email/v2/verify', async (req, res) => {
       deductTokens(effectiveUserId, effectiveKeyId, 1);
     }
 
-    // VALID = return email + status, anything else = null + invalid
+    // VALID = return email, anything else = null
     if (result.verdict === 'VALID') {
-      res.json({ email: emailToVerify, status: 'valid' });
+      res.json({ email: emailToVerify });
     } else {
-      res.json({ email: null, status: 'invalid' });
+      res.json({ email: null });
     }
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
@@ -1743,13 +1743,10 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
   const MONTHLY_LIMIT = 10000;
 
   if (usage.tokens_used + tokensNeeded > MONTHLY_LIMIT) {
-    return res.status(429).json({ success: false, error: 'Quota exceeded' });
+    return res.status(429).json({ email: null });
   }
 
   const results = [];
-  let valid = 0;
-  let invalid = 0;
-  let unknown = 0;
   let tokensUsed = 0;
 
   for (const email of emails) {
@@ -1761,29 +1758,15 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
       tokensUsed += 1;
     }
 
+    // Canonical contract: { email: string | null }
     results.push({
-      email,
-      verdict: result.verdict,
+      email: result.verdict === 'VALID' ? email : null,
     });
-
-    if (result.verdict === 'VALID') valid++;
-    else if (result.verdict === 'INVALID') invalid++;
-    else unknown++;
   }
 
-  console.log(`[BulkVerify] ${emails.length} emails → VALID:${valid} INVALID:${invalid} UNKNOWN:${unknown}`);
+  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged`);
 
-  res.json({
-    success: true,
-    results,
-    summary: {
-      total: emails.length,
-      valid,
-      invalid,
-      unknown,
-    },
-    tokens_used: tokensUsed,
-  });
+  res.json(results);
 });
 
 // ============================================================
