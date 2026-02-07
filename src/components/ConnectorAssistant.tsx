@@ -196,9 +196,22 @@ Connector OS is a CSV-only matching platform. Upload two CSVs (Demand + Supply),
 **Path:** Settings → Data → Upload CSV
 
 **Required columns:** Company Name, Signal
-**Optional:** Full Name, Email, Domain, Context, Title
+**Optional:** Full Name, Email, Domain, Context, Title, LinkedIn URL
 
 **If user has Email in CSV:** System skips enrichment (saves API credits)
+
+**Column Mapper (auto-detection):**
+- CSVs with non-standard headers (Apollo, LinkedIn, WellFound) are auto-detected
+- Common aliases mapped automatically: organization → Company Name, job_title → Signal, company_url → Domain, email_address → Email
+- If ALL required fields auto-detect → mapper is skipped silently (same as before)
+- If some columns can't be detected → mapper UI appears with dropdowns to assign columns manually
+- Each dropdown excludes columns already mapped elsewhere (no double-mapping)
+- Sample data preview shows first non-empty value per column to help you decide
+
+**Signal Prefix (optional):**
+- Prepends text to every Signal value (e.g. prefix "Hiring" turns "Engineer" into "Hiring Engineer")
+- Shows how many rows will be affected
+- Leave blank to keep signals unchanged
 
 **Validation:**
 - File must be .csv (not .xlsx)
@@ -208,6 +221,7 @@ Connector OS is a CSV-only matching platform. Upload two CSVs (Demand + Supply),
 **Common errors:**
 - "Add a demand CSV" → Upload in Settings → Data
 - "CSV has errors" → Download errors.csv, fix, re-upload
+- Mapper shows but columns look wrong → Use dropdowns to manually assign, or re-export CSV with standard headers
 
 ## Settings Sections
 
@@ -483,6 +497,7 @@ export function ConnectorAssistant() {
     error: null,
   });
   const [input, setInput] = useState('');
+  const [pendingAutoSend, setPendingAutoSend] = useState(false);
   const [aiConfig, setAiConfig] = useState<{
     provider: string;
     apiKey: string;
@@ -493,6 +508,7 @@ export function ConnectorAssistant() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sendMessageRef = useRef<(() => void) | null>(null);
 
   // Check SSM access (bypass in dev mode for testing)
   useEffect(() => {
@@ -638,6 +654,32 @@ export function ConnectorAssistant() {
     }
   }, [isOpen]);
 
+  // Listen for external open requests (e.g. from CSV mapper "?" button)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.question) {
+        setInput(detail.question);
+        setIsOpen(true);
+        // Auto-send after drawer opens and input is set
+        setPendingAutoSend(true);
+      } else {
+        setIsOpen(true);
+      }
+    };
+    window.addEventListener('connector-assistant:open', handler);
+    return () => window.removeEventListener('connector-assistant:open', handler);
+  }, []);
+
+  // Auto-send when opened with a pre-filled question
+  useEffect(() => {
+    if (pendingAutoSend && input.trim() && isOpen && aiConfig && !state.isLoading) {
+      setPendingAutoSend(false);
+      // Delay one tick so drawer is rendered
+      setTimeout(() => sendMessageRef.current?.(), 150);
+    }
+  }, [pendingAutoSend, input, isOpen, aiConfig, state.isLoading]);
+
   // Send message
   const sendMessage = useCallback(async () => {
     const trimmed = input.trim();
@@ -685,6 +727,9 @@ export function ConnectorAssistant() {
       }));
     }
   }, [input, state.messages, state.isLoading, aiConfig]);
+
+  // Keep ref in sync for auto-send
+  sendMessageRef.current = sendMessage;
 
   // Handle feedback
   const handleFeedback = useCallback((id: string, feedback: 'up' | 'down') => {

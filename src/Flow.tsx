@@ -1285,7 +1285,7 @@ export default function Flow() {
             supplyCampaignId,
             aiConfig,
             openaiApiKeyFallback,
-            enhanceIntro: data?.enhance_intro === true, // default false — user must opt-in to AI intros
+            enhanceIntro: ai.enhanceIntro === true, // from localStorage (same source as AI keys)
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
@@ -2897,8 +2897,7 @@ export default function Flow() {
         else sentSupply++;
       } else if (result.status === 'existing') {
         breakdown.existing++;
-        if (item.type === 'DEMAND') sentDemand++;
-        else sentSupply++;
+        // NOT counted toward sentDemand/sentSupply — these were skipped by Instantly
       } else if (result.status === 'needs_attention') {
         breakdown.needsAttention++;
         if (result.detail) {
@@ -4939,17 +4938,22 @@ export default function Flow() {
                 className="mb-8"
               >
                 <span className="text-[56px] font-light text-white tracking-tight">
-                  {state.sendBreakdown.new + state.sendBreakdown.existing}
+                  {state.sendBreakdown.new}
                 </span>
-                <p className="text-[15px] text-white/50 mt-1 font-medium">routed</p>
+                <p className="text-[15px] text-white/50 mt-1 font-medium">sent</p>
 
-                {/* Breakdown: new · existing */}
+                {/* Breakdown: demand · supply · already in Instantly */}
                 <p className="text-[12px] text-white/25 mt-2">
-                  {state.sendBreakdown.new > 0 && `${state.sendBreakdown.new} new`}
-                  {state.sendBreakdown.new > 0 && state.sendBreakdown.existing > 0 && ' · '}
-                  {state.sendBreakdown.existing > 0 && `${state.sendBreakdown.existing} existing`}
-                  {state.sendBreakdown.new === 0 && state.sendBreakdown.existing === 0 && 'No new leads'}
+                  {state.sentDemand > 0 && `${state.sentDemand} demand`}
+                  {state.sentDemand > 0 && state.sentSupply > 0 && ' · '}
+                  {state.sentSupply > 0 && `${state.sentSupply} supply`}
+                  {state.sendBreakdown.new === 0 && 'No new leads'}
                 </p>
+                {state.sendBreakdown.existing > 0 && (
+                  <p className="text-[12px] text-white/20 mt-1">
+                    {state.sendBreakdown.existing} already in Instantly
+                  </p>
+                )}
 
                 {/* Needs attention — subtle, not alarming */}
                 {state.sendBreakdown.needsAttention > 0 && (
