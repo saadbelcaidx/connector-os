@@ -1,3 +1,7 @@
+# NO COWBOY PATCHES
+
+> Every fix must be architectural. No "quick patches" that work today and break tomorrow. Think like Stripe: find the root cause, fix it once, fix it correctly. If you don't understand the problem fully, STOP and audit before writing code.
+
 # Connector OS — Project Context
 
 > This file is the single source of truth for Claude. Read this first every session.

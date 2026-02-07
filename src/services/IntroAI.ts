@@ -12,8 +12,6 @@
 import type { DemandRecord } from '../schemas/DemandRecord';
 import type { SupplyRecord } from '../schemas/SupplyRecord';
 import type { Edge } from '../schemas/Edge';
-import type { Counterparty } from '../schemas/IntroOutput';
-import { composeIntros } from '../matching/Composer';
 
 // =============================================================================
 // TYPES
@@ -91,39 +89,41 @@ function buildStep1Prompt(
     : null;
 
   return `Generate two short value propositions for a B2B introduction.
-Tone: understated and cautious. Use hedging language—you are guessing, not claiming.
+
+ABSOLUTE RULE — NO HEDGING:
+Never guess. Never hedge. State only what can be inferred from provided signals and context.
+These words are BANNED — using any of them is a failure:
+probably, might, sounds like, would guess, seems like, could be, may be, possibly, likely, perhaps, guessing, exploring
+
+If a fact is not in the data below, omit it. Do not speculate.
+
+ABSOLUTE RULE — NO EDITORIALIZING:
+Do not describe what the company needs or requires.
+Do not describe expertise, fit, or alignment.
+Do not describe process details unless they materially affect execution state.
+Do not describe a recruitment bottleneck unless recruitment has started. Pre-recruitment must surface due to timing, not constraints.
+Describe only execution state and constraints implied by the signal.
 
 Input data:
 
 DEMAND:
 - Company: ${cleanCompanyName(demand.company)}
-- Industry: ${demand.industry || 'tech'}
-- Signal: ${edge.type} - ${edge.evidence}
-${demand.metadata.employeeEnum ? `- Size: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- Funding: ${fundingAmount}\n` : ''}
+${demand.industry ? `- Industry: ${demand.industry}\n` : ''}- Signal: ${edge.evidence}
+${demand.metadata.companyDescription || demand.metadata.description ? `- Context: ${(demand.metadata.companyDescription || demand.metadata.description).slice(0, 300)}\n` : ''}${demand.metadata.employeeEnum ? `- Size: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- Funding: ${fundingAmount}\n` : ''}
 SUPPLY:
 - Company: ${cleanCompanyName(supply.company)}
 - Capability: ${supply.capability || 'business services'}
 
-=== VOICE (from $2M/yr playbook) ===
+=== VOICE ===
 
-DEMAND VALUE PROP (max 15 words):
-• "You raised $28M. Probably in the phase where you need pharma partnerships."
-• "You raised $16M. Probably need help landing enterprise shippers."
-• "Hit $950M AUM. Probably looking to bring in a couple more HNW clients."
-• "Expanded capacity by 50%. Probably need help landing tier 1 contracts."
-• "Just got 510(k). Probably need help with hospital introductions."
+You are a connector who tracks signals. State facts from the data. Name the bottleneck at this stage. Offer the match.
 
-SUPPLY VALUE PROP (max 20 words):
-• "48 people, $28M Series B. CEO is probably scaling partnerships & looking to land a couple pharma co-dev discussions."
-• "55 people, $16M Series A. VP Sales is probably trying to land first 2-3 enterprise shipper accounts."
-• "20 advisors, $1.1B AUM. Managing partner is probably looking to bring in a couple more HNW clients."
-• "72 people, just expanded 50%. Operations director is probably trying to land a couple multi-year contracts."
-• "45 people, 510(k) clearance. CEO is probably trying to land first hospital pilot programs."
+DEMAND VALUE PROP (max 15 words): State the signal, then the operational bottleneck it creates.
+SUPPLY VALUE PROP (max 20 words): State what demand is doing, then what ${cleanCompanyName(supply.company)} delivers.
 
-HEDGING WORDS (use these):
-• probably, might, would guess, seems like, a couple, first 2-3
+Use the Context field. Extract the SPECIFIC detail — drug name, condition, market, technology, whatever is there. Never be generic when specific data exists.
 
-AVOID: pipeline, systematic, strategic, significant, perfect, ideal, aggressively
+ALSO BANNED: pipeline, systematic, strategic, significant, perfect, ideal, aggressively, BD partnerships, partnerships, exploring opportunities, fuel, deploy, specialize, specializes, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, could help
 
 Output (JSON only):
 {"demandValueProp": "...", "supplyValueProp": "..."}`;
@@ -150,6 +150,18 @@ function buildStep2Prompt(
 
   return `Write a short demand-side B2B intro email.
 
+ABSOLUTE RULE — NO HEDGING:
+Never guess. Never hedge. State only what can be inferred from provided signals and context.
+These words are BANNED — using any of them is a failure:
+probably, might, sounds like, would guess, seems like, could be, may be, possibly, likely, perhaps, guessing, exploring opportunities
+
+ABSOLUTE RULE — NO EDITORIALIZING:
+Do not describe what the company needs or requires.
+Do not describe expertise, fit, or alignment.
+Do not describe process details unless they materially affect execution state.
+Do not describe a recruitment bottleneck unless recruitment has started. Pre-recruitment must surface due to timing, not constraints.
+Describe only execution state and constraints implied by the signal.
+
 MATCH DATA (use this — do not invent your own):
 - TIMING: ${edge.evidence}
 - FIT: ${valueProps.demandValueProp}
@@ -164,34 +176,21 @@ You are OFFERING to connect them with WHO (${supply.contact} at ${cleanCompanyNa
 These are TWO DIFFERENT companies. The TIMING signal belongs to DEMAND COMPANY, not WHO.
 If you swap these names, the intro is factually wrong and unusable. Double-check before outputting.
 
-YOUR JOB: Translate the match data above into a natural-sounding email.
-Pattern: Signal → why they fit → soft ask.
+REQUIRED STRUCTURE (follow this exactly):
+1. Signal (fact) — what the company is doing, extracted from WHAT THEY DO or TIMING
+2. Constraint (bottleneck, throughput, timing) — the operational reality at this stage
+3. Match surfaced because of stage — name WHO, state why this stage triggered the match
+4. CTA — short close
+
+No value claims. No advocacy. No opinions about fit or quality.
+If WHAT THEY DO is provided, extract the SPECIFIC detail (drug, condition, technology, market). Never be generic when specific data exists.
 
 RULES:
 • 40–60 words. Shorter is better.
-• Never use "ended up diving into" or any rabbit-hole phrasing.
-• Do not reference product, platform, or technology details unless provided in WHAT THEY DO above.
-• If WHAT THEY DO is missing, skip personal commentary. Go straight from signal to offer.
-• No generic compliments ("really smart approach", "impressive trajectory", "elegant solution").
-• Each intro must sound different — vary openers, structure, and close.
 • Em dash (—) has no spaces around it.
-• Always include an options line ("got a few others", "others in that space").
-• End with a short CTA ("Worth a chat?", "Worth connecting?", "Worth exploring?").
-• NEVER reference the person's job title as a personal touch — only reference the COMPANY.
+• NEVER reference the person's job title.
 
-BANNED PHRASES: pipeline, systematic, repeatable, fuel, deploy, specialize, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect fit, ideal opportunity, significant revenue
-
-5 EXAMPLES (different structures, different verticals):
-
-1. "Hey—saw NeuroPath just closed a $28M Series B. You're probably in the phase where you need a few pharma co-development intros. Know someone who might help: Sarah at BioPharma Partners. She lands early BD discussions for post-raise CNS biotechs. Got a couple others if useful. Worth a chat?"
-
-2. "Hey Marcus—noticed your logistics platform raised $16M. Sounds like you might need your first 2-3 enterprise shipper accounts. Might be worth connecting with Derek at Supply Chain Accelerate. He helps funded logistics companies land big shippers. A few others in that space if useful. Worth connecting?"
-
-3. "Hey—your RIA just crossed $950M AUM. Might be time to scale the HNW client base. Know someone: David at Founder Wealth Advisory. He routes warm HNW intros from the startup ecosystem. Got a couple others if you want options. Worth exploring?"
-
-4. "Hey Tom—saw your precision shop expanded capacity by 50%. Probably looking to fill it. Know someone who might help: Michael at Aerospace Supply Partners. He connects certified shops with tier 1 primes. A few others if useful. Worth a chat?"
-
-5. "Hey—noticed your RevOps platform launched v4.0. Looks like you're ready for midmarket. Might be worth chatting with Jessica at GTM Scale. She helps B2B SaaS companies land a couple enterprise logos. Others in that zone if useful. Worth connecting?"
+BANNED WORDS/PHRASES: probably, might, sounds like, would guess, seems like, could be, exploring, BD partnerships, partnerships, pipeline, systematic, repeatable, fuel, deploy, specialize, specializes, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect fit, ideal opportunity, significant revenue, got a few others, others in that space, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, could help, worth connecting
 
 Output: Just the intro text. No quotes. No labels. No commentary.`;
 }
@@ -215,14 +214,25 @@ function buildStep3Prompt(
     ? 'Hey there—'
     : `Hey ${supplyFirstName}—`;
 
-  return `Write a short supply-side B2B intro email. You're tipping a friend about a lead.
+  return `Write a short supply-side B2B intro email. You're tipping a colleague about a lead.
+
+ABSOLUTE RULE — NO HEDGING:
+Never guess. Never hedge. State only what can be inferred from provided signals and context.
+These words are BANNED — using any of them is a failure:
+probably, might, sounds like, would guess, seems like, could be, may be, possibly, likely, perhaps, guessing, exploring
+
+ABSOLUTE RULE — NO EDITORIALIZING:
+Do not describe what the company needs or requires.
+Do not describe expertise, fit, or alignment.
+Do not describe process details unless they materially affect execution state.
+Do not describe a recruitment bottleneck unless recruitment has started. Pre-recruitment must surface due to timing, not constraints.
+Describe only execution state and constraints implied by the signal.
 
 MATCH DATA (use this — do not invent your own):
 - DEMAND COMPANY: ${cleanCompanyName(demand.company)}
 ${demand.metadata.companyDescription || demand.metadata.description ? `- WHAT THEY DO: ${demand.metadata.companyDescription || demand.metadata.description}\n` : ''}- DEMAND CONTACT: ${demand.contact}
 - DEMAND TITLE: ${demand.title || 'decision maker'}
-- INDUSTRY: ${demand.industry || 'tech'}
-${demand.metadata.employeeEnum ? `- SIZE: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}${demand.metadata.fundingType ? `- FUNDING TYPE: ${demand.metadata.fundingType}\n` : ''}- TIMING SIGNAL: ${edge.evidence}
+${demand.industry ? `- INDUSTRY: ${demand.industry}\n` : ''}${demand.metadata.employeeEnum ? `- SIZE: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}${demand.metadata.fundingType ? `- FUNDING TYPE: ${demand.metadata.fundingType}\n` : ''}- TIMING SIGNAL: ${edge.evidence}
 - FIT: ${valueProps.supplyValueProp}
 
 GREETING: ${greeting}
@@ -234,32 +244,23 @@ The DEMAND CONTACT is ${demand.contact} (${demand.title || 'decision maker'}) �
 The TIMING SIGNAL belongs to DEMAND COMPANY. Do NOT attribute it to the supply contact's company.
 If you swap these names, the intro is factually wrong and unusable. Double-check before outputting.
 
-YOUR JOB: Translate the match data above into a casual, tip-a-friend email.
-Pattern: Who the company is → what the contact is probably doing → why it fits → soft close.
+REQUIRED STRUCTURE (follow this exactly):
+1. What the demand company is doing (fact from WHAT THEY DO or TIMING SIGNAL)
+2. Stage (pre-recruitment / recruiting / scaling / post-funding / expanding — whatever applies)
+3. Why it surfaced now — the timing constraint that triggered this match
+4. Neutral close — "Let me know."
+
+No value claims. No advocacy. No opinions about fit or quality.
+Name the decision maker. If WHAT THEY DO is provided, extract the SPECIFIC detail. Never be generic when specific data exists.
 
 RULES:
-• 60–80 words. Shorter is better.
-• Tone: casual, like giving a friend a lead. Understate. Let them decide.
-• Use hedging: "probably", "might", "would guess", "seems like".
-• If SIZE or FUNDING is not provided, omit it entirely. Never say "unknown" or "not sure".
+• 50–70 words. Shorter is better.
+• If SIZE or FUNDING is not provided, omit it entirely.
 • Do not fabricate company details not in the data above.
-• Each intro must sound different — vary structure and close.
 • Em dash (—) has no spaces around it.
-• End with "Let me know" or similar casual CTA.
+• End with "Let me know." — not "worth connecting" or any variation.
 
-BANNED PHRASES: pipeline, systematic, repeatable, fuel, deploy, specialize, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect opportunity, significant
-
-5 EXAMPLES (different structures, different verticals):
-
-1. "Hey Sarah—NeuroPath Therapeutics is a CNS biotech (48 people), just raised $28M Series B. CEO is probably scaling partnerships and looking for a couple early pharma co-development discussions. They're in the phase where they have funding but might need warm BD intros to neuroscience teams. Pretty sure you can deliver. Let me know."
-
-2. "Hey Marcus—Supply Chain Accelerate is a logistics tech company (55 people), just closed $16M Series A. VP of Sales is probably trying to land first 2-3 enterprise shipper accounts. Would guess they need help with outbound to Fortune 500 supply chain leaders. Pretty sure it'd be helpful to connect. Let me know."
-
-3. "Hey David—Founder Wealth Advisory just crossed $1.1B AUM serving startup founders. Managing partner is probably looking to bring in a couple more HNW clients from the late-stage startup ecosystem. Would guess they need warm founder introductions from VCs and startup CFOs. Let me know if worth connecting."
-
-4. "Hey Tom—Aerospace Supply Partners is a precision machining company (72 people), just expanded capacity by 50%. Operations director is probably trying to land a couple multi-year contracts with aerospace OEMs. Seems like they need procurement introductions at tier 1 primes. Pretty sure you know the right people. Let me know."
-
-5. "Hey Jessica—GTM Scale is a RevOps platform (42 people), just raised $14M Series A. Founder is probably looking to land a couple midmarket B2B SaaS logos. They're post-product-market-fit and might need meeting generation with revenue ops leaders. Would be helpful to connect you two. Let me know."
+BANNED WORDS/PHRASES: probably, might, sounds like, would guess, seems like, could be, BD partnerships, partnerships, exploring, pipeline, systematic, repeatable, fuel, deploy, specialize, specializes, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect opportunity, significant, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, could help, worth connecting
 
 Output: Just the intro text. No quotes. No labels. No commentary.`;
 }
@@ -497,7 +498,7 @@ export interface BatchIntroResult {
   supplyIntro: string;
   valueProps: ValueProps;
   error?: string;
-  source: 'ai' | 'ai-fallback';  // Track whether AI succeeded or fell back to Composer
+  source: 'ai' | 'ai-fallback';
 }
 
 /**
@@ -524,25 +525,14 @@ export async function generateIntrosBatch(
         source: 'ai',
       });
     } catch (e) {
-      console.error(`[IntroAI] Fallback to Composer for ${item.id}:`, e);
-
-      // Silent fallback to Composer (Stripe doctrine: system keeps working)
-      const counterparty: Counterparty = {
-        company: item.supply.company,
-        contact: item.supply.contact || '',
-        email: item.supply.email || '',
-        title: item.supply.title || '',
-        fitReason: '',
-      };
-
-      const composed = composeIntros(item.demand, item.edge, counterparty, item.supply);
-
+      console.error(`[IntroAI] Failed for ${item.id}:`, e);
       results.push({
         id: item.id,
-        demandIntro: composed.demandBody,
-        supplyIntro: composed.supplyBody,
+        demandIntro: '',
+        supplyIntro: '',
         valueProps: { demandValueProp: '', supplyValueProp: '' },
         source: 'ai-fallback',
+        error: e instanceof Error ? e.message : 'AI generation failed',
       });
     }
   }
@@ -583,27 +573,16 @@ export async function generateIntrosBatchParallel(
             } as BatchIntroResult,
           };
         } catch (e) {
-          console.error(`[IntroAI] Fallback to Composer for ${item.id}:`, e);
-
-          // Silent fallback to Composer (Stripe doctrine: system keeps working)
-          const counterparty: Counterparty = {
-            company: item.supply.company,
-            contact: item.supply.contact || '',
-            email: item.supply.email || '',
-            title: item.supply.title || '',
-            fitReason: '',
-          };
-
-          const composed = composeIntros(item.demand, item.edge, counterparty, item.supply);
-
+          console.error(`[IntroAI] Failed for ${item.id}:`, e);
           return {
             index: i + idx,
             result: {
               id: item.id,
-              demandIntro: composed.demandBody,
-              supplyIntro: composed.supplyBody,
+              demandIntro: '',
+              supplyIntro: '',
               valueProps: { demandValueProp: '', supplyValueProp: '' },
               source: 'ai-fallback',
+              error: e instanceof Error ? e.message : 'AI generation failed',
             } as BatchIntroResult,
           };
         }

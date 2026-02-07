@@ -63,7 +63,6 @@ interface Settings {
   azureDeployment: string;
   claudeApiKey: string;
   aiModel: string;
-  enhanceIntro: boolean;  // When true, use AI-enhanced intros; when false, use templates
   // Pre-signal context (operator-written, keyed by domain)
   preSignalContext: Record<string, PreSignalContextEntry>;
 }
@@ -105,7 +104,6 @@ const DEFAULT_SETTINGS: Settings = {
   azureDeployment: '',
   claudeApiKey: '',
   aiModel: 'gpt-4o-mini',
-  enhanceIntro: false,  // Default OFF — user must opt-in to AI intros
   // Pre-signal context
   preSignalContext: {},
 };
@@ -266,10 +264,6 @@ export default function Settings() {
   const [showDemandCsv, setShowDemandCsv] = useState(false);
   const [showSupplyCsv, setShowSupplyCsv] = useState(false);
 
-  // Intro Preview Modal
-  const [showIntroPreview, setShowIntroPreview] = useState(false);
-
-
   // Computed: check if any AI API key is configured
   const hasAIKey = !!(
     (settings.aiProvider === 'openai' && settings.openaiApiKey) ||
@@ -358,7 +352,6 @@ export default function Settings() {
           azureDeployment: aiParsed.azureDeployment || '',
           claudeApiKey: aiParsed.claudeApiKey || '',
           aiModel: aiParsed.aiModel || 'gpt-4o-mini',
-          enhanceIntro: aiParsed.enhanceIntro ?? false,
           // Pre-signal context (JSONB from DB, defaults to empty)
           preSignalContext: data.pre_signal_context || {},
         });
@@ -373,7 +366,6 @@ export default function Settings() {
           azureDeployment: aiParsed.azureDeployment || '',
           claudeApiKey: aiParsed.claudeApiKey || '',
           aiModel: aiParsed.aiModel || 'gpt-4o-mini',
-          enhanceIntro: aiParsed.enhanceIntro ?? false,
         }));
       }
     } catch (e) {
@@ -404,7 +396,6 @@ export default function Settings() {
         azureDeployment: settings.azureDeployment,
         claudeApiKey: settings.claudeApiKey,
         aiModel: settings.aiModel,
-        enhanceIntro: settings.enhanceIntro,
       }));
 
       // Always save Platform Intelligence keys to localStorage (for /p/* routes)
@@ -1620,81 +1611,6 @@ export default function Settings() {
               )}
 
               {/* Enhance Intro Toggle */}
-              <div className="mt-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <h2 className="text-[11px] font-medium uppercase tracking-wider text-white/30">Intro Style</h2>
-                </div>
-
-                <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06]">
-                  <div className="space-y-3">
-                    {/* Standard Option */}
-                    <button
-                      onClick={() => setSettings({ ...settings, enhanceIntro: false })}
-                      className={`w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                        !settings.enhanceIntro
-                          ? 'bg-white/[0.06] border border-white/[0.15]'
-                          : 'bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.12]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                          !settings.enhanceIntro ? 'border-white' : 'border-white/30'
-                        }`}>
-                          {!settings.enhanceIntro && <div className="w-2 h-2 rounded-full bg-white" />}
-                        </div>
-                        <div>
-                          <div className={`text-[13px] font-medium ${!settings.enhanceIntro ? 'text-white' : 'text-white/70'}`}>
-                            Standard Intros
-                          </div>
-                          <div className="text-[11px] text-white/40 mt-0.5">Faster, no AI cost, template-based</div>
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Enhanced Option */}
-                    <button
-                      onClick={() => setSettings({ ...settings, enhanceIntro: true })}
-                      className={`w-full p-4 rounded-xl text-left transition-all duration-200 ${
-                        settings.enhanceIntro
-                          ? 'bg-violet-500/[0.08] border border-violet-500/[0.2]'
-                          : 'bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.12]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                          settings.enhanceIntro ? 'border-violet-400' : 'border-white/30'
-                        }`}>
-                          {settings.enhanceIntro && <div className="w-2 h-2 rounded-full bg-violet-400" />}
-                        </div>
-                        <div>
-                          <div className={`text-[13px] font-medium ${settings.enhanceIntro ? 'text-white' : 'text-white/70'}`}>
-                            Enhanced Intros
-                          </div>
-                          <div className="text-[11px] text-white/40 mt-0.5">AI-personalized, uses API key above</div>
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* Warning if Enhanced but no API key */}
-                    {settings.enhanceIntro && !hasAIKey && (
-                      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500/[0.08] border border-amber-500/[0.15]">
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-amber-400 flex-shrink-0">
-                          <path d="M7 5V7.5M7 9.5H7.005M12.5 7C12.5 10.0376 10.0376 12.5 7 12.5C3.96243 12.5 1.5 10.0376 1.5 7C1.5 3.96243 3.96243 1.5 7 1.5C10.0376 1.5 12.5 3.96243 12.5 7Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                        <span className="text-[11px] text-amber-400/90">Requires AI API key above — will use standard templates until configured</span>
-                      </div>
-                    )}
-
-                    {/* Preview Button */}
-                    <button
-                      onClick={() => setShowIntroPreview(true)}
-                      className="w-full mt-2 py-2.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[12px] text-white/60 hover:text-white/80 hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-200"
-                    >
-                      Preview Both Styles
-                    </button>
-                  </div>
-                </div>
-              </div>
 
               <style>{`
                 @keyframes settings-fade-in {
@@ -2108,90 +2024,6 @@ export default function Settings() {
 
       <Dock />
 
-      {/* Intro Preview Modal */}
-      {showIntroPreview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-            onClick={() => setShowIntroPreview(false)}
-          />
-
-          {/* Modal */}
-          <div className="relative w-full max-w-4xl bg-[#0A0A0A] border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
-              <h2 className="text-[15px] font-medium text-white">Preview Intro Styles</h2>
-              <button
-                onClick={() => setShowIntroPreview(false)}
-                className="p-1.5 rounded-lg hover:bg-white/[0.06] transition-colors"
-              >
-                <X size={18} className="text-white/50" />
-              </button>
-            </div>
-
-            {/* Content - Side by Side */}
-            <div className="p-6 grid grid-cols-2 gap-6">
-              {/* Standard (Template) */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider bg-white/[0.06] text-white/50">
-                    Standard
-                  </span>
-                  <span className="text-[11px] text-white/40">Template-based</span>
-                </div>
-                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                  <p className="text-[13px] text-white/80 leading-relaxed whitespace-pre-line">
-{`Hey Sarah —
-
-Noticed Acme Corp is hiring engineers — I'm connected to John at TechRecruit who helps with talent placement.
-
-Worth an intro?`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 text-[11px] text-white/40">
-                  <span>✓ Instant generation</span>
-                  <span>✓ No API cost</span>
-                  <span>✓ Consistent format</span>
-                </div>
-              </div>
-
-              {/* Enhanced (AI) */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider bg-violet-500/[0.15] text-violet-400">
-                    Enhanced
-                  </span>
-                  <span className="text-[11px] text-white/40">AI-personalized</span>
-                </div>
-                <div className="p-4 rounded-xl bg-violet-500/[0.03] border border-violet-500/[0.1]">
-                  <p className="text-[13px] text-white/80 leading-relaxed whitespace-pre-line">
-{`Hey Sarah —
-
-Saw your $28M Series B for Acme and ended up going down a rabbit hole on your ML infrastructure work.
-
-Would you be open to connecting with John from TechRecruit? He helps post-raise AI companies land their first 2-3 senior hires.
-
-Got a couple others parked if helpful.`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 text-[11px] text-white/40">
-                  <span>✓ Personalized context</span>
-                  <span>✓ Signal-aware</span>
-                  <span>✓ Higher conversion</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 py-4 border-t border-white/[0.06] bg-white/[0.02]">
-              <p className="text-[11px] text-white/40 text-center">
-                Both styles get replies. Standard is faster, Enhanced adds personalization.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

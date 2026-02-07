@@ -34,11 +34,9 @@ import { generateDemandIntro, generateSupplyIntro } from './templates';
 
 // Deterministic Pipeline Components — Edge Preflight + Compose
 import { detectEdge } from './matching/EdgeDetector';
-import { composeIntros } from './matching/Composer';
 import type { DemandRecord } from './schemas/DemandRecord';
 import type { SupplyRecord } from './schemas/SupplyRecord';
 import type { Edge } from './schemas/Edge';
-import type { Counterparty } from './schemas/IntroOutput';
 
 // AI Config type
 import { AIConfig } from './services/AIService';
@@ -922,8 +920,6 @@ interface Settings {
   aiConfig: AIConfig | null;
   // LAYER 3: OpenAI key as fallback when Azure content filter blocks
   openaiApiKeyFallback?: string;
-  // Enhance Intro toggle — when true use AI, when false use templates (default false)
-  enhanceIntro?: boolean;
 }
 
 // =============================================================================
@@ -1285,7 +1281,6 @@ export default function Flow() {
             supplyCampaignId,
             aiConfig,
             openaiApiKeyFallback,
-            enhanceIntro: ai.enhanceIntro === true, // from localStorage (same source as AI keys)
           });
 
           console.log('[Flow] Loaded from Supabase, AI:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
@@ -1337,7 +1332,6 @@ export default function Flow() {
           supplyCampaignId,
           aiConfig,
           openaiApiKeyFallback,
-          enhanceIntro: s.enhanceIntro === true, // default false — user must opt-in to AI intros
         });
 
         console.log('[Flow] AI configured:', aiConfig ? aiConfig.provider : 'none', openaiApiKeyFallback ? '(OpenAI fallback configured)' : '');
@@ -2148,11 +2142,13 @@ export default function Flow() {
   const runIntroGeneration = async (
     matching: MatchingResult,
     enrichedDemand: Map<string, EnrichmentResult>,
-    enrichedSupply: Map<string, EnrichmentResult>
+    enrichedSupply: Map<string, EnrichmentResult>,
+    forceRegenerate: boolean = false
   ) => {
     // Task 3: Resume-safe intro generation — start with existing intros from state
-    const existingDemandIntros = state.demandIntros;
-    const existingSupplyIntros = state.supplyIntros;
+    // forceRegenerate: skip dedupe check (used by Regenerate button)
+    const existingDemandIntros = forceRegenerate ? new Map<string, string>() : state.demandIntros;
+    const existingSupplyIntros = forceRegenerate ? new Map<string, string>() : state.supplyIntros;
     const demandIntros = new Map(existingDemandIntros);
     const supplyIntros = new Map(existingSupplyIntros);
 
@@ -2202,7 +2198,7 @@ export default function Flow() {
     console.log(`[COMPOSE] Count: ${total} matches pass all 3 gates (edge + demand email + supply email)`);
 
     // Build IntroAIConfig from settings (used in Phase 2)
-    const introAIConfig: IntroAIConfig | null = settings.aiConfig?.apiKey ? {
+    const introAIConfig: IntroAIConfig | null = settings?.aiConfig?.apiKey ? {
       provider: settings.aiConfig.provider as 'openai' | 'anthropic' | 'azure',
       apiKey: settings.aiConfig.apiKey,
       model: settings.aiConfig.model,
@@ -2225,11 +2221,10 @@ export default function Flow() {
       demandRecord: DemandRecord;
       supplyRecord: SupplyRecord;
       edge: Edge;
-      match: typeof matching.demandMatches[0]; // For template fallback path
+      match: typeof matching.demandMatches[0];
     };
 
     const aiWorkItems: IntroWorkItem[] = [];
-    const templateItems: IntroWorkItem[] = [];
 
     console.log('[COMPOSE] Phase 1: Collecting work items...');
 
@@ -2418,15 +2413,10 @@ export default function Flow() {
         match,
       };
 
-      // Respect enhanceIntro toggle — AI only when user opts in AND has valid config
-      if (introAIConfig && settings.enhanceIntro) {
-        aiWorkItems.push(workItem);
-      } else {
-        templateItems.push(workItem);
-      }
+      aiWorkItems.push(workItem);
     }
 
-    console.log(`[COMPOSE] Phase 1 complete: ${aiWorkItems.length} AI items, ${templateItems.length} template items`);
+    console.log(`[COMPOSE] Phase 1 complete: ${aiWorkItems.length} items`);
 
     // ==========================================================================
     // PHASE 2: PARALLEL AI GENERATION (CONCURRENCY = 5)
@@ -2490,57 +2480,15 @@ export default function Flow() {
         progress++;
       }
 
-      // Check fallback rate — only warn when AI was explicitly enabled and attempted
-      if (settings.enhanceIntro) {
-        const totalAIAttempts = aiSuccess + aiFallback;
-        if (totalAIAttempts > 0) {
-          const fallbackRate = (aiFallback / totalAIAttempts) * 100;
-          console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
-          if (fallbackRate === 100) {
-            // AI completely unavailable — clear signal, once per session
-            setFallbackWarning('AI unavailable — using templates');
-            setTimeout(() => setFallbackWarning(null), 8000);
-          } else if (fallbackRate > 20) {
-            setFallbackWarning(`${Math.round(fallbackRate)}% of intros used template fallback. Check your API key or try a different provider.`);
-            setTimeout(() => setFallbackWarning(null), 8000);
-          }
+      // Check fallback rate
+      const totalAIAttempts = aiSuccess + aiFallback;
+      if (totalAIAttempts > 0) {
+        const fallbackRate = (aiFallback / totalAIAttempts) * 100;
+        console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
+        if (fallbackRate > 20) {
+          setFallbackWarning(`${Math.round(fallbackRate)}% of intros fell back. Check your API key or try a different provider.`);
+          setTimeout(() => setFallbackWarning(null), 8000);
         }
-      }
-    }
-
-    // ==========================================================================
-    // TEMPLATE PATH (no AI configured) — same as before
-    // ==========================================================================
-
-    if (templateItems.length > 0) {
-      console.log(`[COMPOSE] Processing ${templateItems.length} template items...`);
-
-      for (const item of templateItems) {
-        if (abortRef.current) break;
-
-        const counterparty: Counterparty = {
-          company: item.supplyRecord.company,
-          contact: item.supplyRecord.contact,
-          email: item.supplyRecord.email,
-          fitReason: `${item.supplyRecord.company} focuses on ${item.supplyRecord.capability}. ${item.demandRecord.company} ${item.edge.evidence}.`,
-        };
-
-        const composed_output = composeIntros(item.demandRecord, item.edge, counterparty, item.supplyRecord);
-
-        // Store intro with source tracking for badges
-        demandIntros.set(item.demandKey, { text: composed_output.demandBody, source: 'template' });
-        supplyIntros.set(item.supplyKey, { text: composed_output.supplyBody, source: 'template' });
-
-        console.log(`[COMPOSE] ✓ Template: ${item.demandRecord.company} → ${item.supplyRecord.company} (${item.edge.type})`);
-        composed++;
-        progress++;
-
-        setState(prev => ({
-          ...prev,
-          progress: { current: progress, total, message: `Writing clean introductions…` },
-          demandIntros: new Map(demandIntros),
-          supplyIntros: new Map(supplyIntros),
-        }));
       }
     }
 
@@ -2616,17 +2564,25 @@ export default function Flow() {
       console.error('[Flow] Cannot generate intros: no matching result');
       return;
     }
+    if (!settings) {
+      console.error('[Flow] Cannot generate intros: settings not loaded');
+      return;
+    }
 
-    // Clear existing intros first to force regeneration
+    // Clear existing intros in state AND pass empty maps to runIntroGeneration
+    // setState is async — runIntroGeneration would still see old state.demandIntros
+    // if we relied on setState alone. Override directly.
+    const emptyDemand = new Map<string, string>();
+    const emptySupply = new Map<string, string>();
     setState(prev => ({
       ...prev,
       step: 'generating',
-      demandIntros: new Map(),
-      supplyIntros: new Map(),
+      demandIntros: emptyDemand,
+      supplyIntros: emptySupply,
     }));
-    await runIntroGeneration(state.matchingResult, state.enrichedDemand, state.enrichedSupply);
+    await runIntroGeneration(state.matchingResult, state.enrichedDemand, state.enrichedSupply, true);
     setState(prev => ({ ...prev, step: 'ready' }));
-  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply]);
+  }, [state.matchingResult, state.enrichedDemand, state.enrichedSupply, settings]);
 
   // =============================================================================
   // CSV EXPORT HANDLER — Pure extraction from in-memory state
@@ -3162,7 +3118,7 @@ export default function Flow() {
       <div className="flex-1 flex items-center justify-center pb-24">
         <div className="w-full max-w-[520px] px-6">
 
-          <AnimatePresence>
+          <AnimatePresence mode="wait">
 
           {/* UPLOAD / START */}
           {state.step === 'upload' && (
@@ -3170,8 +3126,8 @@ export default function Flow() {
               key="upload"
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1], exit: { duration: 0 } }}
               className="text-center"
             >
               <div className="w-12 h-12 mx-auto mb-6 rounded-xl bg-gradient-to-b from-white/[0.08] to-white/[0.02] border border-white/[0.08] flex items-center justify-center">
@@ -3481,6 +3437,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, exit: { duration: 0 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-2">Finding matches</p>
@@ -3509,6 +3466,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, exit: { duration: 0 } }}
               className="w-full max-w-2xl mx-auto"
             >
               {(() => {
@@ -4147,6 +4105,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, exit: { duration: 0 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-2">Finding decision-makers…</p>
@@ -4593,6 +4552,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, exit: { duration: 0 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-4">Writing intros</p>
@@ -4619,6 +4579,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, exit: { duration: 0 } }}
               className="w-full max-w-5xl mx-auto px-4"
             >
               {(() => {
@@ -4877,6 +4838,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, exit: { duration: 0 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-4">Sending</p>
