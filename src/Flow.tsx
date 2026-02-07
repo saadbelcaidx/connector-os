@@ -3975,7 +3975,7 @@ export default function Flow() {
                         matches.map(m => ({
                           domain: m.demand.domain,
                           company: m.demand.company,
-                          email: m.demand.existingContact?.email,
+                          email: m.demand.email || m.demand.existingContact?.email,
                           existingContact: m.demand.existingContact,
                         })),
                         {
@@ -4057,13 +4057,15 @@ export default function Flow() {
                             {!canEnrich
                               ? 'Re-run scrape with required fields'
                               : summary.enabledProviders.length > 0
-                              ? `Find emails for ${summary.recordsNeedingEnrichment} companies`
+                              ? summary.recordsNeedingEnrichment > 0
+                                ? `Find emails for ${summary.recordsNeedingEnrichment} companies`
+                                : `Verify ${summary.recordsWithEmail} emails`
                               : 'Connect an email tool in Settings'
                             }
                           </motion.button>
 
                           {/* Credits info — only when routable AND providers enabled */}
-                          {canProceed && (
+                          {canProceed && summary.recordsNeedingEnrichment > 0 && (
                             <p className="text-[10px] text-white/30 mt-3">
                               Uses credits for {summary.recordsNeedingEnrichment} lookups
                             </p>
