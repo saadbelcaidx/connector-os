@@ -95,7 +95,11 @@
       "WebFetch(domain:www.postman.com)",
       "Bash(Select-Object -First 100)",
       "WebFetch(domain:summationcapital.com)",
-      "Bash(npm run test)"
+      "Bash(npm run test)",
+      "WebFetch(domain:api.explee.com)",
+      "WebFetch(domain:predictleads.com)",
+      "Bash(node:*)",
+      "Bash(ren:*)"
     ]
   }
 }

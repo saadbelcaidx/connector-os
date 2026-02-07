@@ -516,30 +516,10 @@ export function CsvUpload({ side, onValidated, onNormalized }: CsvUploadProps) {
       // Check if headers are already canonical (exact match)
       const isAlreadyCanonical = REQUIRED_FIELDS.every(f => headers.includes(f));
 
-      if (isAlreadyCanonical) {
-        // Headers already match — skip mapper entirely, use original text path
-        setState('validating');
-        const { result, validatedRows } = (() => {
-          const { result: r, rows: rr } = validateCsv(text, side);
-          return { result: r, validatedRows: rr };
-        })();
-
-        setValidationResult(result);
-        setParsedRows(validatedRows);
-        onValidated?.(result, validatedRows);
-
-        if (result.status === 'valid' && validatedRows.length > 0) {
-          await proceedWithNormalization(validatedRows, newUploadId);
-        } else {
-          setState('results');
-        }
-      } else if (allRequiredMapped) {
-        // All required fields auto-detected but headers aren't canonical
-        // Apply mapping immediately
-        setRawHeaders(headers);
-        setRawRows(rows);
-        setColumnMap(detected);
-
+      if (isAlreadyCanonical || allRequiredMapped) {
+        // Required fields resolved (canonical or auto-detected).
+        // Always apply mapping so optional columns (e.g. lowercase 'email'
+        // from Anymail Finder) get renamed to canonical 'Email'.
         const mappedRows = applyMapping(rows, detected, '');
         await runValidation(mappedRows, newUploadId);
       } else {

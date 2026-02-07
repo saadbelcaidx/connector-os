@@ -2300,7 +2300,7 @@ export default function Flow() {
       const demandIndustryRaw = Array.isArray(match.demand.industry)
         ? match.demand.industry[0]
         : match.demand.industry;
-      const demandIndustry = match.needProfile?.category || demandIndustryRaw || 'tech';
+      const demandIndustry = match.needProfile?.category || demandIndustryRaw || '';
 
       const demandRecord: DemandRecord = {
         domain: match.demand.domain,
@@ -2330,14 +2330,14 @@ export default function Flow() {
 
       const capabilityFromProfile = match.capabilityProfile?.category;
       const capabilityLabel =
-        capabilityFromProfile === 'biotech_contact' ? 'biotech BD partnerships' :
-        capabilityFromProfile === 'healthcare_contact' ? 'healthcare partnerships' :
-        capabilityFromProfile === 'tech_contact' ? 'technology partnerships' :
+        capabilityFromProfile === 'biotech_contact' ? 'biotech services' :
+        capabilityFromProfile === 'healthcare_contact' ? 'healthcare services' :
+        capabilityFromProfile === 'tech_contact' ? 'technology services' :
         capabilityFromProfile === 'finance_contact' ? 'financial services' :
         capabilityFromProfile === 'recruiting' ? 'talent placement' :
         capabilityFromProfile === 'bd_professional' ? 'business development' :
         capabilityFromProfile === 'executive' ? 'executive network' :
-        capabilityFromProfile === 'consulting' ? 'strategic consulting' :
+        capabilityFromProfile === 'consulting' ? 'consulting services' :
         capabilityFromProfile === 'fractional' ? 'fractional leadership' :
         capabilityFromProfile === 'marketing' ? 'growth marketing' :
         capabilityFromProfile === 'engineering' ? 'software development' :
@@ -2421,6 +2421,13 @@ export default function Flow() {
     // ==========================================================================
     // PHASE 2: PARALLEL AI GENERATION (CONCURRENCY = 5)
     // ==========================================================================
+
+    // TEMP LIMIT — remove after testing
+    const INTRO_LIMIT = 10;
+    if (aiWorkItems.length > INTRO_LIMIT) {
+      console.log(`[COMPOSE] TEMP LIMIT: Capping from ${aiWorkItems.length} to ${INTRO_LIMIT} items`);
+      aiWorkItems.length = INTRO_LIMIT;
+    }
 
     if (aiWorkItems.length > 0 && introAIConfig) {
       console.log(`[COMPOSE] Phase 2: Parallel AI generation (${aiWorkItems.length} items, concurrency=5)...`);

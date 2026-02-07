@@ -88,42 +88,20 @@ function buildStep1Prompt(
     ? `$${(demand.metadata.fundingUsd / 1000000).toFixed(0)}M`
     : null;
 
-  return `Generate two short value propositions for a B2B introduction.
+  return `Summarize the match context for a B2B introduction. Be concrete and casual — like a connector explaining to a friend why two people should meet.
 
-ABSOLUTE RULE — NO HEDGING:
-Never guess. Never hedge. State only what can be inferred from provided signals and context.
-These words are BANNED — using any of them is a failure:
-probably, might, sounds like, would guess, seems like, could be, may be, possibly, likely, perhaps, guessing, exploring
+DATA:
+- DEMAND COMPANY: ${cleanCompanyName(demand.company)}
+${demand.industry ? `- INDUSTRY: ${demand.industry}\n` : ''}- SIGNAL: ${edge.evidence}
+${demand.metadata.companyDescription || demand.metadata.description ? `- CONTEXT: ${(demand.metadata.companyDescription || demand.metadata.description).slice(0, 400)}\n` : ''}${demand.metadata.employeeEnum ? `- SIZE: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}
+- SUPPLY COMPANY: ${cleanCompanyName(supply.company)}
+${supply.capability ? `- SUPPLY FOCUS: ${supply.capability}\n` : ''}${supply.metadata?.companyDescription || supply.metadata?.description ? `- SUPPLY CONTEXT: ${(supply.metadata.companyDescription || supply.metadata.description).slice(0, 300)}\n` : ''}
+INSTRUCTIONS:
+- demandValueProp: In plain English, what is the demand company doing right now? Use specifics from CONTEXT (product name, market, metric). Max 15 words. Example: "Scaling into enterprise after 11x ARR growth, hiring across sales and CS."
+- supplyValueProp: Why would this timing matter to someone at the supply company? Use SUPPLY CONTEXT if available. Max 15 words. Example: "They run a $42B family office—this is exactly who they serve."
 
-If a fact is not in the data below, omit it. Do not speculate.
-
-ABSOLUTE RULE — NO EDITORIALIZING:
-Do not describe what the company needs or requires.
-Do not describe expertise, fit, or alignment.
-Do not describe process details unless they materially affect execution state.
-Do not describe a recruitment bottleneck unless recruitment has started. Pre-recruitment must surface due to timing, not constraints.
-Describe only execution state and constraints implied by the signal.
-
-Input data:
-
-DEMAND:
-- Company: ${cleanCompanyName(demand.company)}
-${demand.industry ? `- Industry: ${demand.industry}\n` : ''}- Signal: ${edge.evidence}
-${demand.metadata.companyDescription || demand.metadata.description ? `- Context: ${(demand.metadata.companyDescription || demand.metadata.description).slice(0, 300)}\n` : ''}${demand.metadata.employeeEnum ? `- Size: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- Funding: ${fundingAmount}\n` : ''}
-SUPPLY:
-- Company: ${cleanCompanyName(supply.company)}
-- Capability: ${supply.capability || 'business services'}
-
-=== VOICE ===
-
-You are a connector who tracks signals. State facts from the data. Name the bottleneck at this stage. Offer the match.
-
-DEMAND VALUE PROP (max 15 words): State the signal, then the operational bottleneck it creates.
-SUPPLY VALUE PROP (max 20 words): State what demand is doing, then what ${cleanCompanyName(supply.company)} delivers.
-
-Use the Context field. Extract the SPECIFIC detail — drug name, condition, market, technology, whatever is there. Never be generic when specific data exists.
-
-ALSO BANNED: pipeline, systematic, strategic, significant, perfect, ideal, aggressively, BD partnerships, partnerships, exploring opportunities, fuel, deploy, specialize, specializes, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, could help
+Do NOT describe what the supply company sells. DO reference their scale or positioning if it's in SUPPLY CONTEXT.
+Do NOT use corporate jargon: partnerships, expertise, alignment, strategic, solutions, leverage, optimize, streamline.
 
 Output (JSON only):
 {"demandValueProp": "...", "supplyValueProp": "..."}`;
@@ -148,51 +126,47 @@ function buildStep2Prompt(
     ? `$${(demand.metadata.fundingUsd / 1000000).toFixed(0)}M`
     : null;
 
-  return `Write a short demand-side B2B intro email.
+  return `Write a short demand-side intro email. You're a connector who noticed a signal and is offering to make an introduction. Sound like a human — casual, direct, no corporate language.
 
-ABSOLUTE RULE — NO HEDGING:
-Never guess. Never hedge. State only what can be inferred from provided signals and context.
-These words are BANNED — using any of them is a failure:
-probably, might, sounds like, would guess, seems like, could be, may be, possibly, likely, perhaps, guessing, exploring opportunities
+VOICE: You're a fellow founder/operator making a warm connection. Insider tone — short, genuine, casual. This should read like a LinkedIn DM between peers, not formal outreach. Write naturally — do NOT copy example phrases from this prompt. Every sentence must make grammatical sense on its own. NEVER use: "tends to", "typically", "teams at this stage", "surface needs", "spotlight", "tighten workflows". Never sound like a platform or a sales email.
 
-ABSOLUTE RULE — NO EDITORIALIZING:
-Do not describe what the company needs or requires.
-Do not describe expertise, fit, or alignment.
-Do not describe process details unless they materially affect execution state.
-Do not describe a recruitment bottleneck unless recruitment has started. Pre-recruitment must surface due to timing, not constraints.
-Describe only execution state and constraints implied by the signal.
-
-MATCH DATA (use this — do not invent your own):
-- TIMING: ${edge.evidence}
-- FIT: ${valueProps.demandValueProp}
-- WHO: ${supply.contact} at ${cleanCompanyName(supply.company)} — ${supply.capability || 'business services'}
+DATA:
 - DEMAND COMPANY: ${cleanCompanyName(demand.company)}
-${demand.metadata.companyDescription || demand.metadata.description ? `- WHAT THEY DO: ${demand.metadata.companyDescription || demand.metadata.description}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}
+- TIMING: ${edge.evidence}
+${demand.metadata.companyDescription || demand.metadata.description ? `- CONTEXT: ${(demand.metadata.companyDescription || demand.metadata.description).slice(0, 400)}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}- SUPPLIER: ${supply.contact} at ${cleanCompanyName(supply.company)}
+- SUPPLIER FOCUS: ${supply.capability || 'business services'}
+${supply.metadata?.companyDescription || supply.metadata?.description ? `- SUPPLIER CONTEXT: ${(supply.metadata.companyDescription || supply.metadata.description).slice(0, 200)}\n` : ''}
+
 GREETING: ${greeting}
 
-CRITICAL — NAME ATTRIBUTION:
-You are writing TO someone at DEMAND COMPANY (${cleanCompanyName(demand.company)}).
-You are OFFERING to connect them with WHO (${supply.contact} at ${cleanCompanyName(supply.company)}).
-These are TWO DIFFERENT companies. The TIMING signal belongs to DEMAND COMPANY, not WHO.
-If you swap these names, the intro is factually wrong and unusable. Double-check before outputting.
+WRITE EXACTLY THIS STRUCTURE:
 
-REQUIRED STRUCTURE (follow this exactly):
-1. Signal (fact) — what the company is doing, extracted from WHAT THEY DO or TIMING
-2. Constraint (bottleneck, throughput, timing) — the operational reality at this stage
-3. Match surfaced because of stage — name WHO, state why this stage triggered the match
-4. CTA — short close
+Paragraph 1: State what you noticed (from TIMING). ONE fact, ONE sentence. Pick the single most important thing — don't chain multiple facts with "after" or "and". No adjectives, no commentary, no editorializing.
+✅ "Saw you stepped down as CEO in Sept 2025."
+❌ "Saw you stepped down as CEO in Sept 2025 after selling $724M in shares." (two facts crammed)
+Use the ACTUAL date or timeframe from TIMING. NEVER invent relative time like "earlier this month", "recently". If no date, skip the time reference.
 
-No value claims. No advocacy. No opinions about fit or quality.
-If WHAT THEY DO is provided, extract the SPECIFIC detail (drug, condition, technology, market). Never be generic when specific data exists.
+Paragraph 2: "I know [supplier first name] at [supplier company]—[lane]." Want an intro?
+The lane is 5-15 words. Describe who they are — what they do, at what scale, for whom. Use specifics from SUPPLIER CONTEXT. Include dollar figures ($42B, $80B+), client type (tech founders, UHNW families), or their actual edge.
+✅ "they run a $42B multi-family office out of Philly" / "they manage $80B+ for tech founders like Zuckerberg" / "they place senior engineering leaders at Series B+ startups"
+❌ "they manage wealth and do investing" / "they focus on trust management" / "a firm with deep roots serving families nationwide" / "they're an advisory services firm"
+Be specific and casual. Use real details from the data — not corporate descriptions.
 
-RULES:
-• 40–60 words. Shorter is better.
-• Em dash (—) has no spaces around it.
-• NEVER reference the person's job title.
+Paragraph 3: "Want an intro?" — that's it.
 
-BANNED WORDS/PHRASES: probably, might, sounds like, would guess, seems like, could be, exploring, BD partnerships, partnerships, pipeline, systematic, repeatable, fuel, deploy, specialize, specializes, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect fit, ideal opportunity, significant revenue, got a few others, others in that space, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, could help, worth connecting
+HARD RULES:
+• 40–70 words total. Three short paragraphs.
+• Supplier relevance = ONE casual clause max (e.g. "they focus on enterprise GTM hiring"). Never a formal description.
+• NEVER reference anyone's job title.
+• NEVER use corporate/robotic language.
+• Use natural contractions (don't, that's, I'm).
+• Em dash (—) has no spaces.
 
-Output: Just the intro text. No quotes. No labels. No commentary.`;
+ATTRIBUTION: You are writing TO someone at ${cleanCompanyName(demand.company)}. The TIMING signal belongs to them. ${supply.contact} is the person you're offering to introduce. Do NOT mix up which company the signal belongs to.
+
+BANNED WORDS (using any = failure): probably, might, sounds like, would guess, seems like, could be, exploring, partnerships, pipeline, systematic, repeatable, fuel, deploy, specialize, specializes, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect fit, ideal opportunity, significant revenue, got a few others, others in that space, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, works with, works on, supports, during high-growth phases, scaling companies, enterprise enablement, could help, worth connecting, highlight, demonstrate, leverage, optimize, streamline, accelerate, technology services, business services, consulting services, mix of exciting and chaotic, comes with its own set of challenges, manage wealth and do investing, focus on trust management, next-gen, earlier this month, earlier this week, earlier this year, the other day, just recently, big move, major move, big transition, big chapter, big shift, big step, major transition, major chapter, major shift, major step, deep roots, deep trust, trust management roots, based firm, based company, based in, serving families nationwide, serving clients nationwide
+
+Output: Just the intro text. No quotes. No labels.`;
 }
 
 // =============================================================================
@@ -214,55 +188,124 @@ function buildStep3Prompt(
     ? 'Hey there—'
     : `Hey ${supplyFirstName}—`;
 
-  return `Write a short supply-side B2B intro email. You're tipping a colleague about a lead.
+  return `Write a short supply-side intro email. You're a connector tipping someone about a lead. Sound like a human — casual, direct, no corporate language.
 
-ABSOLUTE RULE — NO HEDGING:
-Never guess. Never hedge. State only what can be inferred from provided signals and context.
-These words are BANNED — using any of them is a failure:
-probably, might, sounds like, would guess, seems like, could be, may be, possibly, likely, perhaps, guessing, exploring
+VOICE: You're a fellow founder/operator tipping someone in your network about a lead. Insider tone — short, genuine, casual. This should read like a LinkedIn DM between peers, not formal outreach. Write naturally — do NOT copy example phrases from this prompt. Every sentence must make grammatical sense on its own. NEVER use: "tends to", "typically", "teams at this stage", "surface needs", "spotlight", "tighten workflows". Never sound like a platform or a sales email.
 
-ABSOLUTE RULE — NO EDITORIALIZING:
-Do not describe what the company needs or requires.
-Do not describe expertise, fit, or alignment.
-Do not describe process details unless they materially affect execution state.
-Do not describe a recruitment bottleneck unless recruitment has started. Pre-recruitment must surface due to timing, not constraints.
-Describe only execution state and constraints implied by the signal.
-
-MATCH DATA (use this — do not invent your own):
+DATA:
 - DEMAND COMPANY: ${cleanCompanyName(demand.company)}
-${demand.metadata.companyDescription || demand.metadata.description ? `- WHAT THEY DO: ${demand.metadata.companyDescription || demand.metadata.description}\n` : ''}- DEMAND CONTACT: ${demand.contact}
-- DEMAND TITLE: ${demand.title || 'decision maker'}
-${demand.industry ? `- INDUSTRY: ${demand.industry}\n` : ''}${demand.metadata.employeeEnum ? `- SIZE: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}${demand.metadata.fundingType ? `- FUNDING TYPE: ${demand.metadata.fundingType}\n` : ''}- TIMING SIGNAL: ${edge.evidence}
-- FIT: ${valueProps.supplyValueProp}
+${demand.metadata.companyDescription || demand.metadata.description ? `- CONTEXT: ${(demand.metadata.companyDescription || demand.metadata.description).slice(0, 400)}\n` : ''}- DEMAND CONTACT: ${demand.contact}
+${demand.title ? `- DEMAND TITLE: ${demand.title}\n` : ''}${demand.metadata.employeeEnum ? `- SIZE: ${demand.metadata.employeeEnum}\n` : ''}${fundingAmount ? `- FUNDING: ${fundingAmount}\n` : ''}${demand.metadata.fundingType ? `- FUNDING TYPE: ${demand.metadata.fundingType}\n` : ''}- TIMING: ${edge.evidence}
 
 GREETING: ${greeting}
 
-CRITICAL — NAME ATTRIBUTION:
-You are writing TO the supply contact (${supply.contact}).
-You are TIPPING them about DEMAND COMPANY (${cleanCompanyName(demand.company)}).
-The DEMAND CONTACT is ${demand.contact} (${demand.title || 'decision maker'}) — the person at DEMAND COMPANY.
-The TIMING SIGNAL belongs to DEMAND COMPANY. Do NOT attribute it to the supply contact's company.
-If you swap these names, the intro is factually wrong and unusable. Double-check before outputting.
+WRITE EXACTLY THIS STRUCTURE:
 
-REQUIRED STRUCTURE (follow this exactly):
-1. What the demand company is doing (fact from WHAT THEY DO or TIMING SIGNAL)
-2. Stage (pre-recruitment / recruiting / scaling / post-funding / expanding — whatever applies)
-3. Why it surfaced now — the timing constraint that triggered this match
-4. Neutral close — "Let me know."
+Paragraph 1: "[Demand company] [what happened from TIMING]. [Demand contact first name] is driving this." — Lead with the fact. Name who's behind it. Use specifics from CONTEXT if available.
+Use the ACTUAL date or timeframe from TIMING (e.g. "Sept 2025", "last year", "in July"). NEVER invent relative time like "earlier this month", "recently", "just announced", "the other day". If TIMING has no date, skip the time reference entirely.
 
-No value claims. No advocacy. No opinions about fit or quality.
-Name the decision maker. If WHAT THEY DO is provided, extract the SPECIFIC detail. Never be generic when specific data exists.
+Paragraph 2: OPTIONAL. Only include if you can state ONE specific fact that connects the demand signal to what the recipient does — a number, a market overlap, a named category. If you can't, go straight to "Let me know if you want an intro."
+Do NOT describe the demand company's business. The recipient knows the industry.
+Do NOT add filler opinions: "could be interesting", "up your alley", "worth a look", "interesting angle".
+Do NOT describe what the demand company is. Just name what happened and who's behind it.
 
-RULES:
-• 50–70 words. Shorter is better.
-• If SIZE or FUNDING is not provided, omit it entirely.
-• Do not fabricate company details not in the data above.
-• Em dash (—) has no spaces around it.
-• End with "Let me know." — not "worth connecting" or any variation.
+Paragraph 3 (or 2 if you skipped): "Let me know if you want an intro." — that's it.
 
-BANNED WORDS/PHRASES: probably, might, sounds like, would guess, seems like, could be, BD partnerships, partnerships, exploring, pipeline, systematic, repeatable, fuel, deploy, specialize, specializes, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect opportunity, significant, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, could help, worth connecting
+HARD RULES:
+• 30–55 words total. Two or three short paragraphs. Shorter is better.
+• You're tipping them — they know what they do. Don't describe their business.
+• NEVER reference anyone's job title in the body (only use demand contact's first name).
+• NEVER use corporate/robotic language.
+• NEVER write filler. Every sentence must contain a fact or a name.
+• Use natural contractions (don't, that's, it's).
+• Em dash (—) has no spaces.
+• Always end with "Let me know." or "Let me know if you want an intro."
 
-Output: Just the intro text. No quotes. No labels. No commentary.`;
+ATTRIBUTION: You are writing TO ${supply.contact}. You are tipping them about ${cleanCompanyName(demand.company)}. The TIMING signal belongs to ${cleanCompanyName(demand.company)}. ${demand.contact} is the person at the demand company. Do NOT mix up which company the signal belongs to.
+
+BANNED WORDS (using any = failure): probably, might, sounds like, would guess, seems like, could be, exploring, explore, partnerships, pipeline, systematic, repeatable, fuel, deploy, specialize, specializes, strategic, effectively, efficiently, seamlessly, holistically, aggressively, perfect opportunity, significant, needs, requires, expertise, aligns, alignment, deep experience, helps, helping, address, addressing, solution, solutions, works in, works with, works on, supports, during high-growth phases, scaling companies, enterprise enablement, could help, worth connecting, highlight, demonstrate, leverage, optimize, streamline, accelerate, timing feels right, feels like the right moment, everything happening, given what's going on, way things are moving, rethinking their, shifting their, in the space right now, up your alley, interesting angle, major player, congrats, worth a look, worth exploring, thought it could, earlier this month, earlier this week, earlier this year, the other day, just recently, big move, major move, big transition, big chapter, big shift, big step, major transition, major chapter, major shift, major step, deep roots, deep trust, trust management roots, based firm, based company, based in, serving families nationwide, serving clients nationwide
+
+Output: Just the intro text. No quotes. No labels.`;
+}
+
+// =============================================================================
+// BANNED WORD ENFORCEMENT (code-level — AI cannot bypass this)
+// =============================================================================
+
+const BANNED_PHRASES = [
+  // Multi-word (check these first — order matters for substring matching)
+  'BD partnerships', 'exploring opportunities', 'deep experience',
+  'perfect fit', 'ideal opportunity', 'significant revenue',
+  'got a few others', 'others in that space', 'worth connecting',
+  'could help', 'works in', 'works with', 'works on',
+  'works extensively in', 'sounds like', 'would guess', 'seems like',
+  'could be', 'may be', 'during high-growth phases',
+  'scaling companies', 'enterprise enablement',
+  // Single-word
+  'partnerships', 'partnership', 'exploring', 'probably', 'might',
+  'possibly', 'likely', 'perhaps', 'guessing', 'pipeline',
+  'systematic', 'repeatable', 'fuel', 'deploy', 'specialize',
+  'specializes', 'strategic', 'effectively', 'efficiently',
+  'seamlessly', 'holistically', 'aggressively', 'expertise',
+  'aligns', 'alignment', 'helps', 'helping', 'address',
+  'addressing', 'solution', 'solutions', 'supports',
+  'technology services', 'business services', 'consulting services',
+  'teams at this stage often', 'teams at this stage', 'AI-powered',
+  'infrastructure', 'tends to', 'typically', 'surface needs',
+  'spotlight', 'tighten workflows', 'ramping up its game',
+  'manage wealth and do investing', 'manage wealth and invest',
+  'focus on trust management', 'wealth and investing',
+  'mix of exciting and chaotic', 'comes with its own set of challenges',
+  'next-gen', 'next gen',
+  'timing feels right', 'feels like the right moment',
+  'everything happening in the space', 'everything happening',
+  'way things are moving', 'in the space right now',
+  'right moment to get in front', 'rethinking their',
+  'shifting their strategy',
+  'up your alley', 'interesting angle', 'major player',
+  'could be an interesting', 'thought it could',
+  'worth a look', 'worth exploring', 'worth checking out',
+  'congrats on the move', 'congrats on',
+  'earlier this month', 'earlier this week', 'earlier this year',
+  'the other day', 'just recently', 'big move', 'major move',
+  'big transition', 'big chapter', 'big shift', 'big step',
+  'major transition', 'major chapter', 'major shift', 'major step',
+  'deep roots', 'deep trust', 'trust management roots',
+  'based firm', 'based company', 'based in',
+  'serving families nationwide', 'serving clients nationwide',
+];
+
+function findBannedWords(text: string): string[] {
+  const lower = text.toLowerCase();
+  return BANNED_PHRASES.filter(phrase => lower.includes(phrase.toLowerCase()));
+}
+
+/**
+ * Sanitize value props from Step 1 before feeding to Steps 2/3.
+ * Removes sentences containing banned words so the AI never sees them as input.
+ */
+function sanitizeValueProps(vp: ValueProps): ValueProps {
+  return {
+    demandValueProp: stripBannedSentences(vp.demandValueProp),
+    supplyValueProp: stripBannedSentences(vp.supplyValueProp),
+  };
+}
+
+function stripBannedSentences(text: string): string {
+  if (!text) return text;
+  // Split into sentences, remove any containing banned words
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const clean = sentences.filter(s => findBannedWords(s).length === 0);
+  // If all sentences banned, return original minus the banned words inline
+  if (clean.length === 0) {
+    let result = text;
+    for (const phrase of BANNED_PHRASES) {
+      const regex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      result = result.replace(regex, '').replace(/\s{2,}/g, ' ').trim();
+    }
+    return result;
+  }
+  return clean.join(' ');
 }
 
 // =============================================================================
@@ -302,7 +345,7 @@ async function callOpenAI(config: IntroAIConfig, prompt: string): Promise<string
     body: JSON.stringify({
       model: config.model || 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
+      temperature: 0.3,
       max_tokens: 500,
     }),
   });
@@ -332,7 +375,7 @@ async function callAnthropic(config: IntroAIConfig, prompt: string): Promise<str
       model: config.model || 'claude-3-haiku-20240307',
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 500,
-      temperature: 0.7,
+      temperature: 0.3,
     }),
   });
 
@@ -360,7 +403,7 @@ async function callAzure(config: IntroAIConfig, prompt: string): Promise<string>
     },
     body: JSON.stringify({
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
+      temperature: 0.3,
       max_tokens: 500,
     }),
   });
@@ -460,18 +503,42 @@ export async function generateIntrosAI(
       supplyValueProp: `${cleanCompanyName(demand.company)} is an attractive prospect.`,
     };
   }
-  console.log('[IntroAI] Step 1 complete:', valueProps);
 
-  // STEP 2: Generate Demand Intro
+  // CRITICAL: Sanitize value props before feeding to Steps 2/3
+  // If Step 1 leaked banned words, Steps 2/3 would copy them from input
+  valueProps = sanitizeValueProps(valueProps);
+  console.log('[IntroAI] Step 1 complete (sanitized):', valueProps);
+
+  // STEP 2: Generate Demand Intro (with retry on banned word violation)
   console.log('[IntroAI] Step 2: Generating demand intro...');
-  const step2Prompt = buildStep2Prompt(demand, supply, edge, valueProps);
-  const demandIntro = await callAI(config, step2Prompt);
+  let demandIntro = await callAI(config, buildStep2Prompt(demand, supply, edge, valueProps));
+  let demandViolations = findBannedWords(demandIntro);
+  if (demandViolations.length > 0) {
+    console.warn('[IntroAI] Step 2 banned words detected:', demandViolations, '— retrying once');
+    const retryPrompt = buildStep2Prompt(demand, supply, edge, valueProps) +
+      `\n\nCRITICAL RETRY: Your previous output contained these BANNED words: ${demandViolations.join(', ')}. Rewrite WITHOUT any of them. This is non-negotiable.`;
+    demandIntro = await callAI(config, retryPrompt);
+    demandViolations = findBannedWords(demandIntro);
+    if (demandViolations.length > 0) {
+      console.error('[IntroAI] Step 2 STILL has banned words after retry:', demandViolations);
+    }
+  }
   console.log('[IntroAI] Step 2 complete');
 
-  // STEP 3: Generate Supply Intro
+  // STEP 3: Generate Supply Intro (with retry on banned word violation)
   console.log('[IntroAI] Step 3: Generating supply intro...');
-  const step3Prompt = buildStep3Prompt(demand, supply, edge, valueProps);
-  const supplyIntro = await callAI(config, step3Prompt);
+  let supplyIntro = await callAI(config, buildStep3Prompt(demand, supply, edge, valueProps));
+  let supplyViolations = findBannedWords(supplyIntro);
+  if (supplyViolations.length > 0) {
+    console.warn('[IntroAI] Step 3 banned words detected:', supplyViolations, '— retrying once');
+    const retryPrompt = buildStep3Prompt(demand, supply, edge, valueProps) +
+      `\n\nCRITICAL RETRY: Your previous output contained these BANNED words: ${supplyViolations.join(', ')}. Rewrite WITHOUT any of them. This is non-negotiable.`;
+    supplyIntro = await callAI(config, retryPrompt);
+    supplyViolations = findBannedWords(supplyIntro);
+    if (supplyViolations.length > 0) {
+      console.error('[IntroAI] Step 3 STILL has banned words after retry:', supplyViolations);
+    }
+  }
   console.log('[IntroAI] Step 3 complete');
 
   return {
