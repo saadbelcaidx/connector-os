@@ -3162,7 +3162,7 @@ export default function Flow() {
       <div className="flex-1 flex items-center justify-center pb-24">
         <div className="w-full max-w-[520px] px-6">
 
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
 
           {/* UPLOAD / START */}
           {state.step === 'upload' && (
