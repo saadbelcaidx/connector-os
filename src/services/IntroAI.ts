@@ -146,17 +146,21 @@ Paragraph 1: State what you noticed (from TIMING). ONE fact, ONE sentence. Pick 
 ❌ "Saw you stepped down as CEO in Sept 2025 after selling $724M in shares." (two facts crammed)
 Use the ACTUAL date or timeframe from TIMING. NEVER invent relative time like "earlier this month", "recently". If no date, skip the time reference.
 
-Paragraph 2: "I know [supplier first name] at [supplier company]—[lane]." Want an intro?
+Paragraph 2: The timing bridge — ONE sentence that connects the signal to WHY they might want help. Acknowledge what that signal means in practice — the complexity, the timing pressure, the opportunity window. This makes you sound like someone who understands their world, not just someone forwarding facts.
+✅ "That kind of push always comes with a lot of moving parts." / "That's a lot of moving pieces to coordinate." / "Big lift—lots of plates spinning."
+❌ "Could be interesting for you." / "Worth exploring." / "That's exciting." (empty filler)
+❌ "They're focusing on side effects and immune response." (technical detail they already know)
+Keep it casual and short — ONE sentence max.
+
+Paragraph 3: "I know [supplier first name] at [supplier company]—[lane]. Want an intro?"
 The lane is 5-15 words. Describe who they are — what they do, at what scale, for whom. Use specifics from SUPPLIER CONTEXT. Include dollar figures ($42B, $80B+), client type (tech founders, UHNW families), or their actual edge.
 ✅ "they run a $42B multi-family office out of Philly" / "they manage $80B+ for tech founders like Zuckerberg" / "they place senior engineering leaders at Series B+ startups"
-❌ "they manage wealth and do investing" / "they focus on trust management" / "a firm with deep roots serving families nationwide" / "they're an advisory services firm"
+❌ "they manage wealth and do investing" / "they focus on trust management" / "a firm with deep roots serving families nationwide" / "they're a full-service CRO that handles everything from early phase through regulatory work"
 Be specific and casual. Use real details from the data — not corporate descriptions.
 
-Paragraph 3: "Want an intro?" — that's it.
-
 HARD RULES:
-• 40–70 words total. Three short paragraphs.
-• Supplier relevance = ONE casual clause max (e.g. "they focus on enterprise GTM hiring"). Never a formal description.
+• 40–70 words total. Three or four short paragraphs.
+• Supplier relevance = ONE casual clause max (e.g. "they handle clinical trial services"). Never a formal multi-part description.
 • NEVER reference anyone's job title.
 • NEVER use corporate/robotic language.
 • Use natural contractions (don't, that's, I'm).
@@ -202,17 +206,21 @@ GREETING: ${greeting}
 WRITE EXACTLY THIS STRUCTURE:
 
 Paragraph 1: "[Demand company] [what happened from TIMING]. [Demand contact first name] is driving this." — Lead with the fact. Name who's behind it. Use specifics from CONTEXT if available.
+Rephrase the signal NATURALLY — don't copy database fields verbatim. Say "is gearing up for a Phase 2 trial" not "has a Phase 2 trial not yet recruiting." Say "just closed a $32B acquisition" not "acquisition completed July 2025." Sound like you're telling a friend, not reading from a spreadsheet.
 Use the ACTUAL date or timeframe from TIMING (e.g. "Sept 2025", "last year", "in July"). NEVER invent relative time like "earlier this month", "recently", "just announced", "the other day". If TIMING has no date, skip the time reference entirely.
 
-Paragraph 2: OPTIONAL. Only include if you can state ONE specific fact that connects the demand signal to what the recipient does — a number, a market overlap, a named category. If you can't, go straight to "Let me know if you want an intro."
-Do NOT describe the demand company's business. The recipient knows the industry.
-Do NOT add filler opinions: "could be interesting", "up your alley", "worth a look", "interesting angle".
-Do NOT describe what the demand company is. Just name what happened and who's behind it.
+Paragraph 2: The timing bridge — explain WHY you're flagging this NOW and why it matters for the recipient. This is the sentence that makes you sound like an insider with timing intel, not just someone forwarding facts.
+✅ "Figured I'd flag it since they're not recruiting yet but will be soon—timing could line up for you."
+✅ "They're ramping fast—figured you'd want first look before it gets crowded."
+✅ "Still early stage—could be good timing to get in front of this."
+❌ "They're focusing on side effects and immune response in older populations." (technical padding, not a timing bridge)
+❌ "Could be interesting." / "Worth a look." / "Up your alley." (empty filler)
+Do NOT describe the demand company's business or add technical detail the recipient already knows.
 
-Paragraph 3 (or 2 if you skipped): "Let me know if you want an intro." — that's it.
+Paragraph 3: "Let me know if you want an intro." — that's it.
 
 HARD RULES:
-• 30–55 words total. Two or three short paragraphs. Shorter is better.
+• 35–60 words total. Three short paragraphs. Shorter is better.
 • You're tipping them — they know what they do. Don't describe their business.
 • NEVER reference anyone's job title in the body (only use demand contact's first name).
 • NEVER use corporate/robotic language.
@@ -273,6 +281,7 @@ const BANNED_PHRASES = [
   'deep roots', 'deep trust', 'trust management roots',
   'based firm', 'based company', 'based in',
   'serving families nationwide', 'serving clients nationwide',
+  'full-service', 'handles everything from',
 ];
 
 function findBannedWords(text: string): string[] {

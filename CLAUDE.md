@@ -1,3 +1,39 @@
+# GIT SAFETY — READ FIRST (NON-NEGOTIABLE)
+
+You are **never** allowed to run git commands that modify history or working files without explicit confirmation.
+
+**Forbidden commands unless user explicitly approves:**
+- `git checkout`
+- `git restore`
+- `git reset`
+- `git clean`
+- `git revert`
+- `git stash`
+- `git rebase`
+- Any command that overwrites files
+
+**If a request sounds like reverting or undoing changes, you MUST first ask:**
+> "Do you want me to revert only the last change, or restore the entire file?"
+> and **wait for confirmation.**
+
+**All fixes must be surgical edits, not file resets.**
+
+**Allowed actions:**
+- Edit specific lines
+- Patch specific functions
+- Show diff before applying changes
+
+**Before modifying a file, show:**
+```
+Planned change:
+File:
+Lines affected:
+Purpose:
+Proceed? (yes/no)
+```
+
+---
+
 # NO COWBOY PATCHES
 
 > Every fix must be architectural. No "quick patches" that work today and break tomorrow. Think like Stripe: find the root cause, fix it once, fix it correctly. If you don't understand the problem fully, STOP and audit before writing code.
