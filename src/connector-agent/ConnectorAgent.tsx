@@ -487,7 +487,7 @@ function ConnectorAgentInner() {
   const [bulkResults, setBulkResults] = useState<any[] | null>(null);
   const [bulkSummary, setBulkSummary] = useState<any>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkFilter, setBulkFilter] = useState<'all' | 'found' | 'not_found' | 'valid' | 'invalid' | 'unknown'>('all');
+  const [bulkFilter, setBulkFilter] = useState<'all' | 'found' | 'not_found' | 'valid' | 'invalid'>('all');
 
   // Pre-flight state
   const [bulkParsedData, setBulkParsedData] = useState<any[] | null>(null);
@@ -926,12 +926,6 @@ function ConnectorAgentInner() {
       setSheetsError('Failed to initialize Google sign-in. Please try again.');
       setSheetsLoading(false);
     }
-  };
-
-  const getVerdictDisplay = (verdict: string) => {
-    if (verdict === 'VALID' || verdict === 'SAFE') return { label: 'Valid', color: 'emerald' };
-    if (verdict === 'INVALID' || verdict === 'BLOCKED') return { label: 'Invalid', color: 'red' };
-    return { label: 'Unknown', color: 'amber' };
   };
 
   if (isLoading) {
@@ -2141,12 +2135,8 @@ function ConnectorAgentInner() {
                                       {result.email ? 'resolved' : 'pending'}
                                     </span>
                                   ) : (
-                                    <span className={
-                                      result.email ? 'text-violet-400' :
-                                      result.email === null ? 'text-red-400/60' :
-                                      'text-white/30'
-                                    }>
-                                      {result.email ? 'verified' : result.email === null ? 'invalid' : 'queued'}
+                                    <span className={result.email ? 'text-emerald-400' : 'text-red-400/60'}>
+                                      {result.email ? 'valid' : 'invalid'}
                                     </span>
                                   )}
                                 </div>
@@ -2176,9 +2166,8 @@ function ConnectorAgentInner() {
                             </>
                           ) : (
                             <>
-                              <span className="text-violet-400">Verified: <span className="font-medium">{bulkSummary.valid}</span></span>
-                              <span className="text-red-400/60">Rejected: <span className="font-medium">{bulkSummary.invalid}</span></span>
-                              <span className="text-white/40">Queued: <span className="font-medium">{bulkSummary.unknown}</span></span>
+                              <span className="text-emerald-400">Valid: <span className="font-medium">{bulkSummary.valid || 0}</span></span>
+                              <span className="text-red-400/60">Invalid: <span className="font-medium">{bulkSummary.invalid || 0}</span></span>
                             </>
                           )}
                         </div>
