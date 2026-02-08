@@ -5,6 +5,11 @@
  * Linear-style UI, consistent with Connector OS design system.
  */
 
+declare const __BUILD_SHA__: string;
+declare const __BUILD_TIME__: string;
+const BUILD_VERSION = typeof __BUILD_SHA__ !== 'undefined' ? __BUILD_SHA__ : 'dev';
+const BUILD_TIMESTAMP = typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : '';
+
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -185,15 +190,71 @@ function getInProgressBatch(): ConnectorAgentBatch | null {
   return null;
 }
 
-// Generate CSV from batch (canonical format: input,email)
+// Generate CSV from batch
 function batchToCSV(batch: ConnectorAgentBatch): string {
-  let csv = 'input,email\n';
+  if (batch.type === 'find') {
+    let csv = 'input,email\n';
+    for (const r of batch.results) {
+      const input = r.input.replace(/"/g, '""');
+      const email = r.email ? r.email.replace(/"/g, '""') : '';
+      csv += `"${input}","${email}"\n`;
+    }
+    return csv;
+  }
+  // Verify: input,status — binary, no "unknown"
+  let csv = 'input,status\n';
   for (const r of batch.results) {
     const input = r.input.replace(/"/g, '""');
-    const email = r.email ? r.email.replace(/"/g, '""') : '';
-    csv += `"${input}","${email}"\n`;
+    csv += `"${input}","${r.email ? 'valid' : 'invalid'}"\n`;
   }
   return csv;
+}
+
+// ============================================================
+// VERIFY RESULT NORMALIZER — SINGLE SOURCE OF TRUTH
+// Backend returns { email: "x@y.com" } (valid) or { email: null } (invalid).
+// This normalizer enforces the contract: email is string|null, status is "valid"|"invalid".
+// ============================================================
+
+interface NormalizedVerifyResult {
+  _input: string;     // Original email that was verified
+  email: string | null; // string = valid, null = invalid
+  status: 'valid' | 'invalid';
+  _row?: number;      // Original row index for sorting
+}
+
+function normalizeVerifyResult(inputEmail: string, apiResult: any, rowIndex?: number): NormalizedVerifyResult {
+  const email = (apiResult?.email && typeof apiResult.email === 'string') ? apiResult.email : null;
+  return {
+    _input: inputEmail,
+    email,
+    status: email ? 'valid' : 'invalid',
+    _row: rowIndex,
+  };
+}
+
+function normalizeVerifyChunk(chunk: Array<{ email?: string; _row?: number; [k: string]: any }>, inputEmails: string[]): NormalizedVerifyResult[] {
+  return chunk.map((r, i) => normalizeVerifyResult(inputEmails[i] || '', r, r._row ?? i));
+}
+
+// Runtime contract guard — called after every verify batch completes
+function assertVerifyContract(results: any[]): string | null {
+  const violations: string[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status !== 'valid' && r.status !== 'invalid') {
+      violations.push(`Row ${i}: status="${r.status}" (expected valid|invalid)`);
+    }
+    if (r.email === undefined) {
+      violations.push(`Row ${i}: email is undefined (expected string|null)`);
+    }
+  }
+  if (violations.length > 0) {
+    const sample = violations.slice(0, 3).join('; ');
+    console.error(`[ConnectorAgent] CONTRACT VIOLATION: ${violations.length} rows failed. Sample: ${sample}`);
+    return `Internal contract mismatch (${violations.length} rows) — report to Saad`;
+  }
+  return null;
 }
 
 // ============================================================
@@ -528,6 +589,11 @@ function ConnectorAgentInner() {
   // Drag and drop state
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Version stamp — proves which build the user is running
+  useEffect(() => {
+    console.log(`[ConnectorAgent] build ${BUILD_VERSION} ${BUILD_TIMESTAMP}`);
+  }, []);
 
   // Load batch history on mount
   useEffect(() => {
@@ -1992,11 +2058,20 @@ function ConnectorAgentInner() {
 
                                     // Accumulate results and stream to UI
                                     if (chunkResults) {
-                                      const resultsWithRow = chunkResults.map((r: any, i: number) => ({
-                                        ...r,
-                                        _row: chunk[i]?._row ?? i,
-                                        _input: chunk[i]?.email || chunk[i]?.input || '',
-                                      }));
+                                      let resultsWithRow: any[];
+                                      if (bulkMode === 'verify') {
+                                        const inputEmails = chunk.map((c: any) => c.email || '');
+                                        resultsWithRow = normalizeVerifyChunk(chunkResults, inputEmails).map((r, i) => ({
+                                          ...r,
+                                          _row: chunk[i]?._row ?? i,
+                                        }));
+                                      } else {
+                                        resultsWithRow = chunkResults.map((r: any, i: number) => ({
+                                          ...r,
+                                          _row: chunk[i]?._row ?? i,
+                                          _input: chunk[i]?.email || chunk[i]?.input || '',
+                                        }));
+                                      }
                                       allResults = [...allResults, ...resultsWithRow];
 
                                       // Stream results to UI incrementally
@@ -2005,7 +2080,7 @@ function ConnectorAgentInner() {
                                       // === BATCH PERSISTENCE: Save after each chunk ===
                                       const chunkPersisted = chunkResults.map((r: any, i: number) => ({
                                         input: originalInputs[b * chunkSize + i]?.input || '',
-                                        email: bulkMode === 'find' ? (r.email || null) : (r.email || null),
+                                        email: (r?.email && typeof r.email === 'string') ? r.email : null,
                                       }));
                                       persistedResults = [...persistedResults, ...chunkPersisted];
                                       batchRecord.results = persistedResults;
@@ -2024,6 +2099,12 @@ function ConnectorAgentInner() {
                                   setBulkResults(allResults);
                                   setBulkStreamingResults([]);
 
+                                  // Runtime contract guard (verify mode only)
+                                  if (bulkMode === 'verify') {
+                                    const violation = assertVerifyContract(allResults);
+                                    if (violation) setBulkError(violation);
+                                  }
+
                                   // === BATCH PERSISTENCE: Mark completed ===
                                   batchRecord.status = 'completed';
                                   batchRecord.completedCount = persistedResults.length;
@@ -2039,11 +2120,10 @@ function ConnectorAgentInner() {
                                       not_found: allResults.filter((r: any) => !r.email).length,
                                     });
                                   } else {
-                                    // Backend contract: { email: "x@y.com" } = valid, { email: null } = invalid/unknown
                                     setBulkSummary({
                                       total: allResults.length,
-                                      valid: allResults.filter((r: any) => r.email).length,
-                                      invalid: allResults.filter((r: any) => !r.email).length,
+                                      valid: allResults.filter((r: any) => r.status === 'valid').length,
+                                      invalid: allResults.filter((r: any) => r.status === 'invalid' || r.status !== 'valid').length,
                                     });
                                   }
 
@@ -2128,15 +2208,15 @@ function ConnectorAgentInner() {
                                   }}
                                 >
                                   <span className="font-mono text-white/50 truncate max-w-[200px]">
-                                    {result.email || `${result.firstName} ${result.lastName}`}
+                                    {result.email || result._input || `${result.firstName} ${result.lastName}`}
                                   </span>
                                   {bulkMode === 'find' ? (
                                     <span className={result.email ? 'text-violet-400' : 'text-white/30'}>
                                       {result.email ? 'resolved' : 'pending'}
                                     </span>
                                   ) : (
-                                    <span className={result.email ? 'text-emerald-400' : 'text-red-400/60'}>
-                                      {result.email ? 'valid' : 'invalid'}
+                                    <span className={result.status === 'valid' ? 'text-emerald-400' : 'text-red-400/60'}>
+                                      {result.status || (result.email ? 'valid' : 'invalid')}
                                     </span>
                                   )}
                                 </div>
@@ -2181,8 +2261,8 @@ function ConnectorAgentInner() {
                         all: bulkResults.length,
                         found: bulkResults.filter(r => !!r.email).length,
                         not_found: bulkResults.filter(r => !r.email).length,
-                        valid: bulkResults.filter(r => !!r.email).length,
-                        invalid: bulkResults.filter(r => !r.email).length,
+                        valid: bulkResults.filter(r => r.status === 'valid').length,
+                        invalid: bulkResults.filter(r => r.status === 'invalid' || r.status !== 'valid').length,
                       };
                       return (
                         <div className="sticky top-0 z-10 bg-[#09090b] py-2">
@@ -2237,8 +2317,8 @@ function ConnectorAgentInner() {
                           if (bulkFilter === 'found') return !!row.email;
                           if (bulkFilter === 'not_found') return !row.email;
                         } else {
-                          if (bulkFilter === 'valid') return !!row.email;
-                          if (bulkFilter === 'invalid') return !row.email;
+                          if (bulkFilter === 'valid') return row.status === 'valid';
+                          if (bulkFilter === 'invalid') return row.status !== 'valid';
                         }
                         return true;
                       });
@@ -2289,13 +2369,13 @@ function ConnectorAgentInner() {
                                         </>
                                       ) : (
                                         <>
-                                          <td className="px-3 py-2 text-white/70 font-mono">{row.email || row._input}</td>
+                                          <td className="px-3 py-2 text-white/70 font-mono">{row._input || row.email || ''}</td>
                                           <td className="px-3 py-2">
                                             <span className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase ${
-                                              row.email ? 'bg-emerald-500/[0.15] text-emerald-400' :
+                                              row.status === 'valid' ? 'bg-emerald-500/[0.15] text-emerald-400' :
                                               'bg-red-500/[0.15] text-red-400'
                                             }`}>
-                                              {row.email ? 'valid' : 'invalid'}
+                                              {row.status || 'invalid'}
                                             </span>
                                           </td>
                                         </>
@@ -2318,9 +2398,9 @@ function ConnectorAgentInner() {
                                   csv += `"${row.firstName || ''}","${row.lastName || ''}","${row.domain || ''}","${row.email || ''}","${row.email ? 'found' : 'not_found'}"\n`;
                                 });
                               } else {
-                                csv = 'email,status\n';
+                                csv = 'input,status\n';
                                 bulkResults.forEach(row => {
-                                  csv += `"${row.email || ''}","${row.email ? 'valid' : 'invalid'}"\n`;
+                                  csv += `"${row._input || row.email || ''}","${row.status || 'invalid'}"\n`;
                                 });
                               }
                               const blob = new Blob([csv], { type: 'text/csv' });
@@ -3063,13 +3143,23 @@ function ConnectorAgentInner() {
                         const chunkResults = res?.results || (Array.isArray(res) ? res : null);
 
                         if (chunkResults) {
-                          allResults = [...allResults, ...chunkResults];
+                          let normalizedChunk: any[];
+                          if (batchRecord.type === 'verify') {
+                            const inputEmails = chunk.map((c: any) => c.email || c.input || '');
+                            normalizedChunk = normalizeVerifyChunk(chunkResults, inputEmails);
+                          } else {
+                            normalizedChunk = chunkResults.map((r: any, i: number) => ({
+                              ...r,
+                              _input: chunk[i]?.input || '',
+                            }));
+                          }
+                          allResults = [...allResults, ...normalizedChunk];
                           setBulkStreamingResults([...allResults]);
 
                           // Persist
                           const chunkPersisted = chunkResults.map((r: any, i: number) => ({
                             input: chunk[i]?.input || '',
-                            email: batchRecord.type === 'find' ? (r.email || null) : (r.email || null),
+                            email: (r?.email && typeof r.email === 'string') ? r.email : null,
                           }));
                           persistedResults = [...persistedResults, ...chunkPersisted];
                           batchRecord.results = persistedResults;
@@ -3092,6 +3182,12 @@ function ConnectorAgentInner() {
                       setBulkResults(allResults);
                       setBulkStreamingResults([]);
 
+                      // Runtime contract guard (verify mode only)
+                      if (batchRecord.type === 'verify') {
+                        const violation = assertVerifyContract(allResults);
+                        if (violation) setBulkError(violation);
+                      }
+
                       // Calculate summary
                       if (batchRecord.type === 'find') {
                         setBulkSummary({
@@ -3100,11 +3196,10 @@ function ConnectorAgentInner() {
                           not_found: allResults.filter((r: any) => !r.email).length,
                         });
                       } else {
-                        // Backend contract: { email: "x@y.com" } = valid, { email: null } = invalid/unknown
                         setBulkSummary({
                           total: allResults.length,
-                          valid: allResults.filter((r: any) => r.email).length,
-                          invalid: allResults.filter((r: any) => !r.email).length,
+                          valid: allResults.filter((r: any) => r.status === 'valid').length,
+                          invalid: allResults.filter((r: any) => r.status === 'invalid' || r.status !== 'valid').length,
                         });
                       }
 
@@ -3133,6 +3228,7 @@ function ConnectorAgentInner() {
           </motion.div>
         )}
       </AnimatePresence>
+      <div className="text-[9px] text-white/10 text-center mt-8 select-none">{BUILD_VERSION}</div>
     </div>
   );
 }
