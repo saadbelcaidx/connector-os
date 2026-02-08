@@ -34,6 +34,7 @@ import Privacy from './Privacy';
 import Terms from './Terms';
 import ComingSoon from './components/ComingSoon';
 import VslWatch from './VslWatch';
+import Version from './Version';
 import { FEATURES } from './config/features';
 import ConnectorAssistant from './components/ConnectorAssistant';
 import PlatformApp from './platform/PlatformApp';
@@ -115,6 +116,7 @@ function AppRoutes() {
       {/* Compliance pages - public */}
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/terms" element={<Terms />} />
+      <Route path="/version" element={<Version />} />
       <Route path="/vsl/watch" element={<VslWatch />} />
 
       {/* Debug page for reply brain testing */}
