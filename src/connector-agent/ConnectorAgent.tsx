@@ -165,11 +165,22 @@ function getAllBatches(): ConnectorAgentBatch[] {
     .filter((b): b is ConnectorAgentBatch => b !== null);
 }
 
-// Find in-progress batch
+// Find in-progress batch (auto-clears stale ones older than 2 hours)
 function getInProgressBatch(): ConnectorAgentBatch | null {
+  const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const now = Date.now();
   for (const id of getBatchIndex()) {
     const batch = getBatch(id);
-    if (batch?.status === 'in_progress') return batch;
+    if (batch?.status === 'in_progress') {
+      const age = now - new Date(batch.createdAt).getTime();
+      if (age > STALE_THRESHOLD_MS) {
+        console.warn(`[ConnectorAgent] Auto-clearing stale batch ${id} (age: ${Math.round(age / 60000)}min, completed: ${batch.completedCount}/${batch.inputCount})`);
+        batch.status = 'completed';
+        saveBatch(batch);
+        continue;
+      }
+      return batch;
+    }
   }
   return null;
 }
@@ -254,8 +265,19 @@ class ConnectorAgentAPI {
       headers['Authorization'] = `Bearer ${this.apiKey}`;
     }
 
+    // Timeout: 30s for single calls, 90s for bulk endpoints
+    const isBulk = endpoint.includes('bulk');
+    const timeoutMs = isBulk ? 90000 : 30000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const response = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       const text = await response.text();
 
       // Handle HTML error pages (500s, etc)
@@ -271,6 +293,18 @@ class ConnectorAgentAPI {
         return { success: false, error: 'Invalid response from server' };
       }
     } catch (err: unknown) {
+      clearTimeout(timeoutId);
+
+      // Detect abort (timeout)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        console.error(`[ConnectorAgent] Request timeout (${timeoutMs}ms): ${endpoint}`);
+        return {
+          success: false,
+          error: 'NETWORK_ERROR',
+          errorMessage: `Request timed out after ${timeoutMs / 1000}s`,
+        };
+      }
+
       // Detect network errors - TypeError with fetch failure messages
       const isNetworkError = err instanceof TypeError && (
         (err.message || '').includes('Failed to fetch') ||
@@ -1913,6 +1947,7 @@ function ConnectorAgentInner() {
 
                                     // Retry logic: up to 2 retries per chunk on transient failure
                                     let res: any = null;
+                                    let chunkRetries = 0;
                                     for (let attempt = 0; attempt < 3; attempt++) {
                                       try {
                                         if (bulkMode === 'find') {
@@ -1923,27 +1958,39 @@ function ConnectorAgentInner() {
                                         // If we got a response (even error), break retry loop
                                         if (res && !res.error?.includes('NETWORK_ERROR')) break;
                                         // Network error — wait and retry
+                                        chunkRetries++;
+                                        console.warn(`[BulkProcess] Chunk ${b + 1}/${batches} attempt ${attempt + 1} failed (NETWORK_ERROR), retrying in ${2 * (attempt + 1)}s...`);
                                         if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-                                      } catch {
+                                      } catch (chunkErr) {
+                                        chunkRetries++;
+                                        console.warn(`[BulkProcess] Chunk ${b + 1}/${batches} attempt ${attempt + 1} threw:`, chunkErr);
                                         if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
                                         else res = { error: 'Network error after 3 attempts' };
                                       }
                                     }
+                                    if (chunkRetries > 0) {
+                                      console.log(`[BulkProcess] Chunk ${b + 1}/${batches} completed after ${chunkRetries} retries`);
+                                    }
 
-                                    // Check for hard-stop errors
+                                    // Check for hard-stop errors (quota, auth, rate limit)
                                     if (res?.error) {
-                                      const err = typeof res.error === 'string' ? res.error : '';
-                                      if (err.includes('401') || err.includes('Invalid')) {
-                                        setBulkError('Invalid or missing API key');
+                                      const err = typeof res.error === 'string' ? res.error : JSON.stringify(res.error);
+                                      const errLower = err.toLowerCase();
+                                      console.error(`[BulkProcess] Chunk ${b + 1}/${batches} error: ${err}`);
+                                      if (errLower.includes('401') || errLower.includes('unauthorized') || errLower.includes('authentication') || errLower.includes('invalid') || errLower.includes('api key')) {
+                                        setBulkError('Authentication failed — check your API key');
                                         stopped = true;
-                                      } else if (err.includes('402') || err.includes('Insufficient') || err.includes('Quota exceeded')) {
-                                        setBulkError('Insufficient credits — stopped at batch ' + (b + 1));
+                                      } else if (errLower.includes('402') || errLower.includes('insufficient') || errLower.includes('quota') || errLower.includes('credit') || errLower.includes('payment')) {
+                                        setBulkError('Insufficient credits — processed ' + allResults.length + '/' + totalItems + ' before quota hit');
                                         stopped = true;
-                                      } else if (err.includes('429')) {
-                                        setBulkError('Rate limited — stopped at batch ' + (b + 1));
+                                      } else if (errLower.includes('429') || errLower.includes('rate limit') || errLower.includes('too many')) {
+                                        setBulkError('Rate limited — processed ' + allResults.length + '/' + totalItems + '. Try again in a few minutes.');
+                                        stopped = true;
+                                      } else if (err.includes('Network error after 3 attempts') || err.includes('NETWORK_ERROR')) {
+                                        setBulkError('Network error — processed ' + allResults.length + '/' + totalItems + '. Check your connection and resume.');
                                         stopped = true;
                                       }
-                                      // Transient errors after retries — continue to next chunk
+                                      // Unknown errors — continue to next chunk
                                     }
 
                                     // Normalize response: verify-bulk returns flat array, find-bulk returns { results: [...] }
@@ -2011,7 +2058,13 @@ function ConnectorAgentInner() {
                                   setIsProcessing(false);
                                   setBulkCurrentBatch(0);
                                   setBulkTotalBatches(0);
-                                  // Don't reset bulkProcessedCount — let the results UI show final count
+                                  // Ensure batch is never left as in_progress on exception
+                                  if (batchRecord.status === 'in_progress') {
+                                    batchRecord.status = 'completed';
+                                    saveBatch(batchRecord);
+                                    setBatchHistory(getAllBatches());
+                                    console.warn(`[BulkProcess] Batch ${batchRecord.id} force-completed in finally (${batchRecord.completedCount}/${batchRecord.inputCount})`);
+                                  }
                                 }
                               }}
                               className="flex-1 h-[36px] rounded-lg bg-white/[0.08] border border-white/[0.1] text-[11px] font-medium text-white/90 hover:bg-white/[0.12] disabled:opacity-40"
@@ -2971,40 +3024,66 @@ function ConnectorAgentInner() {
                         setBulkCurrentBatch(b + 1);
                         const chunk = remainingInputs.slice(b * CHUNK_SIZE, (b + 1) * CHUNK_SIZE);
 
-                        let res: any;
-                        if (batchRecord.type === 'find') {
-                          res = await api.findBulk(chunk.map(item => ({
-                            firstName: item.firstName!,
-                            lastName: item.lastName!,
-                            domain: item.domain!,
-                          })));
-                        } else {
-                          res = await api.verifyBulk(chunk.map(item => item.email!));
+                        // Retry logic: up to 2 retries per chunk on transient failure
+                        let res: any = null;
+                        let chunkRetries = 0;
+                        for (let attempt = 0; attempt < 3; attempt++) {
+                          try {
+                            if (batchRecord.type === 'find') {
+                              res = await api.findBulk(chunk.map(item => ({
+                                firstName: item.firstName!,
+                                lastName: item.lastName!,
+                                domain: item.domain!,
+                              })));
+                            } else {
+                              res = await api.verifyBulk(chunk.map(item => item.email!));
+                            }
+                            if (res && !res.error?.includes('NETWORK_ERROR')) break;
+                            chunkRetries++;
+                            console.warn(`[BulkResume] Chunk ${b + 1}/${batches} attempt ${attempt + 1} failed (NETWORK_ERROR), retrying in ${2 * (attempt + 1)}s...`);
+                            if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+                          } catch (chunkErr) {
+                            chunkRetries++;
+                            console.warn(`[BulkResume] Chunk ${b + 1}/${batches} attempt ${attempt + 1} threw:`, chunkErr);
+                            if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+                            else res = { error: 'Network error after 3 attempts' };
+                          }
+                        }
+                        if (chunkRetries > 0) {
+                          console.log(`[BulkResume] Chunk ${b + 1}/${batches} completed after ${chunkRetries} retries`);
                         }
 
-                        // Check for errors
-                        if (res.error) {
-                          if (res.error.includes('401') || res.error.includes('Invalid')) {
-                            setBulkError('Invalid or missing API key');
+                        // Check for hard-stop errors (quota, auth, rate limit)
+                        if (res?.error) {
+                          const err = typeof res.error === 'string' ? res.error : JSON.stringify(res.error);
+                          const errLower = err.toLowerCase();
+                          console.error(`[BulkResume] Chunk ${b + 1}/${batches} error: ${err}`);
+                          if (errLower.includes('401') || errLower.includes('unauthorized') || errLower.includes('authentication') || errLower.includes('invalid') || errLower.includes('api key')) {
+                            setBulkError('Authentication failed — check your API key');
                             stopped = true;
-                          } else if (res.error.includes('402') || res.error.includes('Insufficient') || res.error.includes('Quota exceeded')) {
-                            setBulkError('Insufficient credits — stopped');
+                          } else if (errLower.includes('402') || errLower.includes('insufficient') || errLower.includes('quota') || errLower.includes('credit') || errLower.includes('payment')) {
+                            setBulkError('Insufficient credits — processed ' + (pendingResumeBatch.completedCount + allResults.length) + '/' + totalItems + ' before quota hit');
                             stopped = true;
-                          } else if (res.error.includes('429')) {
-                            setBulkError('Rate limited — stopped');
+                          } else if (errLower.includes('429') || errLower.includes('rate limit') || errLower.includes('too many')) {
+                            setBulkError('Rate limited — processed ' + (pendingResumeBatch.completedCount + allResults.length) + '/' + totalItems + '. Try again in a few minutes.');
+                            stopped = true;
+                          } else if (err.includes('Network error after 3 attempts') || err.includes('NETWORK_ERROR')) {
+                            setBulkError('Network error — processed ' + (pendingResumeBatch.completedCount + allResults.length) + '/' + totalItems + '. Check your connection and resume.');
                             stopped = true;
                           }
-                          // Transient errors (network blips) — continue silently
                         }
 
-                        if (res.results) {
-                          allResults = [...allResults, ...res.results];
+                        // Normalize response: verify-bulk returns flat array, find-bulk returns { results: [...] }
+                        const chunkResults = res?.results || (Array.isArray(res) ? res : null);
+
+                        if (chunkResults) {
+                          allResults = [...allResults, ...chunkResults];
                           setBulkStreamingResults([...allResults]);
 
                           // Persist
-                          const chunkPersisted = res.results.map((r: any, i: number) => ({
+                          const chunkPersisted = chunkResults.map((r: any, i: number) => ({
                             input: chunk[i]?.input || '',
-                            email: batchRecord.type === 'find' ? (r.email || null) : (r.verdict === 'VALID' ? r.email : null),
+                            email: batchRecord.type === 'find' ? (r.email || null) : (r.email || null),
                           }));
                           persistedResults = [...persistedResults, ...chunkPersisted];
                           batchRecord.results = persistedResults;
@@ -3049,6 +3128,13 @@ function ConnectorAgentInner() {
                       setIsProcessing(false);
                       setBulkCurrentBatch(0);
                       setBulkTotalBatches(0);
+                      // Ensure batch is never left as in_progress on exception
+                      if (batchRecord.status === 'in_progress') {
+                        batchRecord.status = 'completed';
+                        saveBatch(batchRecord);
+                        setBatchHistory(getAllBatches());
+                        console.warn(`[BulkResume] Batch ${batchRecord.id} force-completed in finally (${batchRecord.completedCount}/${batchRecord.inputCount})`);
+                      }
                       setPendingResumeBatch(null);
                     }
                   }}
