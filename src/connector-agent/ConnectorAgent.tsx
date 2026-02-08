@@ -2001,6 +2001,7 @@ function ConnectorAgentInner() {
                                       const resultsWithRow = chunkResults.map((r: any, i: number) => ({
                                         ...r,
                                         _row: chunk[i]?._row ?? i,
+                                        _input: chunk[i]?.email || chunk[i]?.input || '',
                                       }));
                                       allResults = [...allResults, ...resultsWithRow];
 
@@ -2044,11 +2045,11 @@ function ConnectorAgentInner() {
                                       not_found: allResults.filter((r: any) => !r.email).length,
                                     });
                                   } else {
+                                    // Backend contract: { email: "x@y.com" } = valid, { email: null } = invalid/unknown
                                     setBulkSummary({
                                       total: allResults.length,
-                                      valid: allResults.filter((r: any) => r.verdict === 'VALID').length,
-                                      invalid: allResults.filter((r: any) => r.verdict === 'INVALID').length,
-                                      unknown: allResults.filter((r: any) => r.verdict !== 'VALID' && r.verdict !== 'INVALID').length,
+                                      valid: allResults.filter((r: any) => r.email).length,
+                                      invalid: allResults.filter((r: any) => !r.email).length,
                                     });
                                   }
 
@@ -2141,11 +2142,11 @@ function ConnectorAgentInner() {
                                     </span>
                                   ) : (
                                     <span className={
-                                      result.verdict === 'VALID' ? 'text-violet-400' :
-                                      result.verdict === 'INVALID' ? 'text-red-400/60' :
+                                      result.email ? 'text-violet-400' :
+                                      result.email === null ? 'text-red-400/60' :
                                       'text-white/30'
                                     }>
-                                      {result.verdict === 'VALID' ? 'verified' : result.verdict === 'INVALID' ? 'rejected' : 'queued'}
+                                      {result.email ? 'verified' : result.email === null ? 'invalid' : 'queued'}
                                     </span>
                                   )}
                                 </div>
@@ -2191,9 +2192,8 @@ function ConnectorAgentInner() {
                         all: bulkResults.length,
                         found: bulkResults.filter(r => !!r.email).length,
                         not_found: bulkResults.filter(r => !r.email).length,
-                        valid: bulkResults.filter(r => r.verdict === 'VALID').length,
-                        invalid: bulkResults.filter(r => r.verdict === 'INVALID').length,
-                        unknown: bulkResults.filter(r => r.verdict !== 'VALID' && r.verdict !== 'INVALID').length,
+                        valid: bulkResults.filter(r => !!r.email).length,
+                        invalid: bulkResults.filter(r => !r.email).length,
                       };
                       return (
                         <div className="sticky top-0 z-10 bg-[#09090b] py-2">
@@ -2222,7 +2222,6 @@ function ConnectorAgentInner() {
                                   { id: 'all' as const, label: 'All', count: counts.all },
                                   { id: 'valid' as const, label: 'Valid', count: counts.valid },
                                   { id: 'invalid' as const, label: 'Invalid', count: counts.invalid },
-                                  { id: 'unknown' as const, label: 'Unknown', count: counts.unknown },
                                 ].map(f => (
                                   <button
                                     key={f.id}
@@ -2249,9 +2248,8 @@ function ConnectorAgentInner() {
                           if (bulkFilter === 'found') return !!row.email;
                           if (bulkFilter === 'not_found') return !row.email;
                         } else {
-                          if (bulkFilter === 'valid') return row.verdict === 'VALID';
-                          if (bulkFilter === 'invalid') return row.verdict === 'INVALID';
-                          if (bulkFilter === 'unknown') return row.verdict !== 'VALID' && row.verdict !== 'INVALID';
+                          if (bulkFilter === 'valid') return !!row.email;
+                          if (bulkFilter === 'invalid') return !row.email;
                         }
                         return true;
                       });
@@ -2302,14 +2300,13 @@ function ConnectorAgentInner() {
                                         </>
                                       ) : (
                                         <>
-                                          <td className="px-3 py-2 text-white/70 font-mono">{row.email}</td>
+                                          <td className="px-3 py-2 text-white/70 font-mono">{row.email || row._input}</td>
                                           <td className="px-3 py-2">
                                             <span className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase ${
-                                              row.verdict === 'VALID' ? 'bg-emerald-500/[0.15] text-emerald-400' :
-                                              row.verdict === 'INVALID' ? 'bg-red-500/[0.15] text-red-400' :
-                                              'bg-white/[0.06] text-white/40'
+                                              row.email ? 'bg-emerald-500/[0.15] text-emerald-400' :
+                                              'bg-red-500/[0.15] text-red-400'
                                             }`}>
-                                              {row.verdict || 'unknown'}
+                                              {row.email ? 'valid' : 'invalid'}
                                             </span>
                                           </td>
                                         </>
@@ -2334,7 +2331,7 @@ function ConnectorAgentInner() {
                               } else {
                                 csv = 'email,status\n';
                                 bulkResults.forEach(row => {
-                                  csv += `"${row.email || ''}","${row.verdict || 'unknown'}"\n`;
+                                  csv += `"${row.email || ''}","${row.email ? 'valid' : 'invalid'}"\n`;
                                 });
                               }
                               const blob = new Blob([csv], { type: 'text/csv' });
@@ -3114,11 +3111,11 @@ function ConnectorAgentInner() {
                           not_found: allResults.filter((r: any) => !r.email).length,
                         });
                       } else {
+                        // Backend contract: { email: "x@y.com" } = valid, { email: null } = invalid/unknown
                         setBulkSummary({
                           total: allResults.length,
-                          valid: allResults.filter((r: any) => r.verdict === 'VALID').length,
-                          invalid: allResults.filter((r: any) => r.verdict === 'INVALID').length,
-                          unknown: allResults.filter((r: any) => r.verdict !== 'VALID' && r.verdict !== 'INVALID').length,
+                          valid: allResults.filter((r: any) => r.email).length,
+                          invalid: allResults.filter((r: any) => !r.email).length,
                         });
                       }
 
