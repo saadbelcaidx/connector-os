@@ -1911,31 +1911,47 @@ function ConnectorAgentInner() {
                                     setBulkCurrentBatch(b + 1);
                                     const chunk = items.slice(b * chunkSize, (b + 1) * chunkSize);
 
-                                    let res: any;
-                                    if (bulkMode === 'find') {
-                                      res = await api.findBulk(chunk.map(({ _row, ...rest }: any) => rest));
-                                    } else {
-                                      res = await api.verifyBulk(chunk.map((i: any) => i.email));
+                                    // Retry logic: up to 2 retries per chunk on transient failure
+                                    let res: any = null;
+                                    for (let attempt = 0; attempt < 3; attempt++) {
+                                      try {
+                                        if (bulkMode === 'find') {
+                                          res = await api.findBulk(chunk.map(({ _row, ...rest }: any) => rest));
+                                        } else {
+                                          res = await api.verifyBulk(chunk.map((i: any) => i.email));
+                                        }
+                                        // If we got a response (even error), break retry loop
+                                        if (res && !res.error?.includes('NETWORK_ERROR')) break;
+                                        // Network error — wait and retry
+                                        if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+                                      } catch {
+                                        if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+                                        else res = { error: 'Network error after 3 attempts' };
+                                      }
                                     }
 
                                     // Check for hard-stop errors
-                                    if (res.error) {
-                                      if (res.error.includes('401') || res.error.includes('Invalid')) {
+                                    if (res?.error) {
+                                      const err = typeof res.error === 'string' ? res.error : '';
+                                      if (err.includes('401') || err.includes('Invalid')) {
                                         setBulkError('Invalid or missing API key');
                                         stopped = true;
-                                      } else if (res.error.includes('402') || res.error.includes('Insufficient') || res.error.includes('Quota exceeded')) {
+                                      } else if (err.includes('402') || err.includes('Insufficient') || err.includes('Quota exceeded')) {
                                         setBulkError('Insufficient credits — stopped at batch ' + (b + 1));
                                         stopped = true;
-                                      } else if (res.error.includes('429')) {
+                                      } else if (err.includes('429')) {
                                         setBulkError('Rate limited — stopped at batch ' + (b + 1));
                                         stopped = true;
                                       }
-                                      // Transient errors (network blips) — continue silently
+                                      // Transient errors after retries — continue to next chunk
                                     }
 
+                                    // Normalize response: verify-bulk returns flat array, find-bulk returns { results: [...] }
+                                    const chunkResults = res?.results || (Array.isArray(res) ? res : null);
+
                                     // Accumulate results and stream to UI
-                                    if (res.results) {
-                                      const resultsWithRow = res.results.map((r: any, i: number) => ({
+                                    if (chunkResults) {
+                                      const resultsWithRow = chunkResults.map((r: any, i: number) => ({
                                         ...r,
                                         _row: chunk[i]?._row ?? i,
                                       }));
@@ -1945,9 +1961,9 @@ function ConnectorAgentInner() {
                                       setBulkStreamingResults([...allResults]);
 
                                       // === BATCH PERSISTENCE: Save after each chunk ===
-                                      const chunkPersisted = res.results.map((r: any, i: number) => ({
+                                      const chunkPersisted = chunkResults.map((r: any, i: number) => ({
                                         input: originalInputs[b * chunkSize + i]?.input || '',
-                                        email: bulkMode === 'find' ? (r.email || null) : (r.verdict === 'VALID' ? r.email : null),
+                                        email: bulkMode === 'find' ? (r.email || null) : (r.email || null),
                                       }));
                                       persistedResults = [...persistedResults, ...chunkPersisted];
                                       batchRecord.results = persistedResults;
@@ -1995,7 +2011,7 @@ function ConnectorAgentInner() {
                                   setIsProcessing(false);
                                   setBulkCurrentBatch(0);
                                   setBulkTotalBatches(0);
-                                  setBulkProcessedCount(0);
+                                  // Don't reset bulkProcessedCount — let the results UI show final count
                                 }
                               }}
                               className="flex-1 h-[36px] rounded-lg bg-white/[0.08] border border-white/[0.1] text-[11px] font-medium text-white/90 hover:bg-white/[0.12] disabled:opacity-40"
