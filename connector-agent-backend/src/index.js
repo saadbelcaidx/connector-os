@@ -1995,7 +1995,7 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ============================================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   // Check existing API keys count to diagnose persistence
   const keyCount = db.prepare(`SELECT COUNT(*) as count FROM api_keys WHERE status = 'active'`).get();
   const dbFileExists = fs.existsSync(dbPath);
@@ -2023,4 +2023,14 @@ app.listen(PORT, () => {
   console.log('  - POST /api/email/v2/verify-bulk');
   console.log('============================================');
   console.log('');
+});
+
+// Graceful shutdown — Railway sends SIGTERM before stopping
+process.on('SIGTERM', () => {
+  console.log('[Shutdown] SIGTERM received, closing server...');
+  server.close(() => {
+    db.close();
+    console.log('[Shutdown] Clean exit.');
+    process.exit(0);
+  });
 });
