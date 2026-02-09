@@ -24,6 +24,7 @@ import SignalPresets from './SignalPresets';
 import { Dashboard } from './Dashboard';
 import SSMAccessDashboard from './operator/SSMAccessDashboard';
 import CorpusAdmin from './operator/CorpusAdmin';
+import AssistantInsights from './operator/AssistantInsights';
 import OperatorRoute from './OperatorRoute';
 import PasswordSetupGate from './PasswordSetupGate';
 import OnboardingWizard from './OnboardingWizard';
@@ -285,6 +286,19 @@ function AppRoutes() {
             <OperatorRoute>
               <div className="page-fade">
                 <CorpusAdmin />
+              </div>
+            </OperatorRoute>
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/operator/assistant-insights"
+        element={
+          <PrivateRoute>
+            <OperatorRoute>
+              <div className="page-fade">
+                <AssistantInsights />
               </div>
             </OperatorRoute>
           </PrivateRoute>

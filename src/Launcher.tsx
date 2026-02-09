@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, Lock, Workflow, Eye, Globe } from 'lucide-react';
+import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, MessageCircle, Lock, Workflow, Eye, Globe } from 'lucide-react';
 import { FEATURES } from './config/features';
 
 // Chess King Icon — Strategic moves, the operator makes the play
@@ -135,6 +135,15 @@ const apps: AppCard[] = [
     description: 'Access-controlled network intelligence',
     icon: Globe,
     route: '/platform-dashboard',
+    ssmOnly: true,
+  },
+  // 11. Ask Insights — Operator dashboard for ConnectorAsk questions
+  {
+    id: 'assistant-insights',
+    title: 'Ask Insights',
+    description: 'What members are asking. Patterns + feedback.',
+    icon: MessageCircle,
+    route: '/operator/assistant-insights',
     ssmOnly: true,
   },
 ];

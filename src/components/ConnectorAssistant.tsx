@@ -38,6 +38,7 @@ interface Message {
   content: string;
   timestamp: number;
   feedback?: 'up' | 'down';
+  dbId?: string; // DB row id for feedback persistence
 }
 
 interface AssistantState {
@@ -702,14 +703,21 @@ export function ConnectorAssistant() {
     setInput('');
     saveMessages(newMessages);
 
+    const startTime = Date.now();
+
     try {
       const response = await callAI(newMessages, aiConfig);
+      const latencyMs = Date.now() - startTime;
+
+      // Generate a UUID for the DB row so feedback can link back
+      const dbId = crypto.randomUUID();
 
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
         content: response,
         timestamp: Date.now(),
+        dbId,
       };
 
       const updatedMessages = [...newMessages, assistantMessage];
@@ -719,6 +727,20 @@ export function ConnectorAssistant() {
         isLoading: false,
       }));
       saveMessages(updatedMessages);
+
+      // Fire-and-forget: log question + answer to DB (never blocks chat)
+      if (user?.id) {
+        supabase.from('assistant_questions').insert({
+          id: dbId,
+          user_id: user.id,
+          user_email: user.email,
+          question: trimmed,
+          answer: response,
+          latency_ms: latencyMs,
+        }).then(({ error }) => {
+          if (error) console.warn('[ConnectorAssistant] Log failed:', error.message);
+        });
+      }
     } catch (err) {
       setState(prev => ({
         ...prev,
@@ -726,20 +748,36 @@ export function ConnectorAssistant() {
         error: err instanceof Error ? err.message : 'Failed to get response',
       }));
     }
-  }, [input, state.messages, state.isLoading, aiConfig]);
+  }, [input, state.messages, state.isLoading, aiConfig, user]);
 
   // Keep ref in sync for auto-send
   sendMessageRef.current = sendMessage;
 
   // Handle feedback
   const handleFeedback = useCallback((id: string, feedback: 'up' | 'down') => {
-    setState(prev => ({
-      ...prev,
-      messages: prev.messages.map(m =>
+    setState(prev => {
+      const updated = prev.messages.map(m =>
         m.id === id ? { ...m, feedback } : m
-      ),
-    }));
-  }, []);
+      );
+      // Save to localStorage so feedback persists across reloads
+      saveMessages(updated);
+      return { ...prev, messages: updated };
+    });
+
+    // Persist feedback to DB (fire-and-forget)
+    if (user?.id) {
+      const msg = state.messages.find(m => m.id === id);
+      if (msg?.dbId) {
+        supabase.from('assistant_questions')
+          .update({ feedback })
+          .eq('id', msg.dbId)
+          .eq('user_id', user.id)
+          .then(({ error }) => {
+            if (error) console.warn('[ConnectorAssistant] Feedback persist failed:', error.message);
+          });
+      }
+    }
+  }, [user, state.messages]);
 
   // Clear conversation
   const clearConversation = useCallback(() => {
