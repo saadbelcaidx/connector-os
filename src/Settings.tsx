@@ -293,6 +293,31 @@ export default function Settings() {
     }
   }, []);
 
+  // Fire-and-forget: send CSV emails to backend for pattern learning
+  const ingestPatternsFromCsv = (records: any[]) => {
+    const apiKey = settings.connectorAgentApiKey;
+    if (!apiKey) return;
+
+    const patterns = records
+      .filter((r: any) => r.email && r.firstName && r.lastName)
+      .map((r: any) => ({ email: r.email, firstName: r.firstName, lastName: r.lastName }));
+
+    if (patterns.length === 0) return;
+
+    const apiUrl = import.meta.env.VITE_CONNECTOR_AGENT_API || 'https://api.connector-os.com';
+    fetch(`${apiUrl}/api/patterns/ingest`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ patterns }),
+    })
+      .then(res => res.json())
+      .then(data => console.log(`[Settings] Pattern ingestion: learned=${data.learned}, skipped=${data.skipped}`))
+      .catch(err => console.warn('[Settings] Pattern ingestion failed (non-blocking):', err.message));
+  };
+
   // Load
   useEffect(() => { load(); }, [isGuest]);
 
@@ -789,6 +814,8 @@ export default function Settings() {
                             console.log('[Settings] Stored CSV demand data:', records.length, 'records');
                             // Update count for persistent UI feedback
                             setDemandCsvCount(records.length);
+                            // Learn domain patterns from emails in CSV (fire-and-forget)
+                            ingestPatternsFromCsv(records);
                             // Don't immediately hide - let the CsvUpload show its success state
                             // User can click Cancel or navigate away when ready
                           }}
@@ -902,6 +929,8 @@ export default function Settings() {
                             console.log('[Settings] Stored CSV supply data:', records.length, 'records');
                             // Update count for persistent UI feedback
                             setSupplyCsvCount(records.length);
+                            // Learn domain patterns from emails in CSV (fire-and-forget)
+                            ingestPatternsFromCsv(records);
                             // Don't immediately hide - let the CsvUpload show its success state
                             // User can click Cancel or navigate away when ready
                           }}

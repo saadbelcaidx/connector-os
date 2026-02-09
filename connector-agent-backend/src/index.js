@@ -1784,6 +1784,73 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
 });
 
 // ============================================================
+// PATTERN INGESTION (learn from CSV uploads)
+// ============================================================
+
+/**
+ * POST /api/patterns/ingest
+ * Learn domain email patterns from user-provided CSV data.
+ *
+ * Body: { patterns: [{ email, firstName, lastName }] }
+ * Auth: API key (same as find/verify)
+ *
+ * Each record calls extractPattern() + recordDomainPattern() (existing functions).
+ * The 2-win gate in getLearnedEmail() provides safety — one CSV upload = 1 win,
+ * needs confirmation from a second source before the pattern is used.
+ *
+ * Cap: 1000 records per request.
+ */
+app.post('/api/patterns/ingest', (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const apiKey = verifyApiKey(authHeader);
+  const userId = req.headers['x-user-id'];
+
+  if (!apiKey && !userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+  }
+
+  const { patterns } = req.body;
+
+  if (!patterns || !Array.isArray(patterns)) {
+    return res.status(400).json({ success: false, error: 'patterns array required' });
+  }
+
+  // Cap at 1000 records per request
+  const batch = patterns.slice(0, 1000);
+
+  let learned = 0;
+  let skipped = 0;
+
+  for (const item of batch) {
+    const { email, firstName, lastName } = item;
+
+    if (!email || !firstName || !lastName) {
+      skipped++;
+      continue;
+    }
+
+    const domain = email.split('@')[1]?.toLowerCase();
+    if (!domain) {
+      skipped++;
+      continue;
+    }
+
+    const pattern = extractPattern(email, firstName, lastName);
+    if (pattern === 'unknown') {
+      skipped++;
+      continue;
+    }
+
+    recordDomainPattern(domain, email, firstName, lastName);
+    learned++;
+  }
+
+  console.log(`[Patterns] Ingested ${learned} patterns, skipped ${skipped} (total: ${batch.length})`);
+
+  res.json({ learned, skipped });
+});
+
+// ============================================================
 // ADMIN ENDPOINTS
 // ============================================================
 
@@ -2035,6 +2102,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('  - POST /api/email/v2/verify');
   console.log('  - POST /api/email/v2/find-bulk');
   console.log('  - POST /api/email/v2/verify-bulk');
+  console.log('  - POST /api/patterns/ingest');
   console.log('============================================');
   console.log('');
 });
