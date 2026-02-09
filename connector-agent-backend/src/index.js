@@ -675,8 +675,14 @@ async function verifyWithPrx2Direct(email) {
       recordMetric('ko');
       return { verdict: 'INVALID', raw: data };
     } else {
-      // mb (catch-all/accept-all) = RISKY - domain accepts all, mailbox unverified
+      // mb (catch-all/accept-all) — check if provider blocks SMTP by design
       recordMetric('mb');
+      const domain = email.split('@')[1];
+      const mx = await getMxProvider(domain);
+      if (mx.smtpBlocking) {
+        console.log(`[PRX2] ${email} - code=${data.code} BUT ${mx.provider} blocks SMTP → upgrading to VALID`);
+        return { verdict: 'VALID', mxUpgrade: true, mxProvider: mx.provider, raw: data };
+      }
       return { verdict: 'RISKY', catchAll: true, raw: data };
     }
   } catch (err) {
@@ -739,7 +745,7 @@ async function verifyWithDocumentedApiDirect(email, retryCount = 0) {
       return null;
     }
 
-    // Map response to verdicts - VALID for ok and mb (catch-all)
+    // Map response to verdicts
     if (data.code === 'ok') {
       recordMetric('ok');
       return { verdict: 'VALID', raw: data };
@@ -747,8 +753,14 @@ async function verifyWithDocumentedApiDirect(email, retryCount = 0) {
       recordMetric('ko');
       return { verdict: 'INVALID', raw: data };
     } else {
-      // mb (catch-all/accept-all) = RISKY - domain accepts all, mailbox unverified
+      // mb (catch-all/accept-all) — check if provider blocks SMTP by design
       recordMetric('mb');
+      const domain = email.split('@')[1];
+      const mx = await getMxProvider(domain);
+      if (mx.smtpBlocking) {
+        console.log(`[DocAPI] ${email} - code=${data.code} BUT ${mx.provider} blocks SMTP → upgrading to VALID`);
+        return { verdict: 'VALID', mxUpgrade: true, mxProvider: mx.provider, raw: data };
+      }
       return { verdict: 'RISKY', catchAll: true, raw: data };
     }
   } catch (err) {
@@ -1003,6 +1015,13 @@ function isDomainCatchAll(domain) {
   // Catch-all: 3+ mb responses, 0 ok, 0 ko
   return stats.mb_count >= 3 && stats.ok_count === 0 && stats.ko_count === 0;
 }
+
+// ============================================================
+// DNS INTELLIGENCE MODULES
+// ============================================================
+const { getMxProvider, getCacheStats: getDnsCacheStats, clearAllCaches: clearDnsCaches } = require('./dnsIntel');
+const { resolveMailboxProvider } = require('./providerIntel');
+const { reorderPermutations } = require('./permutationPriority');
 
 // ============================================================
 // MAIN VERIFY FUNCTION
@@ -1371,11 +1390,32 @@ app.post('/api/email/v2/find', async (req, res) => {
   }
 
   // ============================================================
+  // DNS INTELLIGENCE (free signals — liveness, provider, SPF, autodiscover)
+  // ============================================================
+  const cid = effectiveKeyId ? effectiveKeyId.slice(0, 8) : domain.slice(0, 8);
+
+  // Resolve provider (runs liveness + MX + SPF + autodiscover in parallel, 2.5s budget)
+  const providerInfo = await resolveMailboxProvider(domain, cid);
+
+  // DOMAIN LIVENESS: short-circuit dead domains (saves all downstream API calls)
+  if (providerInfo.live === false) {
+    console.log(`[Find] cid=${cid} domain=${domain} DOMAIN_DEAD — skipping all verification`);
+    return res.json({ email: null });
+  }
+
+  console.log(`[Find] cid=${cid} provider=${providerInfo.provider} gateway_mx=${providerInfo.gatewayMx || 'none'} evidence=${JSON.stringify(providerInfo.evidence)}`);
+
+  // ============================================================
   // STEP 0b: CATCH-ALL DETECTION (fast path for catch-all domains)
   // ============================================================
   console.log(`[Find] STEP 0b: Catch-all detection for ${domain}`);
 
-  const catchAllResult = await detectCatchAll(domain);
+  // Skip catch-all test for SMTP-blocking providers (e.g. Google always accepts gibberish)
+  if (providerInfo.smtpBlocking) {
+    console.log(`[Find] Skipping catch-all test — ${providerInfo.provider} blocks SMTP verification`);
+  }
+
+  const catchAllResult = providerInfo.smtpBlocking ? { isCatchAll: false, skipped: true } : await detectCatchAll(domain);
 
   if (catchAllResult.isCatchAll) {
     // Domain accepts everything - return best-guess pattern as VALID
@@ -1396,9 +1436,15 @@ app.post('/api/email/v2/find', async (req, res) => {
   const FIND_DEADLINE_MS = 12000; // 12 second deadline for entire find operation
   const allPermutations = generateEmailPermutations(firstName, lastName, domain);
 
+  // Provider-aware reorder: try most likely patterns first (same set, different order)
+  const reorderedPermutations = reorderPermutations(allPermutations, providerInfo.provider, firstName, lastName);
+  if (providerInfo.provider !== 'unknown') {
+    console.log(`[Find] cid=${cid} perm_order=${providerInfo.provider}_default top3=${reorderedPermutations.slice(0, 3).join(',')}`);
+  }
+
   // Take top 5 patterns (or top 3 in degraded mode)
   const PARALLEL_LIMIT = mode === 'DEGRADED' ? 3 : 5;
-  const topPermutations = allPermutations.slice(0, PARALLEL_LIMIT);
+  const topPermutations = reorderedPermutations.slice(0, PARALLEL_LIMIT);
 
   console.log(`[Find] STEP 1: Parallel permutation engine - racing ${topPermutations.length} patterns`);
   console.log(`[Find] Patterns: ${topPermutations.join(', ')}`);
@@ -1442,7 +1488,7 @@ app.post('/api/email/v2/find', async (req, res) => {
   }
 
   // Fallback: try remaining permutations sequentially
-  const remainingPermutations = allPermutations.slice(PARALLEL_LIMIT);
+  const remainingPermutations = reorderedPermutations.slice(PARALLEL_LIMIT);
   for (const email of remainingPermutations) {
     const result = await withDeadline(
       verifyEmail(email, userId),
@@ -1687,8 +1733,17 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       }
     }
 
-    // Generate permutations (DEGRADED = rank-1 only)
-    let permutations = generateEmailPermutations(firstName, lastName, domain);
+    // Generate permutations with provider-aware reorder (DEGRADED = rank-1 only)
+    const rawPermutations = generateEmailPermutations(firstName, lastName, domain);
+    const bulkProviderInfo = await resolveMailboxProvider(domain, `bulk-${domain.slice(0, 8)}`);
+
+    // Short-circuit dead domains in bulk too
+    if (bulkProviderInfo.live === false) {
+      results.push({ firstName, lastName, domain, success: false, reason: 'domain_dead' });
+      continue;
+    }
+
+    let permutations = reorderPermutations(rawPermutations, bulkProviderInfo.provider, firstName, lastName);
     if (mode === 'DEGRADED') {
       permutations = permutations.slice(0, 1);
     }
@@ -1995,6 +2050,7 @@ app.get('/admin/status', (req, res) => {
     },
     queue_depth: 0,
     metrics_60s: breakdown,
+    dns_intel: getDnsCacheStats(),
   });
 });
 
@@ -2007,8 +2063,9 @@ app.delete('/api/dev/cache', (req, res) => {
   db.prepare(`DELETE FROM verify_cache`).run();
   db.prepare(`DELETE FROM email_cache`).run();
   db.prepare(`DELETE FROM domain_stats`).run();
+  clearDnsCaches();
   METRICS.window = [];
-  console.log('[Dev] All caches cleared');
+  console.log('[Dev] All caches cleared (including DNS intel caches)');
   res.json({ success: true, message: 'All caches cleared' });
 });
 
