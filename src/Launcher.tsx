@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, MessageSquare, MessageCircle, Lock, Workflow, Eye, Globe } from 'lucide-react';
+import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, Lock, Workflow, Eye, Globe } from 'lucide-react';
 import { FEATURES } from './config/features';
 
 // Chess King Icon — Strategic moves, the operator makes the play
@@ -76,13 +76,13 @@ const apps: AppCard[] = [
     route: '/msg-sim',
     ssmOnly: true,
   },
-  // 4. Track replies (see results)
+  // 4. Introduction lifecycle — track from match to deal (includes inbound replies)
   {
-    id: 'reply-tracker',
-    title: 'Inbound',
-    description: 'Watch intros turn into deals.',
-    icon: MessageSquare,
-    route: '/reply-tracker',
+    id: 'introductions',
+    title: 'Introductions',
+    description: 'Track intros from match to deal.',
+    icon: Network,
+    route: '/introductions',
     ssmOnly: true,
   },
   // 5. See the money
@@ -137,15 +137,7 @@ const apps: AppCard[] = [
     route: '/platform-dashboard',
     ssmOnly: true,
   },
-  // 11. Ask Insights — Operator dashboard for ConnectorAsk questions
-  {
-    id: 'assistant-insights',
-    title: 'Ask Insights',
-    description: 'What members are asking. Patterns + feedback.',
-    icon: MessageCircle,
-    route: '/operator/assistant-insights',
-    ssmOnly: true,
-  },
+  // Ask Insights removed from Launcher — operator-only, access via /operator/assistant-insights
 ];
 
 function Launcher() {

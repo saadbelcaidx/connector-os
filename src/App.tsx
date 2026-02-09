@@ -12,7 +12,7 @@ import NeedPowerDoc from './NeedPowerDoc';
 import Flow from './Flow';
 import ReplyBrainV1 from './reply/ReplyBrainV1';
 import DebugReplyBrain from './reply/DebugReplyBrain';
-import ReplyTracker from './reply/ReplyTracker';
+// ReplyTracker removed — consolidated into Introductions
 import Settings from './Settings';
 import Login from './Login';
 import AuthCallback from './AuthCallback';
@@ -25,6 +25,7 @@ import { Dashboard } from './Dashboard';
 import SSMAccessDashboard from './operator/SSMAccessDashboard';
 import CorpusAdmin from './operator/CorpusAdmin';
 import AssistantInsights from './operator/AssistantInsights';
+import Introductions from './Introductions';
 import OperatorRoute from './OperatorRoute';
 import PasswordSetupGate from './PasswordSetupGate';
 import OnboardingWizard from './OnboardingWizard';
@@ -143,6 +144,20 @@ function AppRoutes() {
         }
       />
 
+      {/* Introductions — Intro lifecycle dashboard (SSM gated) */}
+      <Route
+        path="/introductions"
+        element={
+          <PrivateRoute>
+            <SSMGate featureName="Introductions">
+              <div className="page-fade">
+                <Introductions />
+              </div>
+            </SSMGate>
+          </PrivateRoute>
+        }
+      />
+
       {/* Strategic Alignment Platform - Dashboard (SSM gated) */}
       <Route
         path="/platform-dashboard"
@@ -198,18 +213,8 @@ function AppRoutes() {
         }
       />
 
-      <Route
-        path="/reply-tracker"
-        element={
-          <PrivateRoute>
-            <SSMGate featureName="Inbound">
-              <div className="page-fade">
-                <ReplyTracker />
-              </div>
-            </SSMGate>
-          </PrivateRoute>
-        }
-      />
+      {/* Inbound consolidated into Introductions — redirect */}
+      <Route path="/reply-tracker" element={<Navigate to="/introductions?filter=replied" replace />} />
 
       <Route
         path="/settings"

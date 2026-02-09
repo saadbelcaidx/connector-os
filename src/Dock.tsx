@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Network, Mail, MessageSquare, TrendingUp, BookOpen, Home, Settings, User, LogOut, Key, Eye, EyeOff, X, ArrowRight, Loader2 } from 'lucide-react';
+import { Network, Mail, TrendingUp, BookOpen, Home, Settings, User, LogOut, Key, Eye, EyeOff, X, ArrowRight, Loader2 } from 'lucide-react';
 
 // Chess King Icon — Strategic moves, the operator makes the play
 function KingIcon({ size = 24, style }: { size?: number; style?: React.CSSProperties }) {
@@ -60,10 +60,10 @@ const dockApps: DockApp[] = [
     route: '/msg-sim',
   },
   {
-    id: 'inbound',
-    name: 'Inbound',
-    icon: MessageSquare,
-    route: '/reply-tracker',
+    id: 'intros',
+    name: 'Intros',
+    icon: Network,
+    route: '/introductions',
   },
   {
     id: 'calculator',

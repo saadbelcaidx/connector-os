@@ -87,6 +87,9 @@ import {
 // Match Events — Behavioral learning infrastructure (Option B)
 import { logMatchSent, MatchEventData } from './services/MatchEventsService';
 
+// Introductions — First-class intro lifecycle tracking
+import { createIntroductionsBatch, CreateIntroductionParams } from './services/IntroductionsService';
+
 // PHILEMON — Ground Truth UI System (Phase 0-5)
 import {
   deriveUiState,
@@ -2900,6 +2903,65 @@ export default function Flow() {
             }).catch(() => {});
           }
         }
+      }
+    }
+
+    // Fire-and-forget: Create introduction records for lifecycle tracking
+    if (user?.id) {
+      const introRecords: CreateIntroductionParams[] = [];
+
+      // Build a map of supply send results for cross-referencing
+      const supplyResultsByDomain = new Map<string, { item: SendQueueItem; result: typeof results[0]['result'] }>();
+      for (const { item, result } of results) {
+        if (item.type === 'SUPPLY' && result.success && item.agg) {
+          supplyResultsByDomain.set(item.agg.supply.domain, { item, result });
+        }
+      }
+
+      for (const { item, result } of results) {
+        if (!result.success || item.type !== 'DEMAND' || !item.match) continue;
+
+        const match = item.match;
+        if (!match.tier || !match.needProfile || !match.capabilityProfile) continue;
+
+        // Find corresponding supply send for this match
+        const supplyEntry = supplyResultsByDomain.get(match.supply.domain);
+        const demandIntroEntry = state.demandIntros.get(recordKey(match.demand));
+        const supplyIntroEntry = supplyEntry?.item.agg
+          ? state.supplyIntros.get(recordKey(supplyEntry.item.agg.supply))
+          : undefined;
+
+        introRecords.push({
+          operatorId: user.id,
+          demandDomain: match.demand.domain,
+          demandCompany: match.demand.company,
+          demandContactEmail: item.params.email,
+          demandContactName: [item.params.firstName, item.params.lastName].filter(Boolean).join(' ') || undefined,
+          demandContactTitle: item.params.contactTitle,
+          supplyDomain: match.supply.domain,
+          supplyCompany: match.supply.company,
+          supplyContactEmail: supplyEntry?.item.params.email,
+          supplyContactName: supplyEntry ? [supplyEntry.item.params.firstName, supplyEntry.item.params.lastName].filter(Boolean).join(' ') || undefined : undefined,
+          supplyContactTitle: supplyEntry?.item.params.contactTitle,
+          matchScore: match.score,
+          matchTier: match.tier,
+          matchTierReason: match.tierReason || '',
+          matchReasons: match.reasons,
+          needCategory: match.needProfile.category,
+          capabilityCategory: match.capabilityProfile.category,
+          demandIntroText: item.params.introText,
+          supplyIntroText: supplyEntry?.item.params.introText,
+          introSource: demandIntroEntry?.source || supplyIntroEntry?.source || 'template',
+          threadId: `${match.demand.domain}::${match.supply.domain}::${Date.now()}`,
+          demandCampaignId: senderConfig.demandCampaignId || undefined,
+          supplyCampaignId: senderConfig.supplyCampaignId || undefined,
+          demandLeadId: result.leadId,
+          supplyLeadId: supplyEntry?.result.leadId,
+        });
+      }
+
+      if (introRecords.length > 0) {
+        createIntroductionsBatch(introRecords).catch(() => {});
       }
     }
 
