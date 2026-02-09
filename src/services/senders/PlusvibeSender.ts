@@ -62,8 +62,8 @@ export const PlusvibeSender: SenderAdapter = {
         console.error('[PlusvibeSender] Error:', error);
         return {
           success: false,
-          status: 'error',
-          error: error.details || error.error || 'Failed to create lead',
+          status: 'needs_attention',
+          detail: error.details || error.error || 'Failed to create lead',
         };
       }
 
@@ -74,26 +74,26 @@ export const PlusvibeSender: SenderAdapter = {
         return {
           success: true,
           leadId: result.id || `${params.email}-${Date.now()}`,
-          status: 'added',
+          status: 'new',
         };
       } else if (result.resultStatus === 'skipped') {
         return {
           success: true,
-          status: 'skipped',
+          status: 'existing',
         };
       } else {
         return {
           success: false,
-          status: 'error',
-          error: result.error || 'Unknown error',
+          status: 'needs_attention',
+          detail: result.error || 'Unknown error',
         };
       }
     } catch (error) {
       console.error('[PlusvibeSender] Exception:', error);
       return {
         success: false,
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        status: 'needs_attention',
+        detail: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   },

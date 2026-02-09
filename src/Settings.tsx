@@ -411,6 +411,14 @@ export default function Settings() {
       } else {
         await supabase.from('operator_settings').upsert({
           user_id: user!.id,
+          // AI config (persisted to DB so Msg Simulator can read it)
+          ai_provider: settings.aiProvider || null,
+          ai_openai_api_key: settings.openaiApiKey || null,
+          ai_anthropic_api_key: settings.claudeApiKey || null,
+          ai_azure_api_key: settings.azureApiKey || null,
+          ai_azure_endpoint: settings.azureEndpoint || null,
+          ai_azure_deployment: settings.azureDeployment || null,
+          ai_model: settings.aiModel || null,
           // CSV-ONLY: Apify settings removed
           enrichment_api_key: settings.apolloApiKey,
           anymail_finder_api_key: settings.anymailApiKey,

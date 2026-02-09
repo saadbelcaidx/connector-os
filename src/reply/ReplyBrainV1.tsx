@@ -449,28 +449,44 @@ export default function ReplyBrainV1() {
           console.log('[MsgSim] DB query result:', { data, error, sender_name: data?.sender_name });
 
           if (data) {
-            // Get model from localStorage ai_settings (not stored in DB)
-            let savedModel: string | undefined;
-            try {
-              const aiSettings = localStorage.getItem('ai_settings');
-              if (aiSettings) {
-                const parsed = JSON.parse(aiSettings);
-                savedModel = parsed.aiModel;
-              }
-            } catch {}
+            // DB is primary source for AI config (Settings.tsx now persists here)
+            // Fallback: localStorage.ai_settings for users who saved before DB persistence was added
+            let aiProvider = data.ai_provider;
+            let aiOpenaiKey = data.ai_openai_api_key;
+            let aiAnthropicKey = data.ai_anthropic_api_key;
+            let aiAzureKey = data.ai_azure_api_key;
+            let aiAzureEndpoint = data.ai_azure_endpoint;
+            let aiAzureDeployment = data.ai_azure_deployment;
+            let savedModel = data.ai_model;
 
-            if (data.ai_provider && data.ai_provider !== 'none') {
-              const config: AIConfig = { provider: data.ai_provider, apiKey: '' };
-              if (data.ai_provider === 'openai' && data.ai_openai_api_key) {
-                config.apiKey = data.ai_openai_api_key;
+            if (!aiProvider) {
+              try {
+                const aiSettings = localStorage.getItem('ai_settings');
+                if (aiSettings) {
+                  const parsed = JSON.parse(aiSettings);
+                  aiProvider = parsed.aiProvider;
+                  aiOpenaiKey = aiOpenaiKey || parsed.openaiApiKey;
+                  aiAnthropicKey = aiAnthropicKey || parsed.claudeApiKey;
+                  aiAzureKey = aiAzureKey || parsed.azureApiKey;
+                  aiAzureEndpoint = aiAzureEndpoint || parsed.azureEndpoint;
+                  aiAzureDeployment = aiAzureDeployment || parsed.azureDeployment;
+                  savedModel = savedModel || parsed.aiModel;
+                }
+              } catch {}
+            }
+
+            if (aiProvider && aiProvider !== 'none') {
+              const config: AIConfig = { provider: aiProvider, apiKey: '' };
+              if (aiProvider === 'openai' && aiOpenaiKey) {
+                config.apiKey = aiOpenaiKey;
                 config.model = savedModel || 'gpt-4o-mini';
-              } else if (data.ai_provider === 'anthropic' && data.ai_anthropic_api_key) {
-                config.apiKey = data.ai_anthropic_api_key;
+              } else if (aiProvider === 'anthropic' && aiAnthropicKey) {
+                config.apiKey = aiAnthropicKey;
                 config.model = savedModel || 'claude-3-haiku-20240307';
-              } else if (data.ai_provider === 'azure' && data.ai_azure_api_key) {
-                config.apiKey = data.ai_azure_api_key;
-                config.azureEndpoint = data.ai_azure_endpoint;
-                config.azureDeployment = data.ai_azure_deployment || 'gpt-4o';
+              } else if (aiProvider === 'azure' && aiAzureKey) {
+                config.apiKey = aiAzureKey;
+                config.azureEndpoint = aiAzureEndpoint;
+                config.azureDeployment = aiAzureDeployment || 'gpt-4o';
               }
               if (config.apiKey) setAiConfig(config);
             }
