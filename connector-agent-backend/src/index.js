@@ -671,9 +671,9 @@ async function verifyWithPrx2Direct(email) {
       recordMetric('ko');
       return { verdict: 'INVALID', raw: data };
     } else {
-      // mb (catch-all/accept-all) = VALID - users want emails, not excuses
+      // mb (catch-all/accept-all) = RISKY - domain accepts all, mailbox unverified
       recordMetric('mb');
-      return { verdict: 'VALID', catchAll: true, raw: data };
+      return { verdict: 'RISKY', catchAll: true, raw: data };
     }
   } catch (err) {
     console.log(`[PRX2] ${email} - error: ${err.message}`);
@@ -743,9 +743,9 @@ async function verifyWithDocumentedApiDirect(email, retryCount = 0) {
       recordMetric('ko');
       return { verdict: 'INVALID', raw: data };
     } else {
-      // mb (catch-all/accept-all) = VALID - marketing > morals
+      // mb (catch-all/accept-all) = RISKY - domain accepts all, mailbox unverified
       recordMetric('mb');
-      return { verdict: 'VALID', catchAll: true, raw: data };
+      return { verdict: 'RISKY', catchAll: true, raw: data };
     }
   } catch (err) {
     recordMetric('timeout');
@@ -1018,17 +1018,17 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
   const emailCached = db.prepare(`
     SELECT email, verdict, created_at FROM email_cache WHERE email = ?
   `).get(emailLower);
-  if (emailCached && emailCached.verdict === 'VALID') {
+  if (emailCached && (emailCached.verdict === 'VALID' || emailCached.verdict === 'RISKY')) {
     const age = Date.now() - new Date(emailCached.created_at).getTime();
     const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
     if (age < SEVEN_DAYS) {
-      return { verdict: 'VALID', cached: true };
+      return { verdict: emailCached.verdict, cached: true };
     }
   }
 
-  // Check if domain is known catch-all - still VALID (users want emails!)
+  // Check if domain is known catch-all - RISKY (domain accepts all, mailbox unverified)
   if (domain && isDomainCatchAll(domain)) {
-    return { verdict: 'VALID', reason: 'catch_all_domain', catchAll: true, cached: false };
+    return { verdict: 'RISKY', reason: 'catch_all_domain', catchAll: true, cached: false };
   }
 
   // Blocked patterns (skip API call)
@@ -1055,11 +1055,11 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
       updateDomainStats(emailLower, result.raw.code);
     }
 
-    // Cache VALID and INVALID (not UNKNOWN, not SERVICE_BUSY)
-    if (result.verdict === 'VALID' || result.verdict === 'INVALID') {
+    // Cache VALID, RISKY, and INVALID (not UNKNOWN, not SERVICE_BUSY)
+    if (result.verdict === 'VALID' || result.verdict === 'RISKY' || result.verdict === 'INVALID') {
       cacheVerdict(emailLower, result.verdict);
     }
-    return { verdict: result.verdict, cached: false };
+    return { verdict: result.verdict, catchAll: result.catchAll || false, cached: false };
   }
 
   // Infra failure: return UNKNOWN, don't cache, don't charge
@@ -1295,7 +1295,7 @@ app.post('/api/email/v2/find', async (req, res) => {
     const age = Date.now() - new Date(cached.created_at).getTime();
     const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
     if (age < SEVEN_DAYS) {
-      return res.json({ email: cached.email });
+      return res.json({ email: cached.email, status: (cached.verdict || 'valid').toLowerCase() });
     }
   }
 
@@ -1317,9 +1317,11 @@ app.post('/api/email/v2/find', async (req, res) => {
   // Wrap main logic in try-catch to handle ECONNRESET and network errors
   try {
 
-  // Helper to cache and return VALID email
+  // Helper to cache and return found email
   const cacheAndReturn = (email, source, isCatchAll = false) => {
     deductTokens(effectiveUserId, effectiveKeyId, 1);
+
+    const verdict = isCatchAll ? 'RISKY' : 'VALID';
 
     // Cache in email_cache (for find dedup)
     db.prepare(`
@@ -1331,20 +1333,20 @@ app.post('/api/email/v2/find', async (req, res) => {
       firstName.toLowerCase(),
       lastName.toLowerCase(),
       email,
-      'VALID',
+      verdict,
       new Date().toISOString()
     );
 
-    // Also cache in verify_cache (so verify endpoint returns VALID)
-    cacheVerdict(email, 'VALID');
+    // Also cache in verify_cache
+    cacheVerdict(email, verdict);
 
     // Record pattern for learning (skip catch-all, they're all best-guess)
     if (!isCatchAll) {
       recordDomainPattern(domain, email, firstName, lastName);
     }
 
-    console.log(`[Find] SUCCESS via ${source}: ${email}${isCatchAll ? ' (catch-all)' : ''}`);
-    return res.json({ email });
+    console.log(`[Find] ${verdict} via ${source}: ${email}${isCatchAll ? ' (catch-all)' : ''}`);
+    return res.json({ email, status: verdict.toLowerCase() });
   };
 
   // ============================================================
@@ -1356,6 +1358,9 @@ app.post('/api/email/v2/find', async (req, res) => {
     const learnedResult = await verifyEmail(learnedEmail, userId);
     if (learnedResult.verdict === 'VALID') {
       return cacheAndReturn(learnedEmail, 'learned-pattern');
+    }
+    if (learnedResult.verdict === 'RISKY') {
+      return cacheAndReturn(learnedEmail, 'learned-pattern', true);
     }
     console.log(`[Find] Learned pattern failed, continuing cascade`);
   }
@@ -1414,14 +1419,18 @@ app.post('/api/email/v2/find', async (req, res) => {
         }
 
         if (result.verdict === 'VALID') {
-          console.log(`[Find] 🏆 Winner: ${email}`);
-          return email;
+          console.log(`[Find] 🏆 Winner (valid): ${email}`);
+          return { email, isCatchAll: false };
+        }
+        if (result.verdict === 'RISKY') {
+          console.log(`[Find] 🏆 Winner (risky/catch-all): ${email}`);
+          return { email, isCatchAll: true };
         }
         throw new Error(result.verdict === 'SERVICE_BUSY' ? 'service_busy' : 'not_valid');
       })
     );
 
-    return cacheAndReturn(validEmail, 'parallel-permutation');
+    return cacheAndReturn(validEmail.email, 'parallel-permutation', validEmail.isCatchAll);
   } catch (err) {
     // All top patterns failed - check if service was busy
     console.log(`[Find] Top ${PARALLEL_LIMIT} patterns failed, trying remaining...`);
@@ -1444,8 +1453,11 @@ app.post('/api/email/v2/find', async (req, res) => {
     if (result.verdict === 'VALID') {
       return cacheAndReturn(email, 'permutation');
     }
+    if (result.verdict === 'RISKY') {
+      return cacheAndReturn(email, 'permutation', true);
+    }
   }
-  console.log(`[Find] Permutations: none of ${allPermutations.length} patterns verified VALID`);
+  console.log(`[Find] Permutations: none of ${allPermutations.length} patterns verified`);
 
   // ============================================================
   // STEP 3: MAILTESTER FIND (last resort)
@@ -1551,16 +1563,18 @@ app.post('/api/email/v2/verify', async (req, res) => {
       return res.json({ email: null });
     }
 
-    // Token accounting: only charge on VALID or INVALID (not cached, not service_busy)
-    if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
+    // Token accounting: only charge on VALID, RISKY, or INVALID (not cached, not service_busy)
+    if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'RISKY' || result.verdict === 'INVALID')) {
       deductTokens(effectiveUserId, effectiveKeyId, 1);
     }
 
-    // VALID = return email, anything else = null
+    // VALID or RISKY = return email with status, anything else = null
     if (result.verdict === 'VALID') {
-      res.json({ email: emailToVerify });
+      res.json({ email: emailToVerify, status: 'valid' });
+    } else if (result.verdict === 'RISKY') {
+      res.json({ email: emailToVerify, status: 'risky' });
     } else {
-      res.json({ email: null });
+      res.json({ email: null, status: 'invalid' });
     }
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
