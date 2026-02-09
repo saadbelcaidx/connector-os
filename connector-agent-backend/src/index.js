@@ -274,6 +274,10 @@ function getOrCreateUsage(userId, apiKeyId) {
     `).run(id, userId, apiKeyId, period.start, period.end);
 
     usage = db.prepare(`SELECT * FROM usage WHERE id = ?`).get(id);
+  } else if (apiKeyId && usage.api_key_id !== apiKeyId) {
+    // Fix orphaned api_key_id from a previous key rotation
+    db.prepare(`UPDATE usage SET api_key_id = ? WHERE id = ?`).run(apiKeyId, usage.id);
+    usage.api_key_id = apiKeyId;
   }
 
   return usage;
@@ -1088,10 +1092,11 @@ app.post('/api/keys/generate', (req, res) => {
   }
 
   // Delete ALL existing keys for this user (clean slate on generate)
+  // Usage records intentionally preserved — rotation changes the credential, not the billing
   const deleted = db.prepare(`DELETE FROM api_keys WHERE user_id = ?`).run(userId);
   const rotated = deleted.changes > 0;
   if (rotated) {
-    console.log(`[Keys] Rotated: deleted ${deleted.changes} old key(s) for ${userEmail}`);
+    console.log(`[Keys] Rotated: deleted ${deleted.changes} old key(s) for ${userEmail} (usage preserved)`);
   }
 
   // Generate new key
