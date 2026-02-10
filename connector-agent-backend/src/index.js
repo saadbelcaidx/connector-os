@@ -1961,36 +1961,40 @@ app.post('/markets/search', async (req, res) => {
   }
 
   try {
-    // Build payload for provider
-    const payload = {
-      api_key: apiKey,
-      limit: 50,
-      ...(showOneLeadPerCompany !== undefined && { show_one_lead_per_company: showOneLeadPerCompany }),
-    };
+    // Build search_filters from client params
+    const search_filters = {};
 
-    // Add filters only if provided
+    if (jobListingFilter && jobListingFilter.length > 0) {
+      search_filters.jobListingFilter = jobListingFilter;
+    }
     if (newsFilter && newsFilter.length > 0) {
-      payload.news_filter = newsFilter;
+      search_filters.news_filter = newsFilter;
     }
     if (industryFilter && industryFilter.length > 0) {
-      payload.industry_filter = industryFilter;
-    }
-    if (jobListingFilter && jobListingFilter.length > 0) {
-      payload.job_listing_filter = jobListingFilter;
+      search_filters.industry_filter = industryFilter;
     }
     if (fundingFilter && fundingFilter.length > 0) {
-      payload.funding_filter = fundingFilter;
+      search_filters.funding_filter = fundingFilter;
     }
     if (revenueFilter && revenueFilter.length > 0) {
-      payload.revenue_filter = revenueFilter;
+      search_filters.revenue_filter = revenueFilter;
     }
+
+    const payload = {
+      search_filters,
+      skip_owned_leads: false,
+      show_one_lead_per_company: showOneLeadPerCompany !== undefined ? showOneLeadPerCompany : true,
+    };
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    const response = await fetch('https://api.instantly.ai/api/v2/lead-finder/search/people', {
+    const response = await fetch('https://api.instantly.ai/api/v2/supersearch-enrichment/preview-leads-from-supersearch', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -2003,12 +2007,13 @@ app.post('/markets/search', async (req, res) => {
     }
 
     const data = await response.json();
-    console.log(`[Markets] Search returned ${data?.data?.length || 0} leads, total=${data?.total_count || 0}, redacted=${data?.redacted_count || 0}`);
+    const leads = data.leads || [];
+    console.log(`[Markets] Search returned ${leads.length} leads, total=${data?.number_of_leads || 0}, redacted=${data?.number_of_redacted_results || 0}`);
 
     res.json({
-      data: data.data || [],
-      total_count: data.total_count || 0,
-      redacted_count: data.redacted_count || 0,
+      data: leads,
+      total_count: data.number_of_leads || 0,
+      redacted_count: data.number_of_redacted_results || 0,
     });
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -2047,10 +2052,11 @@ app.post('/markets/company', async (req, res) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(`https://api.instantly.ai/api/v2/lead-finder/company/${companyId}`, {
+    const response = await fetch(`https://app.instantly.ai/leadsy/api/v1/company/${companyId}`, {
       method: 'GET',
       headers: {
-        'X-Org-Auth': MARKETS_COMPANY_JWT,
+        'x-auth-jwt': MARKETS_COMPANY_JWT,
+        'x-from-instantly': 'true',
         'Content-Type': 'application/json',
       },
       signal: controller.signal,
@@ -2063,10 +2069,11 @@ app.post('/markets/company', async (req, res) => {
     }
 
     const data = await response.json();
-    setCompanyCached(companyId, data);
-    console.log(`[Markets] Enriched company: ${data?.name || companyId}`);
+    const companyData = data?.company || data;
+    setCompanyCached(companyId, companyData);
+    console.log(`[Markets] Enriched company: ${companyData?.name || companyId}`);
 
-    res.json({ company: data });
+    res.json({ company: companyData });
   } catch (err) {
     console.log(`[Markets] Company intel error for ${companyId}: ${err.message}`);
     res.json({ company: null });
@@ -2106,10 +2113,11 @@ app.post('/markets/enrich-batch', async (req, res) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(`https://api.instantly.ai/api/v2/lead-finder/company/${id}`, {
+      const response = await fetch(`https://app.instantly.ai/leadsy/api/v1/company/${id}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${MARKETS_COMPANY_JWT}`,
+          'x-auth-jwt': MARKETS_COMPANY_JWT,
+          'x-from-instantly': 'true',
           'Content-Type': 'application/json',
         },
         signal: controller.signal,
@@ -2118,8 +2126,9 @@ app.post('/markets/enrich-batch', async (req, res) => {
 
       if (response.ok) {
         const data = await response.json();
-        setCompanyCached(id, data);
-        companies[id] = data;
+        const companyData = data?.company || data;
+        setCompanyCached(id, companyData);
+        companies[id] = companyData;
       } else {
         companies[id] = null;
       }
