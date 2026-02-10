@@ -1911,6 +1911,231 @@ app.post('/api/patterns/ingest', (req, res) => {
 });
 
 // ============================================================
+// MARKETS — Signal-based lead search (provider-agnostic proxy)
+// ============================================================
+
+// In-memory cache for company intel (24h TTL)
+const companyIntelCache = new Map(); // companyId -> { data, timestamp }
+const COMPANY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+// Shared JWT for company intel endpoint (service-level, not user-facing)
+const MARKETS_COMPANY_JWT = process.env.MARKETS_COMPANY_JWT || '';
+
+function getCompanyCached(companyId) {
+  const entry = companyIntelCache.get(companyId);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > COMPANY_CACHE_TTL) {
+    companyIntelCache.delete(companyId);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCompanyCached(companyId, data) {
+  companyIntelCache.set(companyId, { data, timestamp: Date.now() });
+  // Evict if cache is too large (prevent memory leak)
+  if (companyIntelCache.size > 5000) {
+    const oldest = companyIntelCache.keys().next().value;
+    companyIntelCache.delete(oldest);
+  }
+}
+
+/**
+ * POST /markets/search
+ * Proxy search request to provider API using member's API key.
+ * Client never sees provider domain or auth mechanism.
+ */
+app.post('/markets/search', async (req, res) => {
+  const {
+    apiKey,
+    newsFilter,
+    industryFilter,
+    jobListingFilter,
+    fundingFilter,
+    revenueFilter,
+    showOneLeadPerCompany,
+  } = req.body;
+
+  if (!apiKey) {
+    return res.status(400).json({ error: 'API key required' });
+  }
+
+  try {
+    // Build payload for provider
+    const payload = {
+      api_key: apiKey,
+      limit: 50,
+      ...(showOneLeadPerCompany !== undefined && { show_one_lead_per_company: showOneLeadPerCompany }),
+    };
+
+    // Add filters only if provided
+    if (newsFilter && newsFilter.length > 0) {
+      payload.news_filter = newsFilter;
+    }
+    if (industryFilter && industryFilter.length > 0) {
+      payload.industry_filter = industryFilter;
+    }
+    if (jobListingFilter && jobListingFilter.length > 0) {
+      payload.job_listing_filter = jobListingFilter;
+    }
+    if (fundingFilter && fundingFilter.length > 0) {
+      payload.funding_filter = fundingFilter;
+    }
+    if (revenueFilter && revenueFilter.length > 0) {
+      payload.revenue_filter = revenueFilter;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    const response = await fetch('https://api.instantly.ai/api/v2/lead-finder/search/people', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.log(`[Markets] Search failed: HTTP ${response.status} ${errText.slice(0, 200)}`);
+      return res.status(response.status).json({ error: 'Search failed', detail: errText.slice(0, 200) });
+    }
+
+    const data = await response.json();
+    console.log(`[Markets] Search returned ${data?.data?.length || 0} leads, total=${data?.total_count || 0}, redacted=${data?.redacted_count || 0}`);
+
+    res.json({
+      data: data.data || [],
+      total_count: data.total_count || 0,
+      redacted_count: data.redacted_count || 0,
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.log('[Markets] Search timed out');
+      return res.status(504).json({ error: 'Search timed out' });
+    }
+    console.error('[Markets] Search error:', err.message);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+/**
+ * POST /markets/company
+ * Fetch company intel using shared service JWT.
+ * Client never sees the JWT or provider endpoint.
+ */
+app.post('/markets/company', async (req, res) => {
+  const { companyId } = req.body;
+
+  if (!companyId) {
+    return res.status(400).json({ error: 'companyId required' });
+  }
+
+  // Check cache
+  const cached = getCompanyCached(companyId);
+  if (cached) {
+    return res.json({ company: cached });
+  }
+
+  if (!MARKETS_COMPANY_JWT) {
+    console.log('[Markets] Company intel skipped: no JWT configured');
+    return res.json({ company: null });
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(`https://api.instantly.ai/api/v2/lead-finder/company/${companyId}`, {
+      method: 'GET',
+      headers: {
+        'X-Org-Auth': MARKETS_COMPANY_JWT,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.log(`[Markets] Company intel failed for ${companyId}: HTTP ${response.status}`);
+      return res.json({ company: null });
+    }
+
+    const data = await response.json();
+    setCompanyCached(companyId, data);
+    console.log(`[Markets] Enriched company: ${data?.name || companyId}`);
+
+    res.json({ company: data });
+  } catch (err) {
+    console.log(`[Markets] Company intel error for ${companyId}: ${err.message}`);
+    res.json({ company: null });
+  }
+});
+
+/**
+ * POST /markets/enrich-batch
+ * Batch company enrichment with 100ms delay between calls.
+ * Returns map of companyId -> company data.
+ */
+app.post('/markets/enrich-batch', async (req, res) => {
+  const { companyIds } = req.body;
+
+  if (!companyIds || !Array.isArray(companyIds) || companyIds.length === 0) {
+    return res.status(400).json({ error: 'companyIds array required' });
+  }
+
+  // Cap at 50 per batch
+  const ids = companyIds.slice(0, 50);
+  const companies = {};
+
+  for (const id of ids) {
+    // Check cache first
+    const cached = getCompanyCached(id);
+    if (cached) {
+      companies[id] = cached;
+      continue;
+    }
+
+    if (!MARKETS_COMPANY_JWT) {
+      companies[id] = null;
+      continue;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(`https://api.instantly.ai/api/v2/lead-finder/company/${id}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${MARKETS_COMPANY_JWT}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        setCompanyCached(id, data);
+        companies[id] = data;
+      } else {
+        companies[id] = null;
+      }
+    } catch (err) {
+      companies[id] = null;
+    }
+
+    // 100ms delay between calls
+    await sleep(100);
+  }
+
+  console.log(`[Markets] Batch enriched ${Object.values(companies).filter(Boolean).length}/${ids.length} companies`);
+  res.json({ companies });
+});
+
+// ============================================================
 // ADMIN ENDPOINTS
 // ============================================================
 
@@ -2165,6 +2390,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('  - POST /api/email/v2/find-bulk');
   console.log('  - POST /api/email/v2/verify-bulk');
   console.log('  - POST /api/patterns/ingest');
+  console.log('  - POST /markets/search');
+  console.log('  - POST /markets/company');
+  console.log('  - POST /markets/enrich-batch');
   console.log('============================================');
   console.log('');
 });
