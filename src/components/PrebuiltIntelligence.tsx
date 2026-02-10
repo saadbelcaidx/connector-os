@@ -8,12 +8,14 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { X, HelpCircle, FlaskConical, Building2, DollarSign, Clock, MapPin, Users, ArrowRight, Loader2, Check, Stethoscope, ChevronDown } from 'lucide-react';
+import { X, HelpCircle, FlaskConical, Building2, DollarSign, Clock, MapPin, Users, ArrowRight, Loader2, Check, Stethoscope, ChevronDown, Zap, ExternalLink } from 'lucide-react';
 import { fetchNihDemand, getNihInstitutes, DEFAULT_NIH_KEYWORDS } from '../services/NihService';
 import { fetchUsaSpendingSupply, DEFAULT_CRO_KEYWORDS, FUNDING_AGENCIES } from '../services/UsaSpendingService';
 import { fetchClinicalTrials } from '../services/PublicDatabaseClient';
 import { storeCsvData } from '../services/SignalsClient';
+import { searchMarkets, enrichCompanies, normalizeToRecord, storeAsdemand } from '../services/MarketsService';
 import type { NormalizedRecord } from '../schemas';
+import { useAuth } from '../AuthContext';
 
 // =============================================================================
 // TYPES
@@ -191,6 +193,51 @@ Answer any questions about this market.`,
         'Patient recruitment firms',
         'Site management organizations',
         'CROs',
+      ],
+    },
+  },
+  {
+    id: 'markets',
+    name: 'Markets',
+    icon: <Zap className="w-6 h-6" />,
+    tagline: 'Real-time hiring, funding & growth signals',
+    status: 'active',
+    gptPrompt: `MARKETS - Universal Signal Intelligence
+
+This is a real-time signal database covering 9M+ contacts.
+
+SIGNALS YOU CAN SEARCH:
+- Hiring: Companies posting specific roles (case-sensitive titles)
+- Funding: Companies that just raised (pre-seed to Series D+)
+- Headcount Growth: Companies expanding teams
+- Product Launches: Companies shipping new products
+- Partnerships: Companies announcing deals
+- Acquisitions: Companies buying other companies
+
+HOW TO USE:
+1. Pick a signal (e.g., "Hiring Software Engineers")
+2. Pick an industry (e.g., "Software & Internet")
+3. System returns 50 decision-maker contacts at those companies
+4. Flow enriches their emails and you route intros
+
+The signal tells you WHEN to reach out. The industry tells you WHO to reach.
+
+Answer any questions about this market.`,
+    demand: {
+      description: 'Companies with active signals',
+      examples: [
+        'Companies hiring specific roles (Software Engineer, Account Executive)',
+        'Companies that just raised funding (Series A, B, C)',
+        'Companies expanding headcount',
+      ],
+      signals: ['Hiring activity', 'Funding raised', 'Headcount growth', 'Partnerships'],
+    },
+    supply: {
+      description: 'Service providers who fulfill the need',
+      examples: [
+        'Recruiting agencies for the hired roles',
+        'Consultants for the funded verticals',
+        'Growth partners for expanding companies',
       ],
     },
   },
@@ -869,6 +916,430 @@ function ClinicalTrialsModal({ source, onClose, onUse }: ModalProps) {
 }
 
 // =============================================================================
+// MARKETS MODAL
+// =============================================================================
+
+const NEWS_SIGNALS = [
+  { value: 'hires', label: 'Hiring' },
+  { value: 'receives_financing', label: 'Funding raised' },
+  { value: 'increases_headcount_by', label: 'Headcount growth' },
+  { value: 'launches', label: 'Product launch' },
+  { value: 'partners_with', label: 'New partnership' },
+  { value: 'acquires', label: 'Acquisition' },
+];
+
+const INDUSTRY_GROUPS: { category: string; subs: string[] }[] = [
+  { category: 'Software & Internet', subs: ['Computer & Network Security', 'Computer Software', 'Information Technology and Services', 'Internet'] },
+  { category: 'Business Services', subs: ['Alternative Dispute Resolution', 'Animation', 'Business Supplies and Equipment', 'Design', 'Environmental Services', 'Events Services', 'Executive Office', 'Facilities Services', 'Fund-Raising', 'Graphic Design', 'Human Resources', 'Import and Export', 'Individual & Family Services', 'Information Services', 'International Trade and Development', 'Law Practice', 'Legal Services', 'Management Consulting', 'Market Research', 'Marketing and Advertising', 'Outsourcing/Offshoring', 'Professional Training & Coaching', 'Program Development', 'Public Relations and Communications', 'Public Safety', 'Security and Investigations', 'Staffing and Recruiting', 'Think Tanks', 'Translation and Localization', 'Writing and Editing'] },
+  { category: 'Financial Services', subs: ['Accounting', 'Banking', 'Capital Markets', 'Financial Services', 'Insurance', 'Investment Banking', 'Investment Management', 'Venture Capital & Private Equity'] },
+  { category: 'Healthcare', subs: ['Alternative Medicine', 'Biotechnology', 'Health, Wellness and Fitness', 'Hospital & Health Care', 'Medical Devices', 'Medical Practice', 'Mental Health Care', 'Pharmaceuticals', 'Veterinary'] },
+  { category: 'Manufacturing', subs: ['Automotive', 'Aviation & Aerospace', 'Chemicals', 'Electrical/Electronic Manufacturing', 'Furniture', 'Industrial Automation', 'Machinery', 'Mechanical or Industrial Engineering', 'Plastics', 'Railroad Manufacture', 'Shipbuilding', 'Textiles'] },
+  { category: 'Education', subs: ['Education Management', 'E-Learning', 'Higher Education', 'Primary/Secondary Education', 'Research'] },
+  { category: 'Energy & Utilities', subs: ['Oil & Energy', 'Renewables & Environment', 'Utilities'] },
+  { category: 'Government', subs: ['Defense & Space', 'Government Administration', 'Government Relations', 'International Affairs', 'Judiciary', 'Law Enforcement', 'Legislative Office', 'Military', 'Museums and Institutions', 'Public Policy'] },
+  { category: 'Real Estate & Construction', subs: ['Architecture & Planning', 'Building Materials', 'Civil Engineering', 'Commercial Real Estate', 'Construction', 'Glass, Ceramics & Concrete', 'Real Estate'] },
+  { category: 'Retail', subs: ['Apparel & Fashion', 'Cosmetics', 'Luxury Goods & Jewelry', 'Retail', 'Supermarkets'] },
+  { category: 'Media & Entertainment', subs: ['Broadcast Media', 'Media Production', 'Motion Pictures and Film', 'Music', 'Newspapers', 'Online Media', 'Printing', 'Publishing'] },
+  { category: 'Telecommunications', subs: ['Telecommunications', 'Wireless'] },
+  { category: 'Transportation & Storage', subs: ['Airlines/Aviation', 'Logistics and Supply Chain', 'Maritime', 'Package/Freight Delivery', 'Packaging and Containers', 'Warehousing', 'Transportation/Trucking/Railroad'] },
+  { category: 'Agriculture & Mining', subs: ['Dairy', 'Farming', 'Fishery', 'Food & Beverages', 'Food Production', 'Mining & Metals', 'Paper & Forest Products', 'Ranching', 'Tobacco'] },
+  { category: 'Computer & Electronics', subs: ['Computer Games', 'Computer Hardware', 'Computer Networking', 'Consumer Electronics', 'Semiconductors'] },
+  { category: 'Consumer Services', subs: ['Consumer Goods', 'Consumer Services'] },
+  { category: 'Non-Profit', subs: ['Civic & Social Organization', 'Libraries', 'Non-Profit Organization Management', 'Philanthropy', 'Political Organization', 'Religious Institutions'] },
+  { category: 'Travel & Leisure', subs: ['Entertainment', 'Fine Art', 'Gambling & Casinos', 'Hospitality', 'Leisure, Travel & Tourism', 'Performing Arts', 'Photography', 'Recreational Facilities and Services', 'Restaurants', 'Sporting Goods', 'Sports', 'Wine and Spirits'] },
+  { category: 'Wholesale & Distribution', subs: ['Wholesale'] },
+  { category: 'Other', subs: ['Arts and Crafts', 'Nanotechnology'] },
+];
+
+const FUNDING_OPTIONS = [
+  { value: 'pre_seed', label: 'Pre-Seed' },
+  { value: 'seed', label: 'Seed' },
+  { value: 'series_a', label: 'Series A' },
+  { value: 'series_b', label: 'Series B' },
+  { value: 'series_c', label: 'Series C' },
+  { value: 'series_d', label: 'Series D+' },
+];
+
+function MarketsModal({ source, onClose, onUse }: ModalProps) {
+  const [step, setStep] = useState<'config' | 'loading' | 'done'>('config');
+  const [demandCount, setDemandCount] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const [progressStage, setProgressStage] = useState('');
+  const [error, setError] = useState('');
+
+  // Filters
+  const [selectedSignals, setSelectedSignals] = useState<string[]>(['hires']);
+  const [selectedIndustries, setSelectedIndustries] = useState<string[]>([]);
+  const [industrySearch, setIndustrySearch] = useState('');
+  const [jobListingFilter, setJobListingFilter] = useState('');
+  const [selectedFunding, setSelectedFunding] = useState<string[]>([]);
+
+  // Get outreach API key from settings
+  const getOutreachApiKey = (): string => {
+    try {
+      const cached = localStorage.getItem('guest_settings');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        return parsed?.settings?.instantlyApiKey || '';
+      }
+    } catch { /* ignore */ }
+    return '';
+  };
+
+  const toggleChip = (list: string[], value: string, setter: (v: string[]) => void) => {
+    setter(list.includes(value) ? list.filter(v => v !== value) : [...list, value]);
+  };
+
+  const openGPT = () => {
+    const prompt = encodeURIComponent(source.gptPrompt);
+    window.open(`https://chatgpt.com/?prompt=${prompt}`, '_blank');
+  };
+
+  // Auto-capitalize job titles (case sensitivity helper)
+  const handleJobFilterChange = (value: string) => {
+    // Auto-capitalize first letter of each word
+    const capitalized = value.replace(/\b\w/g, c => c.toUpperCase());
+    setJobListingFilter(capitalized);
+  };
+
+  const handleSearch = async () => {
+    const apiKey = getOutreachApiKey();
+    if (!apiKey) {
+      setError('Outreach API key required. Add it in Settings → Outreach.');
+      return;
+    }
+
+    if (selectedSignals.length === 0) {
+      setError('Select at least one signal.');
+      return;
+    }
+
+    setError('');
+    setStep('loading');
+    setProgress(10);
+    setProgressStage('Searching leads');
+
+    try {
+      // Parse job listing filter
+      const jobFilters = jobListingFilter
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const result = await searchMarkets({
+        apiKey,
+        newsFilter: selectedSignals,
+        industryFilter: selectedIndustries.length > 0 ? selectedIndustries : undefined,
+        jobListingFilter: jobFilters.length > 0 ? jobFilters : undefined,
+        fundingFilter: selectedFunding.length > 0 ? selectedFunding : undefined,
+        showOneLeadPerCompany: true,
+      });
+
+      if (result.error) {
+        setError(result.error);
+        setStep('config');
+        setProgress(0);
+        return;
+      }
+
+      setProgress(50);
+      setProgressStage('Enriching companies');
+
+      // Extract unique company IDs for enrichment
+      const companyIds = [
+        ...new Set(
+          result.records
+            .map(r => (r.raw as any)?.lead?.company_id)
+            .filter((id): id is number => typeof id === 'number')
+        ),
+      ];
+
+      // Enrich companies in batch
+      let companyMap = new Map<number, any>();
+      if (companyIds.length > 0) {
+        setProgress(60);
+        companyMap = await enrichCompanies(companyIds);
+        setProgress(80);
+      }
+
+      // Re-normalize with company data
+      const signalLabel = buildSignalLabelFromFilters(selectedSignals, jobFilters);
+      const enrichedRecords = result.records.map(r => {
+        const lead = (r.raw as any)?.lead;
+        const companyId = lead?.company_id;
+        const company = companyId ? companyMap.get(companyId) || null : null;
+        return normalizeToRecord(lead, company, signalLabel);
+      });
+
+      setProgress(90);
+      setProgressStage('Finalizing');
+
+      // Store as demand
+      storeAsdemand(enrichedRecords);
+
+      setDemandCount(enrichedRecords.length);
+      setProgress(100);
+      setProgressStage('Complete');
+      setStep('done');
+
+      // Notify parent
+      setTimeout(() => {
+        onUse(enrichedRecords, []);
+      }, 1500);
+    } catch (err: any) {
+      console.log(`[Markets] Modal error: ${err.message}`);
+      setError(err.message || 'Search failed');
+      setStep('config');
+      setProgress(0);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-xl bg-[#0C0C0C] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-5 border-b border-white/[0.08] bg-gradient-to-b from-white/[0.02] to-transparent">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl bg-white/[0.06] flex items-center justify-center text-white/70">
+              {source.icon}
+            </div>
+            <div>
+              <h2 className="text-[17px] font-semibold text-white tracking-tight">{source.name}</h2>
+              <p className="text-[13px] text-white/50">{source.tagline}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openGPT}
+              className="h-8 px-3 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center gap-2 transition-all text-white/60 hover:text-white/80"
+            >
+              <OpenAIIcon className="w-3.5 h-3.5" />
+              <span className="text-[12px]">Ask GPT</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-center transition-all"
+            >
+              <X className="w-4 h-4 text-white/60" />
+            </button>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
+          {step === 'config' && (
+            <>
+              {/* Error */}
+              {error && (
+                <div className="px-3 py-2 rounded-lg bg-red-500/[0.08] border border-red-500/[0.15] text-[13px] text-red-400">
+                  {error}
+                </div>
+              )}
+
+              {/* Signal selector */}
+              <div>
+                <label className="text-[11px] text-white/50 mb-2 block font-medium uppercase tracking-wide">
+                  Signal
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {NEWS_SIGNALS.map(s => (
+                    <button
+                      key={s.value}
+                      onClick={() => toggleChip(selectedSignals, s.value, setSelectedSignals)}
+                      className={`
+                        px-3 py-1.5 rounded-lg text-[12px] border transition-all duration-150
+                        ${selectedSignals.includes(s.value)
+                          ? 'bg-white text-black border-white font-medium'
+                          : 'bg-transparent text-white/60 border-white/[0.12] hover:border-white/30'
+                        }
+                      `}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Industry selector — searchable grouped */}
+              <div>
+                <label className="text-[11px] text-white/50 mb-2 block font-medium uppercase tracking-wide">
+                  Industry
+                  <span className="text-white/30 normal-case ml-1">(optional — search to find your niche)</span>
+                </label>
+                {/* Selected chips */}
+                {selectedIndustries.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {selectedIndustries.map(ind => (
+                      <button
+                        key={ind}
+                        onClick={() => toggleChip(selectedIndustries, ind, setSelectedIndustries)}
+                        className="px-2.5 py-1 rounded-md text-[11px] border bg-white text-black border-white font-medium transition-all duration-150"
+                      >
+                        {ind} ×
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* Search input */}
+                <input
+                  type="text"
+                  value={industrySearch}
+                  onChange={(e) => setIndustrySearch(e.target.value)}
+                  placeholder="Search industries... (e.g. Recruiting, Legal, Biotech)"
+                  className="w-full h-9 px-3 text-[12px] bg-[#141414] border border-white/[0.08] rounded-lg text-white/90 focus:outline-none focus:border-white/20 transition-colors hover:border-white/[0.12] hover:bg-[#181818] placeholder:text-white/30 mb-2"
+                />
+                {/* Grouped results */}
+                <div className="max-h-[200px] overflow-y-auto rounded-lg border border-white/[0.06] bg-[#0f0f0f]" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
+                  {INDUSTRY_GROUPS
+                    .map(group => {
+                      const q = industrySearch.toLowerCase();
+                      const matchingSubs = q
+                        ? group.subs.filter(s => s.toLowerCase().includes(q) || group.category.toLowerCase().includes(q))
+                        : group.subs;
+                      if (matchingSubs.length === 0) return null;
+                      return (
+                        <div key={group.category} className="px-2 py-1.5">
+                          <div className="text-[10px] text-white/30 font-medium uppercase tracking-wider mb-1">{group.category}</div>
+                          <div className="flex flex-wrap gap-1">
+                            {matchingSubs.map(sub => (
+                              <button
+                                key={sub}
+                                onClick={() => toggleChip(selectedIndustries, sub, setSelectedIndustries)}
+                                className={`
+                                  px-2 py-0.5 rounded text-[11px] border transition-all duration-150
+                                  ${selectedIndustries.includes(sub)
+                                    ? 'bg-white text-black border-white font-medium'
+                                    : 'bg-transparent text-white/50 border-white/[0.06] hover:border-white/20'
+                                  }
+                                `}
+                              >
+                                {sub}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })
+                    .filter(Boolean)}
+                  {INDUSTRY_GROUPS.every(g => {
+                    const q = industrySearch.toLowerCase();
+                    return g.subs.filter(s => s.toLowerCase().includes(q) || g.category.toLowerCase().includes(q)).length === 0;
+                  }) && (
+                    <div className="px-3 py-4 text-center text-[11px] text-white/30">No industries match "{industrySearch}"</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Job listing filter */}
+              <div>
+                <label className="text-[11px] text-white/50 mb-2 block font-medium uppercase tracking-wide">
+                  Job title filter
+                  <span className="text-white/30 normal-case ml-1">(case sensitive — capitalize role names)</span>
+                </label>
+                <input
+                  type="text"
+                  value={jobListingFilter}
+                  onChange={(e) => handleJobFilterChange(e.target.value)}
+                  placeholder="Software Engineer, Account Executive..."
+                  className="w-full h-10 px-3 text-[13px] bg-[#141414] border border-white/[0.08] rounded-lg text-white/90 focus:outline-none focus:border-white/20 transition-colors hover:border-white/[0.12] hover:bg-[#181818] placeholder:text-white/30"
+                />
+              </div>
+
+              {/* Funding filter */}
+              <div>
+                <label className="text-[11px] text-white/50 mb-2 block font-medium uppercase tracking-wide">
+                  Funding stage
+                  <span className="text-white/30 normal-case ml-1">(optional)</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {FUNDING_OPTIONS.map(f => (
+                    <button
+                      key={f.value}
+                      onClick={() => toggleChip(selectedFunding, f.value, setSelectedFunding)}
+                      className={`
+                        px-3 py-1.5 rounded-lg text-[12px] border transition-all duration-150
+                        ${selectedFunding.includes(f.value)
+                          ? 'bg-white text-black border-white font-medium'
+                          : 'bg-transparent text-white/60 border-white/[0.12] hover:border-white/30'
+                        }
+                      `}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {step === 'loading' && (
+            <div className="py-10 px-2">
+              {/* Progress bar */}
+              <div className="mb-6">
+                <div className="h-1 w-full bg-white/[0.06] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white/40 rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Stage indicator */}
+              <div className="text-center">
+                <p className="text-[13px] text-white/70 mb-1">{progressStage}</p>
+                <p className="text-[11px] text-white/40 font-mono">{progress}%</p>
+              </div>
+            </div>
+          )}
+
+          {step === 'done' && (
+            <div className="py-12 flex flex-col items-center justify-center">
+              <div className="w-12 h-12 rounded-full bg-white/[0.06] flex items-center justify-center mb-4">
+                <Check className="w-6 h-6 text-white/70" />
+              </div>
+              <p className="text-sm text-white/90 font-medium mb-2">Data loaded</p>
+              <p className="text-xs text-white/50">{demandCount} demand records</p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        {step === 'config' && (
+          <div className="px-6 py-4 border-t border-white/[0.06] bg-[#0A0A0A] flex justify-end">
+            <button
+              onClick={handleSearch}
+              className="px-5 py-2 rounded-lg bg-white text-[#0A0A0A] text-[13px] font-medium hover:bg-white/90 active:scale-[0.98] transition-all"
+            >
+              Search
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function buildSignalLabelFromFilters(signals: string[], jobFilters: string[]): string {
+  const signalNames: Record<string, string> = {
+    hires: 'Hiring',
+    receives_financing: 'Funding raised',
+    increases_headcount_by: 'Headcount growth',
+    launches: 'Product launch',
+    partners_with: 'New partnership',
+    acquires: 'Acquisition',
+  };
+  const parts = signals.map(f => signalNames[f] || f);
+  if (jobFilters.length > 0) {
+    parts.push(jobFilters.join(', '));
+  }
+  return parts.join(' — ') || 'Market signal';
+}
+
+// =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
@@ -878,6 +1349,42 @@ interface PrebuiltIntelligenceProps {
 
 export default function PrebuiltIntelligence({ onDataLoaded }: PrebuiltIntelligenceProps) {
   const [selectedSource, setSelectedSource] = useState<PrebuiltSource | null>(null);
+  const { user, loading: authLoading } = useAuth();
+  const [ssmStatus, setSsmStatus] = useState<'loading' | 'approved' | 'needs_ssm'>('loading');
+
+  const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
+  // SSM access check
+  useEffect(() => {
+    if (isDev) {
+      setSsmStatus('approved');
+      return;
+    }
+    if (authLoading) return;
+    if (!user?.email) {
+      setSsmStatus('needs_ssm');
+      return;
+    }
+
+    const checkAccess = async () => {
+      try {
+        const response = await fetch(
+          `${SUPABASE_URL}/functions/v1/ssm-access/check?email=${encodeURIComponent(user.email!.toLowerCase().trim())}`
+        );
+        if (!response.ok) {
+          setSsmStatus('needs_ssm');
+          return;
+        }
+        const data = await response.json();
+        setSsmStatus(data.status === 'approved' ? 'approved' : 'needs_ssm');
+      } catch {
+        setSsmStatus('needs_ssm');
+      }
+    };
+
+    checkAccess();
+  }, [user, authLoading, isDev, SUPABASE_URL]);
 
   const handleUse = (demand: NormalizedRecord[], supply: NormalizedRecord[]) => {
     setSelectedSource(null);
@@ -892,6 +1399,14 @@ export default function PrebuiltIntelligence({ onDataLoaded }: PrebuiltIntellige
       case 'clinical_trials':
         return (
           <ClinicalTrialsModal
+            source={selectedSource}
+            onClose={() => setSelectedSource(null)}
+            onUse={handleUse}
+          />
+        );
+      case 'markets':
+        return (
+          <MarketsModal
             source={selectedSource}
             onClose={() => setSelectedSource(null)}
             onUse={handleUse}
@@ -918,47 +1433,108 @@ export default function PrebuiltIntelligence({ onDataLoaded }: PrebuiltIntellige
         </h3>
       </div>
 
-      {/* Cards */}
-      <div className="space-y-2">
-        {PREBUILT_SOURCES.map((source) => (
-          <button
-            key={source.id}
-            onClick={() => source.status === 'active' && setSelectedSource(source)}
-            disabled={source.status === 'coming_soon'}
-            className={`
-              w-full flex items-center gap-4 px-4 py-3.5 rounded-xl text-left transition-all duration-150
-              ${source.status === 'active'
-                ? 'bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.1] cursor-pointer'
-                : 'bg-white/[0.01] border border-white/[0.04] cursor-not-allowed opacity-40'
-              }
-            `}
-          >
-            <div className={`
-              w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0
-              ${source.status === 'active' ? 'bg-white/[0.06] text-white/70' : 'bg-white/[0.03] text-white/30'}
-            `}>
-              {source.icon}
-            </div>
+      {/* SSM Gate */}
+      {ssmStatus === 'loading' && (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-5 h-5 text-white/30 animate-spin" />
+        </div>
+      )}
 
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <h4 className="text-[13px] font-medium text-white/90">{source.name}</h4>
-                {source.status === 'coming_soon' && (
-                  <span className="text-[10px] text-white/30">Soon</span>
-                )}
+      {ssmStatus === 'needs_ssm' && (
+        <div className="relative">
+          {/* Blurred cards preview */}
+          <div className="blur-[6px] pointer-events-none select-none opacity-40">
+            <div className="space-y-2">
+              {PREBUILT_SOURCES.filter(s => s.status === 'active').map((source) => (
+                <div
+                  key={source.id}
+                  className="w-full flex items-center gap-4 px-4 py-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06]"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-white/[0.06] flex items-center justify-center text-white/70">
+                    {source.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-[13px] font-medium text-white/90">{source.name}</h4>
+                    <p className="text-[12px] text-white/40">{source.tagline}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* SSM CTA overlay */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="p-6 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] max-w-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0">
+                  <img src="/ssm-logo.png" alt="SSM" className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-[15px] font-medium text-white/90 mb-1">SSM membership required</h3>
+                  <p className="text-[13px] text-white/50 mb-4">
+                    Pre-built data sources are exclusive to community members. Join to unlock hiring signals, funding data, and more.
+                  </p>
+                  <a
+                    href="https://www.skool.com/ssmasters"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-white/[0.08] text-[13px] font-medium text-white/70 hover:text-white hover:bg-white/[0.12] transition-all"
+                  >
+                    Join the community
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
               </div>
-              <p className="text-[12px] text-white/40 truncate">{source.tagline}</p>
             </div>
+          </div>
+        </div>
+      )}
 
-            {source.status === 'active' && (
-              <ArrowRight className="w-4 h-4 text-white/20 flex-shrink-0" />
-            )}
-          </button>
-        ))}
-      </div>
+      {ssmStatus === 'approved' && (
+        <>
+          {/* Cards */}
+          <div className="space-y-2">
+            {PREBUILT_SOURCES.map((source) => (
+              <button
+                key={source.id}
+                onClick={() => source.status === 'active' && setSelectedSource(source)}
+                disabled={source.status === 'coming_soon'}
+                className={`
+                  w-full flex items-center gap-4 px-4 py-3.5 rounded-xl text-left transition-all duration-150
+                  ${source.status === 'active'
+                    ? 'bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.1] cursor-pointer'
+                    : 'bg-white/[0.01] border border-white/[0.04] cursor-not-allowed opacity-40'
+                  }
+                `}
+              >
+                <div className={`
+                  w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0
+                  ${source.status === 'active' ? 'bg-white/[0.06] text-white/70' : 'bg-white/[0.03] text-white/30'}
+                `}>
+                  {source.icon}
+                </div>
 
-      {/* Modal */}
-      {renderModal()}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-[13px] font-medium text-white/90">{source.name}</h4>
+                    {source.status === 'coming_soon' && (
+                      <span className="text-[10px] text-white/30">Soon</span>
+                    )}
+                  </div>
+                  <p className="text-[12px] text-white/40 truncate">{source.tagline}</p>
+                </div>
+
+                {source.status === 'active' && (
+                  <ArrowRight className="w-4 h-4 text-white/20 flex-shrink-0" />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Modal */}
+          {renderModal()}
+        </>
+      )}
     </div>
   );
 }
