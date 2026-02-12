@@ -1814,12 +1814,44 @@ app.post('/api/email/v2/verify', async (req, res) => {
 });
 
 // ============================================================
+// BULK CONCURRENCY POOL
+// ============================================================
+
+const BULK_CONCURRENCY = 5; // 5 parallel verifications — own relay, own rules
+
+/**
+ * Run tasks with concurrency limit. Preserves input order in results.
+ * @param {Array} items - Input items
+ * @param {number} concurrency - Max parallel tasks
+ * @param {Function} fn - async (item, index) => result
+ * @returns {Promise<Array>} Results in same order as input
+ */
+async function parallelPool(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+
+  const workers = [];
+  for (let w = 0; w < Math.min(concurrency, items.length); w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+  return results;
+}
+
+// ============================================================
 // BULK ENDPOINTS
 // ============================================================
 
 /**
  * POST /api/email/v2/find-bulk
- * Bulk find emails
+ * Bulk find emails — 5 concurrent verifications
  *
  * Same rules as single find:
  * - FOUND → charged 1 token
@@ -1860,19 +1892,18 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     return res.status(429).json({ success: false, error: 'Quota exceeded' });
   }
 
-  const results = [];
   let found = 0;
   let tokensUsed = 0;
+  const t0 = Date.now();
 
-  for (const item of items) {
+  // Process single find-bulk item (called from pool)
+  async function processFindItem(item) {
     const { firstName, lastName, domain: rawDomain } = item;
 
     if (!firstName || !lastName || !rawDomain) {
-      results.push({ ...item, success: false, error: 'Missing fields' });
-      continue;
+      return { ...item, success: false, error: 'Missing fields' };
     }
 
-    // Clean domain: strip protocol, www, trailing slashes
     const domain = rawDomain
       .replace(/^https?:\/\//, '')
       .replace(/^www\./, '')
@@ -1881,14 +1912,11 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       .trim();
 
     if (!domain || !domain.includes('.')) {
-      results.push({ ...item, success: false, error: 'Invalid domain format' });
-      continue;
+      return { ...item, success: false, error: 'Invalid domain format' };
     }
 
-    // RESTRICTED mode: skip all
     if (mode === 'RESTRICTED') {
-      results.push({ firstName, lastName, domain, success: false, reason: 'no_verifiable_email' });
-      continue;
+      return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email' };
     }
 
     // Check cache with TTL
@@ -1901,25 +1929,17 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       const age = Date.now() - new Date(cachedResult.created_at).getTime();
       const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
       if (age < SEVEN_DAYS) {
-        results.push({
-          firstName, lastName, domain,
-          success: true,
-          email: cachedResult.email,
-          verdict: cachedResult.verdict,
-        });
         found++;
-        continue;
+        return { firstName, lastName, domain, success: true, email: cachedResult.email, verdict: cachedResult.verdict };
       }
     }
 
-    // Generate permutations with provider-aware reorder (DEGRADED = rank-1 only)
+    // Generate permutations with provider-aware reorder
     const rawPermutations = generateEmailPermutations(firstName, lastName, domain);
     const bulkProviderInfo = await resolveMailboxProvider(domain, `bulk-${domain.slice(0, 8)}`);
 
-    // Short-circuit dead domains in bulk too
     if (bulkProviderInfo.live === false) {
-      results.push({ firstName, lastName, domain, success: false, reason: 'domain_dead' });
-      continue;
+      return { firstName, lastName, domain, success: false, reason: 'domain_dead' };
     }
 
     let permutations = reorderPermutations(rawPermutations, bulkProviderInfo.provider, firstName, lastName);
@@ -1945,12 +1965,16 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
         VALUES (?, ?, ?, ?, ?, 'VALID', ?)
       `).run(uuidv4(), domain.toLowerCase(), firstName.toLowerCase(), lastName.toLowerCase(), foundEmail, new Date().toISOString());
 
-      results.push({ firstName, lastName, domain, success: true, email: foundEmail, verdict: 'VALID' });
       found++;
-    } else {
-      results.push({ firstName, lastName, domain, success: false, reason: 'no_verifiable_email' });
+      return { firstName, lastName, domain, success: true, email: foundEmail, verdict: 'VALID' };
     }
+
+    return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email' };
   }
+
+  const results = await parallelPool(items, BULK_CONCURRENCY, processFindItem);
+
+  console.log(`[BulkFind] ${items.length} items → ${found} found, ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_CONCURRENCY})`);
 
   res.json({
     success: true,
@@ -1962,7 +1986,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
 
 /**
  * POST /api/email/v2/verify-bulk
- * Bulk verify emails - 1 token per email
+ * Bulk verify emails — 5 concurrent verifications, 1 token per email
  */
 app.post('/api/email/v2/verify-bulk', async (req, res) => {
   const authHeader = req.headers['authorization'];
@@ -1999,10 +2023,10 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
     return res.status(429).json({ email: null });
   }
 
-  const results = [];
   let tokensUsed = 0;
+  const t0 = Date.now();
 
-  for (const email of emails) {
+  const results = await parallelPool(emails, BULK_CONCURRENCY, async (email) => {
     const result = await verifyEmail(email, userId, 'bulk');
 
     // Charge 1 token per valid verdict (not cached, not unknown)
@@ -2011,13 +2035,10 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
       tokensUsed += 1;
     }
 
-    // Canonical contract: { email: string | null }
-    results.push({
-      email: result.verdict === 'VALID' ? email : null,
-    });
-  }
+    return { email: result.verdict === 'VALID' ? email : null };
+  });
 
-  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged`);
+  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_CONCURRENCY})`);
 
   res.json(results);
 });
