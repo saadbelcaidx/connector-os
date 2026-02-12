@@ -2909,12 +2909,14 @@ function ConnectorAgentInner() {
                     exit={{ opacity: 0, y: -20, scale: 0.95 }}
                     transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                     className={`mt-5 p-4 rounded-xl border ${
-                      result.email
+                      result.email && result.status !== 'risky' && result.status !== 'invalid'
                         ? 'bg-emerald-500/[0.04] border-emerald-500/[0.1]'
-                        : 'bg-white/[0.02] border-white/[0.06]'
+                        : result.status === 'risky'
+                          ? 'bg-amber-500/[0.04] border-amber-500/[0.1]'
+                          : 'bg-white/[0.02] border-white/[0.06]'
                     }`}
                   >
-                    {result.email ? (
+                    {result.email && result.status === 'valid' ? (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <motion.div
@@ -2941,14 +2943,36 @@ function ConnectorAgentInner() {
                           {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
                         </button>
                       </div>
+                    ) : result.email && result.status === 'risky' ? (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500/[0.1] flex items-center justify-center">
+                            <AlertCircle className="w-5 h-5 text-amber-400" />
+                          </div>
+                          <div>
+                            <code className="text-[13px] font-mono text-white/90">{result.email}</code>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-500/[0.15] text-amber-400">
+                                Risky
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleCopy(result.email!, 'result-email')}
+                          className="h-9 w-9 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors"
+                        >
+                          {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
+                        </button>
+                      </div>
                     ) : (
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center">
                           <AlertCircle className="w-5 h-5 text-white/30" />
                         </div>
                         <div>
-                          <p className="text-[13px] text-white/70">No email found</p>
-                          <p className="text-[11px] text-white/40 mt-0.5">Could not find a valid email</p>
+                          <p className="text-[13px] text-white/70">{result.status === 'invalid' ? 'Invalid email' : 'No email found'}</p>
+                          <p className="text-[11px] text-white/40 mt-0.5">{result.status === 'invalid' ? 'This email does not exist or is undeliverable' : 'Could not find a valid email'}</p>
                         </div>
                       </div>
                     )}

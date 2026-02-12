@@ -1611,12 +1611,13 @@ app.post('/api/email/v2/verify', async (req, res) => {
   const emailLower = emailToVerify.toLowerCase();
 
   // FAST PATH: Check if email was previously found by FIND (already verified)
+  // Only trust VALID verdicts — RISKY/null must go through real verification
   const foundEmail = db.prepare(`
-    SELECT email FROM email_cache WHERE LOWER(email) = ?
+    SELECT email, verdict FROM email_cache WHERE LOWER(email) = ?
   `).get(emailLower);
-  if (foundEmail) {
-    console.log(`[Verify] CACHE HIT from email_cache: ${emailLower}`);
-    return res.json({ email: emailToVerify });
+  if (foundEmail && foundEmail.verdict === 'VALID') {
+    console.log(`[Verify] CACHE HIT from email_cache: ${emailLower} (verdict=${foundEmail.verdict})`);
+    return res.json({ email: emailToVerify, status: 'valid' });
   }
 
   // Check quota first (don't deduct yet)
