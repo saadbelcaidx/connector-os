@@ -2071,7 +2071,7 @@ app.post('/markets/search', async (req, res) => {
 
     // Determine packs: user-provided title = single call, else rotate all packs
     const packsToRun = hasUserTitleFilter
-      ? [{ name: 'user-filter', titles: titleFilter }]
+      ? [{ name: 'user-filter', titles: title.include }]
       : TITLE_PACKS;
 
     for (const pack of packsToRun) {
