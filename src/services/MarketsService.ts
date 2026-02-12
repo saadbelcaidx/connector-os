@@ -233,23 +233,28 @@ export function normalizeToRecord(
     || searchIndustry
     || null;
 
-  // Signal: use REAL enrichment news title when available
-  // company.news has actual signal text like "Acme hires VP of Engineering"
-  let effectiveSignal = signalLabel;
-  if (company?.news && company.news.length > 0) {
-    // Pick the most recent news item — it has the actual signal text
-    const bestNews = company.news[0];
-    if (bestNews.title) {
-      effectiveSignal = bestNews.title;
-    }
-  } else if (signalLabel === 'Market signal') {
-    effectiveSignal = industry || companyName || 'Active in market';
+  // Evidence fallback chain — priority order:
+  // 1. news[0].title (real headline from Leadsy enrichment)
+  // 2. jobs[0].title ("Hiring — <job title>")
+  // 3. funding[0] ("Raised <amount> <type>")
+  // 4. industry ("Growing in <industry>")
+  // 5. signalLabel (last resort: "Hiring")
+  let evidence: string = signalLabel;
+  if (company?.news && company.news.length > 0 && company.news[0].title) {
+    evidence = company.news[0].title;
+  } else if (company?.jobs && company.jobs.length > 0 && company.jobs[0].title) {
+    evidence = `Hiring — ${company.jobs[0].title}`;
+  } else if (company?.funding && company.funding.length > 0 && company.funding[0].amount) {
+    const f = company.funding[0];
+    evidence = `Raised ${f.amount}${f.type ? ` ${f.type}` : ''}`;
+  } else if (industry) {
+    evidence = `Growing in ${industry}`;
   }
 
-  // Signal meta
+  // Signal meta — label carries evidence (buildWhy reads this for GROWTH kind)
   const signalMeta: SignalMeta = {
     kind: 'GROWTH',
-    label: effectiveSignal,
+    label: evidence,
     source: 'Market Intelligence',
   };
 
@@ -314,10 +319,10 @@ export function normalizeToRecord(
     companyFoundedYear: null,
     companyLinkedin: null,
 
-    // Signal
+    // Signal — signal is stable label, signalDetail is evidence
     signalMeta,
-    signal: effectiveSignal,
-    signalDetail: effectiveSignal,
+    signal: signalLabel,
+    signalDetail: evidence,
 
     // Location
     city: location.city || (company?.locations?.[0]?.inferred_location?.locality || null),

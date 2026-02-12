@@ -2045,9 +2045,10 @@ export default function Flow() {
       const demandKey = recordKey(m.demand);
       const supplyKey = recordKey(m.supply);
 
-      // Gate 1: edge evidence non-empty
+      // Gate 1: edge evidence non-empty AND not 1-word generic (skip > garbage)
       const edge = state.detectedEdges.get(demandKey);
       if (!edge || !edge.evidence || edge.evidence.trim() === '') return false;
+      if (!edge.evidence.includes(' ')) return false; // 1-word evidence = unenrichable, skip
 
       // Gate 2: demand email (pre-existing OR enriched)
       const demandEnriched = enrichedDemand.get(demandKey);
@@ -2175,6 +2176,11 @@ export default function Flow() {
       }
       if (!edge.evidence || edge.evidence.trim() === '') {
         console.error(`[COMPOSE] BLOCKED: ${match.demand.company} — edge exists but evidence is empty (type: ${edge.type})`);
+        dropped++;
+        continue;
+      }
+      if (!edge.evidence.includes(' ')) {
+        console.log(`[COMPOSE] BLOCKED: ${match.demand.company} — 1-word evidence "${edge.evidence}" (unenrichable, skip > garbage)`);
         dropped++;
         continue;
       }
@@ -4163,9 +4169,10 @@ export default function Flow() {
                   const demandKey = recordKey(m.demand);
                   const supplyKey = recordKey(m.supply);
 
-                  // Gate 1: Edge evidence non-empty
+                  // Gate 1: Edge evidence non-empty AND not 1-word generic
                   const edge = state.detectedEdges.get(demandKey);
                   if (!edge || !edge.evidence || edge.evidence.trim() === '') return false;
+                  if (!edge.evidence.includes(' ')) return false; // 1-word = unenrichable
 
                   // Gate 2: Demand has email (pre-existing OR enriched success)
                   const demandHasEmail = m.demand.email || (() => {
