@@ -1012,6 +1012,16 @@ db.exec(`
     response_json TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Catch-all confidence probe results (7-day TTL)
+  CREATE TABLE IF NOT EXISTS catchall_confidence (
+    email TEXT PRIMARY KEY,
+    confidence INTEGER NOT NULL,
+    signals TEXT NOT NULL,
+    should_upgrade INTEGER NOT NULL,
+    probes TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 function updateDomainStats(email, code) {
@@ -1042,11 +1052,49 @@ function isDomainCatchAll(domain) {
 }
 
 // ============================================================
+// CATCH-ALL CONFIDENCE CACHE (7-day TTL)
+// ============================================================
+
+function getCachedConfidence(email) {
+  try {
+    const row = db.prepare(
+      `SELECT * FROM catchall_confidence WHERE email = ?`
+    ).get(email.toLowerCase());
+    if (!row) return null;
+    const age = Date.now() - new Date(row.created_at).getTime();
+    if (age > 7 * 24 * 60 * 60 * 1000) return null;
+    return {
+      confidence: row.confidence,
+      signals: JSON.parse(row.signals),
+      shouldUpgrade: row.should_upgrade === 1,
+      probes: JSON.parse(row.probes),
+    };
+  } catch (_) { return null; }
+}
+
+function cacheConfidence(email, conf) {
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO catchall_confidence (email, confidence, signals, should_upgrade, probes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      email.toLowerCase(),
+      conf.confidence,
+      JSON.stringify(conf.signals),
+      conf.shouldUpgrade ? 1 : 0,
+      JSON.stringify(conf.probes),
+      new Date().toISOString()
+    );
+  } catch (_) { /* non-critical */ }
+}
+
+// ============================================================
 // DNS INTELLIGENCE MODULES
 // ============================================================
 const { getMxProvider, getCacheStats: getDnsCacheStats, clearAllCaches: clearDnsCaches } = require('./dnsIntel');
 const { resolveMailboxProvider } = require('./providerIntel');
 const { reorderPermutations } = require('./permutationPriority');
+const { probeCatchAllConfidence } = require('./catchAllConfidence');
 
 // ============================================================
 // MAIN VERIFY FUNCTION
@@ -1074,9 +1122,27 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
     }
   }
 
-  // Check if domain is known catch-all - RISKY (domain accepts all, mailbox unverified)
+  // Check if domain is known catch-all — run confidence probes before returning RISKY
   if (domain && isDomainCatchAll(domain)) {
-    return { verdict: 'RISKY', reason: 'catch_all_domain', catchAll: true, cached: false };
+    // Check confidence cache first
+    const cachedConf = getCachedConfidence(emailLower);
+    if (cachedConf) {
+      const verdict = cachedConf.shouldUpgrade ? 'VALID' : 'RISKY';
+      return { verdict, reason: 'catch_all_domain', catchAll: true, cached: true,
+        confidence: cachedConf.confidence, signals: cachedConf.signals, catchAllUpgrade: cachedConf.shouldUpgrade };
+    }
+
+    // Run confidence probes
+    const mx = await getMxProvider(domain);
+    const conf = await probeCatchAllConfidence(emailLower, domain, mx.provider, db);
+    cacheConfidence(emailLower, conf);
+
+    const verdict = conf.shouldUpgrade ? 'VALID' : 'RISKY';
+    if (conf.shouldUpgrade) {
+      cacheVerdict(emailLower, 'VALID');
+    }
+    return { verdict, reason: 'catch_all_domain', catchAll: true, cached: false,
+      confidence: conf.confidence, signals: conf.signals, catchAllUpgrade: conf.shouldUpgrade };
   }
 
   // Blocked patterns (skip API call)
@@ -1101,6 +1167,22 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
     // Update domain stats for catch-all detection
     if (result.raw?.code) {
       updateDomainStats(emailLower, result.raw.code);
+    }
+
+    // Catch-all confidence probing: intercept RISKY + catchAll before caching
+    if (result.verdict === 'RISKY' && result.catchAll) {
+      const mx = await getMxProvider(domain);
+      const conf = await probeCatchAllConfidence(emailLower, domain, mx.provider, db);
+      cacheConfidence(emailLower, conf);
+
+      if (conf.shouldUpgrade) {
+        cacheVerdict(emailLower, 'VALID');
+        return { verdict: 'VALID', catchAll: true, cached: false,
+          confidence: conf.confidence, signals: conf.signals, catchAllUpgrade: true };
+      }
+      // Stay RISKY but attach confidence data
+      return { verdict: 'RISKY', catchAll: true, cached: false,
+        confidence: conf.confidence, signals: conf.signals };
     }
 
     // Cache VALID, RISKY, and INVALID (not UNKNOWN, not SERVICE_BUSY)
@@ -1646,10 +1728,22 @@ app.post('/api/email/v2/verify', async (req, res) => {
     }
 
     // VALID or RISKY = return email with status, anything else = null
+    // Include confidence data when available (catch-all probing)
     if (result.verdict === 'VALID') {
-      res.json({ email: emailToVerify, status: 'valid' });
+      const response = { email: emailToVerify, status: 'valid' };
+      if (result.confidence !== undefined) {
+        response.confidence = result.confidence;
+        response.signals = result.signals;
+        response.catchAllUpgrade = result.catchAllUpgrade || false;
+      }
+      res.json(response);
     } else if (result.verdict === 'RISKY') {
-      res.json({ email: emailToVerify, status: 'risky' });
+      const response = { email: emailToVerify, status: 'risky' };
+      if (result.confidence !== undefined) {
+        response.confidence = result.confidence;
+        response.signals = result.signals;
+      }
+      res.json(response);
     } else {
       res.json({ email: null, status: 'invalid' });
     }

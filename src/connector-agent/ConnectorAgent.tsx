@@ -67,6 +67,10 @@ interface FindResult {
 
 interface VerifyResult {
   email: string | null;
+  status?: 'valid' | 'risky' | 'invalid';
+  confidence?: number;
+  signals?: string[];
+  catchAllUpgrade?: boolean;
 }
 
 // Bulk Source Adapter (CSV / Google Sheets)
@@ -2917,53 +2921,81 @@ function ConnectorAgentInner() {
                     }`}
                   >
                     {result.email && result.status === 'valid' ? (
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <motion.div
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            transition={{ type: 'spring', stiffness: 500, damping: 25, delay: 0.1 }}
-                            className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-500/[0.15]"
-                          >
-                            <Mail className="w-5 h-5 text-emerald-400" />
-                          </motion.div>
-                          <div>
-                            <code className="text-[13px] font-mono text-white/90">{result.email}</code>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-emerald-500/[0.15] text-emerald-400">
-                                Valid
-                              </span>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <motion.div
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ type: 'spring', stiffness: 500, damping: 25, delay: 0.1 }}
+                              className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-500/[0.15]"
+                            >
+                              <Mail className="w-5 h-5 text-emerald-400" />
+                            </motion.div>
+                            <div>
+                              <code className="text-[13px] font-mono text-white/90">{result.email}</code>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-emerald-500/[0.15] text-emerald-400">
+                                  Valid
+                                </span>
+                                {result.catchAllUpgrade && result.confidence !== undefined && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-medium tracking-wider bg-white/[0.04] text-white/40">
+                                    {result.confidence}% confidence
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
+                          <button
+                            onClick={() => handleCopy(result.email!, 'result-email')}
+                            className="h-9 w-9 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors"
+                          >
+                            {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleCopy(result.email!, 'result-email')}
-                          className="h-9 w-9 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors"
-                        >
-                          {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
-                        </button>
+                        {result.catchAllUpgrade && result.signals && result.signals.length > 0 && (
+                          <div className="mt-2.5 pt-2.5 border-t border-white/[0.04]">
+                            {result.signals.map((signal: string, i: number) => (
+                              <p key={i} className="text-[10px] text-white/30 leading-relaxed">+ {signal}</p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : result.email && result.status === 'risky' ? (
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-amber-500/[0.1] flex items-center justify-center">
-                            <AlertCircle className="w-5 h-5 text-amber-400" />
-                          </div>
-                          <div>
-                            <code className="text-[13px] font-mono text-white/90">{result.email}</code>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-500/[0.15] text-amber-400">
-                                Risky
-                              </span>
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-amber-500/[0.1] flex items-center justify-center">
+                              <AlertCircle className="w-5 h-5 text-amber-400" />
+                            </div>
+                            <div>
+                              <code className="text-[13px] font-mono text-white/90">{result.email}</code>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-500/[0.15] text-amber-400">
+                                  Risky
+                                </span>
+                                {result.confidence !== undefined && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-medium tracking-wider bg-white/[0.04] text-white/40">
+                                    {result.confidence}% confidence
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
+                          <button
+                            onClick={() => handleCopy(result.email!, 'result-email')}
+                            className="h-9 w-9 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors"
+                          >
+                            {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
+                          </button>
                         </div>
-                        <button
-                          onClick={() => handleCopy(result.email!, 'result-email')}
-                          className="h-9 w-9 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors"
-                        >
-                          {copied === 'result-email' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
-                        </button>
+                        {result.signals && result.signals.length > 0 && (
+                          <div className="mt-2.5 pt-2.5 border-t border-white/[0.04]">
+                            {result.signals.map((signal: string, i: number) => (
+                              <p key={i} className="text-[10px] text-white/30 leading-relaxed">+ {signal}</p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
