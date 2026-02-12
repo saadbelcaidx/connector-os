@@ -987,6 +987,31 @@ db.exec(`
     mb_count INTEGER DEFAULT 0,
     updated_at TEXT
   );
+
+  -- Markets daily usage tracking (5000 leads/day cap)
+  CREATE TABLE IF NOT EXISTS markets_usage (
+    api_key TEXT NOT NULL,
+    search_date TEXT NOT NULL,
+    leads_fetched INTEGER DEFAULT 0,
+    PRIMARY KEY (api_key, search_date)
+  );
+
+  -- Markets pack performance logging (for reply-rate ranking)
+  CREATE TABLE IF NOT EXISTS markets_pack_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query_hash TEXT NOT NULL,
+    pack_name TEXT NOT NULL,
+    leads_returned INTEGER DEFAULT 0,
+    unique_added INTEGER DEFAULT 0,
+    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  -- Markets query cache (24h TTL)
+  CREATE TABLE IF NOT EXISTS markets_query_cache (
+    query_hash TEXT PRIMARY KEY,
+    response_json TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 function updateDomainStats(email, code) {
@@ -1940,19 +1965,45 @@ function setCompanyCached(companyId, data) {
   }
 }
 
+// Title packs — rotated per search to maximize unique decision-makers
+const TITLE_PACKS = [
+  { name: 'founders',  titles: ['Founder', 'Co-Founder', 'Owner', 'Partner'] },
+  { name: 'c-level',   titles: ['CEO', 'CTO', 'COO', 'CFO', 'CMO', 'CRO'] },
+  { name: 'vp-head',   titles: ['VP', 'Vice President', 'Head of', 'SVP'] },
+  { name: 'directors',  titles: ['Director', 'Senior Director', 'Managing Director'] },
+  { name: 'talent',    titles: ['Talent Acquisition', 'Recruiting', 'HR Director', 'CHRO', 'Head of People'] },
+  { name: 'managers',  titles: ['General Manager', 'President', 'Principal', 'Board Member'] },
+];
+
+const SEARCH_ENDPOINT = 'https://app.instantly.ai/backend/api/v2/supersearch-enrichment/preview-leads-from-supersearch';
+const TARGET_UNIQUE = 300;
+const QUERY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
+
+function hashQuery(obj) {
+  return require('crypto').createHash('sha256').update(JSON.stringify(obj)).digest('hex').slice(0, 16);
+}
+
 /**
  * POST /markets/search
  * Proxy search request to provider API using member's API key.
  * Client never sees provider domain or auth mechanism.
+ *
+ * Backend silently expands each search by rotating title packs,
+ * deduplicates by person+company, and caps at ~300 uniques.
  */
 app.post('/markets/search', async (req, res) => {
   const {
     apiKey,
-    newsFilter,
-    industryFilter,
+    news,
+    subIndustry,
     jobListingFilter,
-    fundingFilter,
-    revenueFilter,
+    title,
+    employeeCount,
+    fundingType,
+    revenue,
+    keywordFilter,
+    locations,
+    technologies,
     showOneLeadPerCompany,
   } = req.body;
 
@@ -1960,61 +2011,154 @@ app.post('/markets/search', async (req, res) => {
     return res.status(400).json({ error: 'API key required' });
   }
 
+  // Daily cap: 5000 leads/day per API key
+  const DAILY_LEAD_CAP = 5000;
+  const today = new Date().toISOString().split('T')[0];
+
+  const usage = db.prepare(
+    'SELECT leads_fetched FROM markets_usage WHERE api_key = ? AND search_date = ?'
+  ).get(apiKey, today);
+
+  const currentUsage = usage?.leads_fetched || 0;
+  if (currentUsage >= DAILY_LEAD_CAP) {
+    return res.status(429).json({
+      error: 'Daily limit reached (5,000 leads). Resets at midnight UTC.',
+      leads_fetched: currentUsage,
+      daily_cap: DAILY_LEAD_CAP,
+    });
+  }
+
+  // Build base search_filters — exact API param names, exact shapes
+  const search_filters = {};
+  if (news && news.length > 0) search_filters.news = news;
+  if (subIndustry) search_filters.subIndustry = subIndustry; // { include: [], exclude: [] }
+  if (jobListingFilter && jobListingFilter.length > 0) search_filters.jobListingFilter = jobListingFilter;
+  if (employeeCount && employeeCount.length > 0) search_filters.employeeCount = employeeCount; // [{ op, min, max }]
+  if (fundingType && fundingType.length > 0) search_filters.fundingType = fundingType;
+  if (revenue && revenue.length > 0) search_filters.revenue = revenue;
+  if (keywordFilter && (keywordFilter.include || keywordFilter.exclude)) search_filters.keywordFilter = keywordFilter; // { include: "str", exclude: "str" }
+  if (locations && locations.include && locations.include.length > 0) search_filters.locations = locations; // { include: [{ place_id, label }] }
+  if (technologies && technologies.length > 0) search_filters.technologies = technologies;
+
+  // User-provided title filter overrides auto pack rotation
+  const hasUserTitleFilter = title && title.include && title.include.length > 0;
+  if (hasUserTitleFilter) {
+    search_filters.title = title; // { include: [...], exclude: [] }
+  }
+
+  // Query cache — identical query within 24h returns cached result
+  const queryHash = hashQuery({ search_filters, showOneLeadPerCompany, hasUserTitleFilter });
+  const cached = db.prepare(
+    'SELECT response_json, created_at FROM markets_query_cache WHERE query_hash = ?'
+  ).get(queryHash);
+
+  if (cached) {
+    const age = Date.now() - new Date(cached.created_at).getTime();
+    if (age < QUERY_CACHE_TTL) {
+      console.log(`[Markets] Cache hit for ${queryHash} (age: ${Math.round(age / 60000)}m)`);
+      const cachedResponse = JSON.parse(cached.response_json);
+      return res.json(cachedResponse);
+    }
+    // Stale — delete and re-fetch
+    db.prepare('DELETE FROM markets_query_cache WHERE query_hash = ?').run(queryHash);
+  }
+
   try {
-    // Build search_filters from client params
-    const search_filters = {};
+    const uniqueLeads = [];
+    const seen = new Set(); // dedupe key: fullName|companyName
+    let totalCount = 0;
+    let redactedCount = 0;
 
-    if (jobListingFilter && jobListingFilter.length > 0) {
-      search_filters.jobListingFilter = jobListingFilter;
-    }
-    if (newsFilter && newsFilter.length > 0) {
-      search_filters.news_filter = newsFilter;
-    }
-    if (industryFilter && industryFilter.length > 0) {
-      search_filters.industry_filter = industryFilter;
-    }
-    if (fundingFilter && fundingFilter.length > 0) {
-      search_filters.funding_filter = fundingFilter;
-    }
-    if (revenueFilter && revenueFilter.length > 0) {
-      search_filters.revenue_filter = revenueFilter;
+    // Determine packs: user-provided title = single call, else rotate all packs
+    const packsToRun = hasUserTitleFilter
+      ? [{ name: 'user-filter', titles: titleFilter }]
+      : TITLE_PACKS;
+
+    for (const pack of packsToRun) {
+      if (uniqueLeads.length >= TARGET_UNIQUE) break;
+
+      const packFilters = hasUserTitleFilter
+        ? { ...search_filters } // title already in search_filters
+        : { ...search_filters, title: { include: pack.titles, exclude: [] } };
+
+      const payload = {
+        search_filters: packFilters,
+        skip_owned_leads: false,
+        show_one_lead_per_company: showOneLeadPerCompany !== undefined ? showOneLeadPerCompany : true,
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(SEARCH_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        console.log(`[Markets] Pack "${pack.name}" failed: HTTP ${response.status} ${errText.slice(0, 200)}`);
+        // First pack failure = hard fail. Later packs = skip and return what we have.
+        if (uniqueLeads.length === 0) {
+          return res.status(response.status).json({ error: 'Search failed', detail: errText.slice(0, 200) });
+        }
+        continue;
+      }
+
+      const data = await response.json();
+      const packLeads = data.leads || [];
+      totalCount = Math.max(totalCount, data.number_of_leads || 0);
+      redactedCount = Math.max(redactedCount, data.number_of_redacted_results || 0);
+
+      // Dedup and collect
+      let newCount = 0;
+      for (const lead of packLeads) {
+        const key = (lead.fullName || '') + '|' + (lead.companyName || '');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        lead._pack = pack.name; // Tag for downstream attribution
+        uniqueLeads.push(lead);
+        newCount++;
+      }
+
+      console.log(`[Markets] Pack "${pack.name}": ${packLeads.length} returned, ${newCount} new → ${uniqueLeads.length} total`);
+
+      // Log pack performance
+      db.prepare(
+        'INSERT INTO markets_pack_log (query_hash, pack_name, leads_returned, unique_added) VALUES (?, ?, ?, ?)'
+      ).run(queryHash, pack.name, packLeads.length, newCount);
     }
 
-    const payload = {
-      search_filters,
-      skip_owned_leads: false,
-      show_one_lead_per_company: showOneLeadPerCompany !== undefined ? showOneLeadPerCompany : true,
+    const leads = uniqueLeads.slice(0, TARGET_UNIQUE);
+    const leadsReturned = leads.length;
+    console.log(`[Markets] Search complete: ${leadsReturned} unique leads from ${hasUserTitleFilter ? 'user title filter' : TITLE_PACKS.length + ' packs'}`);
+
+    // Increment daily usage
+    db.prepare(`INSERT INTO markets_usage (api_key, search_date, leads_fetched)
+      VALUES (?, ?, ?)
+      ON CONFLICT(api_key, search_date)
+      DO UPDATE SET leads_fetched = leads_fetched + ?`
+    ).run(apiKey, today, leadsReturned, leadsReturned);
+
+    const responseBody = {
+      data: leads,
+      total_count: totalCount,
+      redacted_count: redactedCount,
+      daily_remaining: DAILY_LEAD_CAP - (currentUsage + leadsReturned),
     };
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    // Cache the response
+    db.prepare(
+      'INSERT OR REPLACE INTO markets_query_cache (query_hash, response_json, created_at) VALUES (?, ?, ?)'
+    ).run(queryHash, JSON.stringify(responseBody), new Date().toISOString());
 
-    const response = await fetch('https://api.instantly.ai/api/v2/supersearch-enrichment/preview-leads-from-supersearch', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      console.log(`[Markets] Search failed: HTTP ${response.status} ${errText.slice(0, 200)}`);
-      return res.status(response.status).json({ error: 'Search failed', detail: errText.slice(0, 200) });
-    }
-
-    const data = await response.json();
-    const leads = data.leads || [];
-    console.log(`[Markets] Search returned ${leads.length} leads, total=${data?.number_of_leads || 0}, redacted=${data?.number_of_redacted_results || 0}`);
-
-    res.json({
-      data: leads,
-      total_count: data.number_of_leads || 0,
-      redacted_count: data.number_of_redacted_results || 0,
-    });
+    res.json(responseBody);
   } catch (err) {
     if (err.name === 'AbortError') {
       console.log('[Markets] Search timed out');
