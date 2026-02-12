@@ -4611,29 +4611,34 @@ export default function Flow() {
                 const demandMatches = state.matchingResult?.demandMatches || [];
                 const supplyAggregates = state.matchingResult?.supplyAggregates || [];
 
+                // EMAIL CHECK: same logic as Send (pre-existing OR enriched)
                 const demandReady = demandMatches.filter(m => {
+                  if (m.demand.email) return true;
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
                 const supplyReady = supplyAggregates.filter(a => {
+                  if (a.supply.email) return true;
                   const e = state.enrichedSupply.get(recordKey(a.supply));
                   return e && isSuccessfulEnrichment(e) && e.email;
                 });
 
                 const demandNeedEmail = demandMatches.filter(m => {
+                  if (m.demand.email) return false;
                   const e = state.enrichedDemand.get(recordKey(m.demand));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
                 const supplyNeedEmail = supplyAggregates.filter(a => {
+                  if (a.supply.email) return false;
                   const e = state.enrichedSupply.get(recordKey(a.supply));
                   return !e || !isSuccessfulEnrichment(e) || !e.email;
                 });
 
-                // FIX: Count actual intros, not just emails — "intros ready" must be truthful
+                // READY = has email AND has intro text (same gate as Send + Export)
                 const totalReady = demandReady.filter(m =>
-                  state.demandIntros.has(recordKey(m.demand))
+                  !!(state.demandIntros.get(recordKey(m.demand))?.text)
                 ).length + supplyReady.filter(a =>
-                  state.supplyIntros.has(recordKey(a.supply))
+                  !!(state.supplyIntros.get(recordKey(a.supply))?.text)
                 ).length;
                 const totalNeedEmail = demandNeedEmail.length + supplyNeedEmail.length;
 

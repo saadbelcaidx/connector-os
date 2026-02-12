@@ -58,9 +58,9 @@ export interface ExportReceipt {
 // =============================================================================
 
 export interface DemandExportInput {
-  matches: Array<{ demand: { domain?: string | null; company?: string | null; fullName?: string | null; companyName?: string; raw?: { uuid?: string } | null } }>;
+  matches: Array<{ demand: { email?: string | null; domain?: string | null; company?: string | null; fullName?: string | null; companyName?: string; raw?: { uuid?: string } | null } }>;
   enriched: Map<string, EnrichmentResult>;
-  intros: Map<string, string>;
+  intros: Map<string, { text: string; source: string }>;
 }
 
 export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
@@ -84,32 +84,42 @@ export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
     }
     seenKeys.add(key);
 
-    // Check enrichment
+    // EMAIL RESOLUTION: pre-existing OR enriched (same as Export/Send)
     const enrichResult = enriched.get(key);
-    if (!enrichResult) {
+    const hasPreExistingEmail = !!match.demand.email;
+    const hasEnrichedEmail = enrichResult && enrichResult.email;
+
+    if (!hasPreExistingEmail && !enrichResult) {
       filtered.push({ domain, reason: 'ENRICHMENT_FAILED' });
       continue;
     }
 
-    // Use detailed verification classifier (Gate 2/3 truth surfacing)
-    const blockReason = classifyEmailBlockReason(
-      enrichResult.email,
-      enrichResult.verified,
-      enrichResult.source || null,
-      null, // verifiedAt not used
-      enrichResult.outcome
-    );
+    if (!hasPreExistingEmail && enrichResult) {
+      // Use detailed verification classifier (Gate 2/3 truth surfacing)
+      const blockReason = classifyEmailBlockReason(
+        enrichResult.email,
+        enrichResult.verified,
+        enrichResult.source || null,
+        null,
+        enrichResult.outcome
+      );
 
-    if (blockReason) {
-      filtered.push({ domain, reason: blockReason });
+      if (blockReason) {
+        filtered.push({ domain, reason: blockReason });
+        continue;
+      }
+    }
+
+    if (!hasPreExistingEmail && !hasEnrichedEmail) {
+      filtered.push({ domain, reason: 'NO_EMAIL' });
       continue;
     }
 
     totalWithEmail++;
 
-    // Check intro
-    const intro = intros.get(key);
-    if (!intro) {
+    // Check intro — must have actual text (not just key existence)
+    const introEntry = intros.get(key);
+    if (!introEntry?.text) {
       filtered.push({ domain, reason: 'NO_INTRO' });
       continue;
     }
@@ -156,9 +166,9 @@ export function buildDemandReceipt(input: DemandExportInput): ExportReceipt {
 // =============================================================================
 
 export interface SupplyExportInput {
-  aggregates: Array<{ supply: { domain?: string | null; company?: string | null; fullName?: string | null; companyName?: string; raw?: { uuid?: string } | null }; matchCount: number }>;
+  aggregates: Array<{ supply: { email?: string | null; domain?: string | null; company?: string | null; fullName?: string | null; companyName?: string; raw?: { uuid?: string } | null }; matchCount: number }>;
   enriched: Map<string, EnrichmentResult>;
-  intros: Map<string, string>;
+  intros: Map<string, { text: string; source: string }>;
 }
 
 export function buildSupplyReceipt(input: SupplyExportInput): ExportReceipt {
@@ -182,32 +192,41 @@ export function buildSupplyReceipt(input: SupplyExportInput): ExportReceipt {
     }
     seenKeys.add(key);
 
-    // Check enrichment
+    // EMAIL RESOLUTION: pre-existing OR enriched (same as Export/Send)
     const enrichResult = enriched.get(key);
-    if (!enrichResult) {
+    const hasPreExistingEmail = !!agg.supply.email;
+    const hasEnrichedEmail = enrichResult && enrichResult.email;
+
+    if (!hasPreExistingEmail && !enrichResult) {
       filtered.push({ domain, reason: 'ENRICHMENT_FAILED' });
       continue;
     }
 
-    // Use detailed verification classifier (Gate 2/3 truth surfacing)
-    const blockReason = classifyEmailBlockReason(
-      enrichResult.email,
-      enrichResult.verified,
-      enrichResult.source || null,
-      null, // verifiedAt not used
-      enrichResult.outcome
-    );
+    if (!hasPreExistingEmail && enrichResult) {
+      const blockReason = classifyEmailBlockReason(
+        enrichResult.email,
+        enrichResult.verified,
+        enrichResult.source || null,
+        null,
+        enrichResult.outcome
+      );
 
-    if (blockReason) {
-      filtered.push({ domain, reason: blockReason });
+      if (blockReason) {
+        filtered.push({ domain, reason: blockReason });
+        continue;
+      }
+    }
+
+    if (!hasPreExistingEmail && !hasEnrichedEmail) {
+      filtered.push({ domain, reason: 'NO_EMAIL' });
       continue;
     }
 
     totalWithEmail++;
 
-    // Check intro
-    const intro = intros.get(key);
-    if (!intro) {
+    // Check intro — must have actual text
+    const introEntry = intros.get(key);
+    if (!introEntry?.text) {
       filtered.push({ domain, reason: 'NO_INTRO' });
       continue;
     }
