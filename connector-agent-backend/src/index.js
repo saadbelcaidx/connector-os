@@ -1111,10 +1111,11 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
   }
 
   // Also check email_cache (from FIND results)
+  // Only trust VALID — RISKY falls through to catch-all confidence probing
   const emailCached = db.prepare(`
     SELECT email, verdict, created_at FROM email_cache WHERE email = ?
   `).get(emailLower);
-  if (emailCached && (emailCached.verdict === 'VALID' || emailCached.verdict === 'RISKY')) {
+  if (emailCached && emailCached.verdict === 'VALID') {
     const age = Date.now() - new Date(emailCached.created_at).getTime();
     const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
     if (age < SEVEN_DAYS) {
