@@ -30,6 +30,8 @@ export type EnrichmentInputs = {
   domain?: string | null;
   person_name?: string | null;
   company?: string | null;
+  title?: string | null;
+  linkedin?: string | null;
 };
 
 /**
@@ -161,24 +163,41 @@ function isFullName(personName: string | null | undefined): boolean {
 }
 
 /**
+ * Check if person_name has at least one word (single-word names like "Ivelisse").
+ * When combined with strong context (company + title/linkedin), still route as person search.
+ */
+function hasPersonName(personName: string | null | undefined): boolean {
+  if (!personName) return false;
+  return personName.trim().length > 0;
+}
+
+/**
  * Classify inputs to determine action.
  *
  * ROUTING RULES:
  * - email exists                        → VERIFY
  * - domain + full name (2+ words)       → FIND_PERSON
- * - domain only (or partial name)       → FIND_COMPANY_CONTACT
+ * - domain + single name + context      → FIND_PERSON (strong person signal)
+ * - domain only (or no name)            → FIND_COMPANY_CONTACT
  * - company + full name (2+ words)      → SEARCH_PERSON
- * - company only (or partial name)      → SEARCH_COMPANY
+ * - company + single name + context     → SEARCH_PERSON (strong person signal)
+ * - company only (or no name)           → SEARCH_COMPANY
  * - nothing usable                      → CANNOT_ROUTE
+ *
+ * Context = title OR linkedin exists. Single-word names with context
+ * should not downgrade to company-level search — we know WHO to find.
  */
 export function classifyInputs(inputs: EnrichmentInputs): EnrichmentAction {
   if (inputs.email) return 'VERIFY';
 
-  const hasFullName = isFullName(inputs.person_name);
+  const hasFullName_ = isFullName(inputs.person_name);
+  const hasSingleName = !hasFullName_ && hasPersonName(inputs.person_name);
+  const hasContext = !!(inputs.title || inputs.linkedin);
+  const personSearchable = hasFullName_ || (hasSingleName && hasContext);
 
-  if (inputs.domain && hasFullName) return 'FIND_PERSON';
+  if (inputs.domain && personSearchable) return 'FIND_PERSON';
   if (inputs.domain) return 'FIND_COMPANY_CONTACT';
-  if (inputs.company && hasFullName) return 'SEARCH_PERSON';
+  if (inputs.company && personSearchable) return 'SEARCH_PERSON';
   if (inputs.company) return 'SEARCH_COMPANY';
   return 'CANNOT_ROUTE';
 }
@@ -947,6 +966,7 @@ export async function routeEnrichment(
     name?: string;
     company?: string;
     title?: string;
+    linkedin?: string | null;
   },
   config: RouterConfig
 ): Promise<EnrichmentResult> {
@@ -967,6 +987,8 @@ export async function routeEnrichment(
     domain: record.domain || null,
     person_name: personName,
     company: record.company || null,
+    title: record.title || null,
+    linkedin: record.linkedin || null,
   };
 
   const inputsPresent = {

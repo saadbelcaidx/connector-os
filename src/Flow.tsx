@@ -30,7 +30,8 @@ import {
   recordKey,
   simpleHash,
 } from './enrichment';
-import { generateDemandIntro, generateSupplyIntro } from './templates';
+// Deterministic template fallback REMOVED — operator rule: skip record if no AI intro generated.
+// Sending garbage probe intros is worse than not sending.
 
 // Deterministic Pipeline Components — Edge Preflight + Compose
 import { detectEdge } from './matching/EdgeDetector';
@@ -58,6 +59,8 @@ import {
 
 // 3-Step AI Intro Generation (user.txt contract)
 import { generateIntrosAI, generateIntrosBatchParallel, IntroAIConfig, BatchIntroItem, BatchIntroResult } from './services/IntroAI';
+// Step 0: Extract structured intel from raw records before intro generation
+import { extractBatch, getCachedIntel, type ExtractedIntel } from './services/RecordIntel';
 
 // INTRO RELIABILITY CONTRACT — Stripe-level infrastructure
 // Layer 0: Deterministic base (always runs first, always succeeds)
@@ -69,9 +72,6 @@ import {
 
 // Sender Adapter (Instantly, Plusvibe, etc.)
 import { resolveSender, buildSenderConfig, SenderAdapter, SenderConfig, getLimiter, QueueProgress } from './services/senders';
-
-// Connector Hub Adapter (side-channel - does NOT modify existing flow)
-import { isFromHub, hasHubContacts, getHubBothSides, clearHubContacts } from './services/ConnectorHubAdapter';
 
 // Supply Annotations — Operator judgment persistence (render-only, no matching impact)
 import {
@@ -557,8 +557,6 @@ type ErrorCode =
   | 'DATASET_EMPTY'
   | 'DATASET_INVALID'
   | 'MISSING_SUPPLY'
-  | 'HUB_ERROR'
-  | 'HUB_MISSING_SIDE'
   | 'CONTRACT_VIOLATION'
   | 'UNKNOWN';
 
@@ -570,8 +568,6 @@ function toUserError(code: ErrorCode, detail?: string): string {
     DATASET_EMPTY: 'CSV is empty. Add some rows and try again.',
     DATASET_INVALID: detail ? `CSV needs adjustment: ${detail}` : 'CSV needs Company Name and Signal columns.',
     MISSING_SUPPLY: 'Add a supply CSV in Settings to continue.',
-    HUB_ERROR: detail || 'Hub needs a refresh. Try selecting contacts again.',
-    HUB_MISSING_SIDE: 'Select contacts for both Demand and Supply in Hub.',
     CONTRACT_VIOLATION: detail || 'Data format issue. Check console for details.',
     UNKNOWN: detail || 'Something unexpected happened.',
   };
@@ -853,9 +849,6 @@ interface FlowState {
   // Data Preview — Stripe-style transparency
   dataPreview: DataPreview | null;
 
-  // Source tracking (for UI labels)
-  isHubFlow: boolean;
-
   // Datasets
   demandSchema: Schema | null;
   supplySchema: Schema | null;
@@ -872,7 +865,7 @@ interface FlowState {
   enrichedDemand: Map<string, EnrichmentResult>;
   enrichedSupply: Map<string, EnrichmentResult>;
 
-  // Intros (AI-generated or template-based)
+  // Intros (AI-generated only — no template fallback)
   demandIntros: Map<string, IntroEntry>;  // domain -> intro with source tracking
   supplyIntros: Map<string, IntroEntry>;  // domain -> intro with source tracking
 
@@ -888,6 +881,7 @@ interface FlowState {
     new: number;
     existing: number;
     needsAttention: number;
+    skippedNoIntro: number;  // Records skipped — no AI intro generated
     details: string[];  // Details for needs_attention items
   };
 
@@ -904,7 +898,7 @@ interface FlowState {
   // INVARIANT C: No data loss on resume
   // If results exceed storage limits, preserve summaries
   resultsDropped: boolean;
-  droppedCounts: { demand: number; supply: number; intros: number } | null;
+  droppedCounts: { demand: number; supply: number; intros: number; errorReason?: string } | null;
 }
 
 interface Settings {
@@ -933,7 +927,6 @@ export default function Flow() {
   const [state, setState] = useState<FlowState>({
     step: 'upload',
     dataPreview: null,
-    isHubFlow: false,
     demandSchema: null,
     supplySchema: null,
     demandRecords: [],
@@ -947,7 +940,7 @@ export default function Flow() {
     progress: { current: 0, total: 0, message: '' },
     sentDemand: 0,
     sentSupply: 0,
-    sendBreakdown: { new: 0, existing: 0, needsAttention: 0, details: [] },
+    sendBreakdown: { new: 0, existing: 0, needsAttention: 0, skippedNoIntro: 0, details: [] },
     error: null,
     flowBlock: null,
     auditData: null,
@@ -996,7 +989,6 @@ export default function Flow() {
   // Serialize Maps to objects for IndexedDB storage
   const serializeState = useCallback((s: FlowState) => ({
     step: s.step,
-    isHubFlow: s.isHubFlow,
     demandSchema: s.demandSchema,  // Task 1: persist schemas
     supplySchema: s.supplySchema,  // Task 1: persist schemas
     demandRecords: s.demandRecords,
@@ -1043,7 +1035,6 @@ export default function Flow() {
 
     return {
       step,
-      isHubFlow: data.isHubFlow,
       demandSchema: data.demandSchema || null,  // Task 1: restore schemas
       supplySchema: data.supplySchema || null,  // Task 1: restore schemas
       demandRecords: data.demandRecords || [],
@@ -1419,10 +1410,6 @@ export default function Flow() {
     }
   }, [supplyAnnotations, isAuthenticated, user?.id]);
 
-  // Auto-start when coming from Connector Hub (ref to avoid dependency issues)
-  const hubAutoStartRef = useRef(false);
-  const startFlowRef = useRef<() => void>();
-
   // =============================================================================
   // STEP 1: VALIDATE & LOAD DATASETS
   // =============================================================================
@@ -1433,121 +1420,10 @@ export default function Flow() {
     setState(prev => ({ ...prev, progress: { current: 0, total: 100, message: 'Loading...' } }));
 
     try {
-      // =========================================================================
-      // HUB ADAPTER: Check if contacts came from Connector Hub
-      // Hub collects BOTH demand AND supply - no Apify fetch needed
-      // STRICT: Requires BOTH URL param AND hub data - no fallbacks
-      // =========================================================================
-      const urlHasHubSource = new URLSearchParams(window.location.search).get('source') === 'hub';
-      const hubHasData = hasHubContacts();
-
-      console.log('[Flow] Hub check:', { urlHasHubSource, hubHasData });
-
-      if (urlHasHubSource && hubHasData) {
-        console.log('[Flow] Hub source detected - using two-sided adapter');
-        setState(prev => ({ ...prev, progress: { current: 20, total: 100, message: 'Loading Hub contacts...' } }));
-
-        // Get BOTH sides from Hub (demand + supply)
-        const { demand: hubDemand, supply: hubSupply, error: hubError } = getHubBothSides();
-        console.log('[Flow] Hub adapter returned', hubDemand.length, 'demand +', hubSupply.length, 'supply');
-
-        // GUARDS — Hub validation
-        if (!guard(!hubError, BLOCKS.HUB_ERROR(hubError || 'Unknown hub error'), setFlowBlock)) return;
-        if (!guard(hubDemand.length > 0 && hubSupply.length > 0, BLOCKS.HUB_MISSING_SIDE, setFlowBlock)) return;
-
-        setState(prev => ({ ...prev, progress: { current: 40, total: 100, message: 'Deduplicating...' } }));
-
-        // Dedupe demand by recordKey (supports domainless records)
-        const seenDemandKeys = new Set<string>();
-        const dedupedDemand = hubDemand.filter(r => {
-          const key = recordKey(r);
-          if (seenDemandKeys.has(key)) return false;
-          seenDemandKeys.add(key);
-          return true;
-        });
-
-        // Dedupe supply by recordKey (supports domainless records)
-        const seenSupplyKeys = new Set<string>();
-        const dedupedSupply = hubSupply.filter(r => {
-          const key = recordKey(r);
-          if (seenSupplyKeys.has(key)) return false;
-          seenSupplyKeys.add(key);
-          return true;
-        });
-
-        console.log('[Flow] After dedup: demand:', dedupedDemand.length, 'supply:', dedupedSupply.length);
-
-        // =======================================================================
-        // RUNTIME ASSERTIONS — Validate adapter contract before matching
-        // =======================================================================
-        const validateRecords = (records: NormalizedRecord[], label: string): boolean => {
-          for (let i = 0; i < records.length; i++) {
-            const r = records[i];
-            // size must be string | null
-            if (r.size !== null && typeof r.size !== 'string') {
-              console.error(`[Flow] CONTRACT VIOLATION in ${label}[${i}]: size is ${typeof r.size}, not string|null`, r.size);
-              console.error(`[Flow] Record sample:`, { company: r.company, domain: r.domain, size: r.size });
-              return false;
-            }
-            // Records need EITHER domain OR (company + name) for enrichment
-            // Domainless records use SEARCH_PERSON action via Anymail
-            if (!r.domain && !r.company) {
-              console.error(`[Flow] CONTRACT VIOLATION in ${label}[${i}]: missing both domain and company`, r);
-              return false;
-            }
-          }
-          return true;
-        };
-
-        // GUARDS — Contract validation
-        if (!guard(validateRecords(dedupedDemand, 'demand'),
-          BLOCKS.CONTRACT_VIOLATION('Demand records missing required fields'), setFlowBlock)) return;
-        if (!guard(validateRecords(dedupedSupply, 'supply'),
-          BLOCKS.CONTRACT_VIOLATION('Supply records missing required fields'), setFlowBlock)) return;
-
-        console.log('[Flow] Contract validation passed for both sides');
-        // =======================================================================
-
-        // Clear URL param before processing
-        window.history.replaceState({}, '', window.location.pathname);
-
-        // Hub adapts data, then calls the SAME flow functions as normal path
-        // This ensures 100% parity - no duplicated logic
-        const hubDemandSchema = { name: 'Connector Hub (Demand)', id: 'connector-hub-demand', fields: [], hasContacts: true } as any;
-        const hubSupplySchema = { name: 'Connector Hub (Supply)', id: 'connector-hub-supply', fields: [], hasContacts: true } as any;
-
-        // Set state with adapted data, then let runMatching handle the rest
-        setState(prev => ({
-          ...prev,
-          step: 'matching',
-          isHubFlow: true,  // Track source for UI labels
-          demandSchema: hubDemandSchema,
-          supplySchema: hubSupplySchema,
-          demandRecords: dedupedDemand,
-          supplyRecords: dedupedSupply,
-          progress: { current: 70, total: 100, message: 'Matching...' },
-        }));
-
-        console.log('[Flow:Hub] Handing off to runMatching (same path as normal flow)');
-
-        // CRITICAL: Hub calls the SAME runMatching function as normal path
-        // runMatching → matchRecords → runEnrichment → runIntroGeneration
-        await runMatching(dedupedDemand, dedupedSupply, hubDemandSchema, hubSupplySchema);
-
-        // Clear hub data after successful flow to prevent contamination
-        console.log('[Flow:Hub] Clearing hub localStorage after successful handoff');
-        clearHubContacts();
-        return;
-      }
-      // =========================================================================
-      // END HUB ADAPTER - Normal flow continues below
-      // =========================================================================
-
       // CSV-ONLY: Load demand from CSV (already normalized by CsvUpload)
       let demandRecords: NormalizedRecord[] = [];
 
       // CSV schemas — placeholder metadata for downstream functions
-      // Same pattern as Hub path (lines 1437-1438)
       const csvDemandSchema = { name: 'CSV Upload (Demand)', id: 'csv-demand', fields: [], hasContacts: true } as any;
       const csvSupplySchema = { name: 'CSV Upload (Supply)', id: 'csv-supply', fields: [], hasContacts: true } as any;
 
@@ -1658,28 +1534,6 @@ export default function Flow() {
       setFlowBlock(BLOCKS.DATASET_FETCH_FAILED(detail));
     }
   }, [settings, setFlowBlock]);
-
-  // Keep startFlow ref updated for Hub auto-start
-  startFlowRef.current = startFlow;
-
-  // Auto-start when coming from Connector Hub
-  // STRICT: Requires BOTH URL param AND hub data - no fallbacks
-  useEffect(() => {
-    if (hubAutoStartRef.current) return;
-    if (!settings) return;
-
-    const urlHasHubSource = new URLSearchParams(window.location.search).get('source') === 'hub';
-    const hubHasData = hasHubContacts();
-
-    console.log('[Flow] Auto-start check:', { urlHasHubSource, hubHasData, alreadyStarted: hubAutoStartRef.current });
-
-    // STRICT AND - both must be true
-    if (urlHasHubSource && hubHasData) {
-      console.log('[Flow] Auto-starting from Hub');
-      hubAutoStartRef.current = true;
-      startFlowRef.current?.();
-    }
-  }, [settings]);
 
   // =============================================================================
   // PREVIEW → MATCHING TRANSITION
@@ -1971,9 +1825,8 @@ export default function Flow() {
     const existingSupply = state.enrichedSupply;
     console.log(`[Flow] Resume check: ${existingDemand.size} demand, ${existingSupply.size} supply already enriched`);
 
-    // Enrich demand side with bounded concurrency
-    const TEST_LIMIT = import.meta.env.DEV ? 100 : Infinity; // Dev = 100 (saves credits), Prod = unlimited
-    const allDemandRecords = matching.demandMatches.map(m => m.demand).slice(0, TEST_LIMIT);
+    // Enrich demand side with bounded concurrency — no cap, user controls volume
+    const allDemandRecords = matching.demandMatches.map(m => m.demand);
 
     // Task 2: Filter out already-enriched demand records
     const demandRecords = allDemandRecords.filter(r => !existingDemand.has(recordKey(r)));
@@ -1988,9 +1841,10 @@ export default function Flow() {
         demandSchema,
         config,
         (current, total) => {
+          const done = existingDemand.size + current;
           setState(prev => ({
             ...prev,
-            progress: { current: existingDemand.size + current, total: allDemandRecords.length, message: `Enriching ${existingDemand.size + current}/${allDemandRecords.length}` },
+            progress: { current: done, total: allDemandRecords.length, message: `Step 1/2 — demand ${done}/${allDemandRecords.length}` },
           }));
         },
         `${runId}-demand`
@@ -2006,6 +1860,7 @@ export default function Flow() {
     setState(prev => ({
       ...prev,
       enrichedDemand: new Map(enrichedDemand),
+      progress: { current: allDemandRecords.length, total: allDemandRecords.length, message: 'Step 1/2 complete — demand enriched' },
     }));
     console.log(`[Flow] Demand enrichment persisted: ${enrichedDemand.size} total`);
 
@@ -2032,8 +1887,16 @@ export default function Flow() {
     let batchCounter = 0;
     const BATCH_SIZE = 5; // Update state every 5 enrichments
 
+    let supplyIdx = 0;
     for (const agg of supplyToEnrich) {
       if (abortRef.current) break;
+      supplyIdx++;
+
+      // Update progress for supply side
+      setState(prev => ({
+        ...prev,
+        progress: { current: supplyIdx, total: supplyToEnrich.length, message: `Step 2/2 — supply ${supplyIdx}/${supplyToEnrich.length}` },
+      }));
 
       const record = agg.supply;
       const key = recordKey(record); // Use recordKey for consistent Map access
@@ -2211,6 +2074,65 @@ export default function Flow() {
     } : null;
 
     // ==========================================================================
+    // PHASE 0: EXTRACT RECORD INTEL (cheap AI, cached, runs once per record)
+    // ==========================================================================
+    // Turns raw LinkedIn bios + press-release headlines into clean structured
+    // fields BEFORE they reach the intro AI. Costs ~$0.001/record.
+    // ==========================================================================
+
+    if (introAIConfig && matching.demandMatches.length > 0) {
+      console.log('[COMPOSE] Phase 0: Extracting record intel...');
+
+      setState(prev => ({
+        ...prev,
+        progress: { current: 0, total: matching.demandMatches.length, message: 'Extracting record intel…' },
+      }));
+
+      // Collect unique demand + supply records from matches
+      const recordsToExtract: Array<{ record: { company: string; companyDescription?: string | null; signal?: string | null; headline?: string | null }; cacheKey: string }> = [];
+      const seen = new Set<string>();
+
+      for (const match of matching.demandMatches) {
+        const dKey = recordKey(match.demand);
+        if (!seen.has(dKey)) {
+          seen.add(dKey);
+          recordsToExtract.push({
+            record: {
+              company: match.demand.company,
+              companyDescription: match.demand.companyDescription,
+              signal: match.demand.signal,
+              headline: match.demand.headline,
+            },
+            cacheKey: dKey,
+          });
+        }
+
+        const sKey = recordKey(match.supply);
+        if (!seen.has(sKey)) {
+          seen.add(sKey);
+          recordsToExtract.push({
+            record: {
+              company: match.supply.company,
+              companyDescription: match.supply.companyDescription,
+              signal: match.supply.signal,
+              headline: match.supply.headline,
+            },
+            cacheKey: sKey,
+          });
+        }
+      }
+
+      await extractBatch(introAIConfig, recordsToExtract, 5, (current, total) => {
+        setState(prev => ({
+          ...prev,
+          progress: { current, total, message: `Extracting record intel… ${current}/${total}` },
+        }));
+      });
+
+      console.log(`[COMPOSE] Phase 0 complete: ${recordsToExtract.length} records extracted`);
+    }
+
+    // ==========================================================================
     // PHASE 1: COLLECT WORK ITEMS (NO AI CALLS)
     // ==========================================================================
     // Iterate matches exactly as before, apply all gates and regression guards,
@@ -2299,11 +2221,17 @@ export default function Flow() {
       // Build DemandRecord with FULL metadata (user.txt contract: feed ALL data)
       const demandRaw = match.demand.raw || {};
 
-      // STRIPE-FIX: Use schema-aware needProfile.category for industry
+      // Step 0 extracted intel — clean signal + capability (cached from Phase 0)
+      const demandIntel = getCachedIntel(demandKey);
+
+      // Real industry string for AI prompts — never internal category codes like "finance_co" or "tech"
       const demandIndustryRaw = Array.isArray(match.demand.industry)
         ? match.demand.industry[0]
         : match.demand.industry;
-      const demandIndustry = match.needProfile?.category || demandIndustryRaw || '';
+      const demandIndustry = demandIndustryRaw || '';
+
+      // Use extracted signal summary if available, fall back to raw edge evidence
+      const demandSignal = demandIntel?.signalSummary || edge.evidence;
 
       const demandRecord: DemandRecord = {
         domain: match.demand.domain,
@@ -2312,7 +2240,7 @@ export default function Flow() {
         email: demandEmail,
         title: demandEnriched?.title || match.demand.title || '',
         industry: demandIndustry,
-        signals: [edge.evidence],
+        signals: [demandSignal],
         metadata: {
           companyDescription: match.demand.companyDescription || demandRaw.company_description || demandRaw['Service Description'] || demandRaw.description || '',
           description: match.demand.companyDescription || demandRaw.company_description || demandRaw['Service Description'] || demandRaw.description || '',
@@ -2331,27 +2259,14 @@ export default function Flow() {
       // Build SupplyRecord with capability data — USE effectiveSupply (may be fallback)
       const supplyRaw = effectiveSupply.raw || {};
 
-      const capabilityFromProfile = match.capabilityProfile?.category;
-      const capabilityLabel =
-        capabilityFromProfile === 'biotech_contact' ? 'biotech services' :
-        capabilityFromProfile === 'healthcare_contact' ? 'healthcare services' :
-        capabilityFromProfile === 'tech_contact' ? 'technology services' :
-        capabilityFromProfile === 'finance_contact' ? 'financial services' :
-        capabilityFromProfile === 'recruiting' ? 'talent placement' :
-        capabilityFromProfile === 'bd_professional' ? 'business development' :
-        capabilityFromProfile === 'executive' ? 'executive network' :
-        capabilityFromProfile === 'consulting' ? 'consulting services' :
-        capabilityFromProfile === 'fractional' ? 'fractional leadership' :
-        capabilityFromProfile === 'marketing' ? 'growth marketing' :
-        capabilityFromProfile === 'engineering' ? 'software development' :
-        null;
+      // Step 0 extracted intel for supply — clean capability from AI extraction
+      const supplyIntel = getCachedIntel(effectiveSupplyKey);
 
+      // Priority: AI-extracted capability → raw fields → internal category label → fallback
       const supplyCapability =
+        supplyIntel?.capability ||
         supplyRaw.capability ||
         supplyRaw.services ||
-        capabilityLabel ||
-        effectiveSupply.headline ||
-        effectiveSupply.signal ||
         effectiveSupply.companyDescription?.slice(0, 100) ||
         'business services';
 
@@ -2405,6 +2320,11 @@ export default function Flow() {
         continue;
       }
 
+      // Override edge evidence with extracted signal summary (clean, human-readable)
+      const cleanEdge: Edge = demandIntel?.signalSummary
+        ? { ...edge, evidence: demandIntel.signalSummary }
+        : edge;
+
       // Collect work item — use effectiveSupplyKey so intro is stored under correct supply
       const workItem: IntroWorkItem = {
         id: `${demandKey}:${effectiveSupplyKey}`,
@@ -2412,7 +2332,7 @@ export default function Flow() {
         supplyKey: effectiveSupplyKey,
         demandRecord,
         supplyRecord,
-        edge,
+        edge: cleanEdge,
         match,
       };
 
@@ -2424,6 +2344,8 @@ export default function Flow() {
     // ==========================================================================
     // PHASE 2: PARALLEL AI GENERATION (CONCURRENCY = 5)
     // ==========================================================================
+
+    let aiFailureReason: string | undefined;
 
     if (aiWorkItems.length > 0 && introAIConfig) {
       console.log(`[COMPOSE] Phase 2: Parallel AI generation (${aiWorkItems.length} items, concurrency=5)...`);
@@ -2483,14 +2405,32 @@ export default function Flow() {
         progress++;
       }
 
-      // Check fallback rate
-      const totalAIAttempts = aiSuccess + aiFallback;
-      if (totalAIAttempts > 0) {
-        const fallbackRate = (aiFallback / totalAIAttempts) * 100;
-        console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
-        if (fallbackRate > 20) {
-          setFallbackWarning(`${Math.round(fallbackRate)}% of intros fell back. Check your API key or try a different provider.`);
-          setTimeout(() => setFallbackWarning(null), 8000);
+      // Check for total AI failure — surface the reason to user
+      const aiErrors = batchResults.filter(r => r.error).map(r => r.error!);
+      if (aiErrors.length > 0 && aiSuccess === 0 && aiFallback === 0) {
+        // ALL items failed — extract common error for user
+        const sample = aiErrors[0];
+        let userMessage = 'AI generation failed for all intros. Check your API key.';
+        if (sample.includes('credit balance') || sample.includes('insufficient_quota') || sample.includes('exceeded your current quota')) {
+          userMessage = 'AI credits exhausted. Add credits or switch provider in Settings.';
+        } else if (sample.includes('401') || sample.includes('invalid_api_key') || sample.includes('Incorrect API key')) {
+          userMessage = 'Invalid API key. Check your key in Settings.';
+        } else if (sample.includes('429') || sample.includes('rate_limit')) {
+          userMessage = 'Rate limited. Wait a moment and try again.';
+        }
+        aiFailureReason = userMessage;
+        setFallbackWarning(userMessage);
+        // Keep visible longer for total failure (not auto-dismiss)
+      } else {
+        // Check fallback rate
+        const totalAIAttempts = aiSuccess + aiFallback;
+        if (totalAIAttempts > 0) {
+          const fallbackRate = (aiFallback / totalAIAttempts) * 100;
+          console.log(`[COMPOSE] AI fallback rate: ${fallbackRate.toFixed(1)}% (${aiFallback}/${totalAIAttempts})`);
+          if (fallbackRate > 20) {
+            setFallbackWarning(`${Math.round(fallbackRate)}% of intros fell back. Check your API key or try a different provider.`);
+            setTimeout(() => setFallbackWarning(null), 8000);
+          }
         }
       }
     }
@@ -2508,6 +2448,7 @@ export default function Flow() {
       demand: demandIntros.size,
       supply: supplyIntros.size,
       intros: dropped,
+      ...(aiFailureReason ? { errorReason: aiFailureReason } : {}),
     } : null;
 
     if (resultsDropped) {
@@ -2686,7 +2627,7 @@ export default function Flow() {
     if (!guard(matchingResult, BLOCKS.NO_MATCHES, setFlowBlock)) return;
 
     // Track breakdown (Apple-style: new | existing | needs_attention)
-    const breakdown = { new: 0, existing: 0, needsAttention: 0, details: [] as string[] };
+    const breakdown = { new: 0, existing: 0, needsAttention: 0, skippedNoIntro: 0, details: [] as string[] };
     let sentDemand = 0;
     let sentSupply = 0;
 
@@ -2717,11 +2658,11 @@ export default function Flow() {
         const email = match.demand.email || enriched?.email;
 
         const introEntry = state.demandIntros.get(demandKey);
-        const intro = introEntry?.text || generateDemandIntro({
-          ...match.demand,
-          firstName: enriched?.firstName || match.demand.firstName,
-          email: email!,
-        });
+        if (!introEntry?.text) {
+          breakdown.skippedNoIntro++;
+          console.log(`[Flow] SKIP demand: ${match.demand.company} — no AI intro generated`);
+          continue;
+        }
 
         sendQueue.push({
           type: 'DEMAND',
@@ -2733,7 +2674,7 @@ export default function Flow() {
             lastName: enriched?.lastName || match.demand.lastName,
             companyName: match.demand.company,
             companyDomain: match.demand.domain,
-            introText: intro,
+            introText: introEntry.text,
             contactTitle: enriched?.title || match.demand.title,
           },
           match,
@@ -2755,14 +2696,11 @@ export default function Flow() {
         const email = agg.supply.email || enriched?.email;
 
         const introEntry = state.supplyIntros.get(supplyKey);
-        const intro = introEntry?.text || generateSupplyIntro(
-          {
-            ...agg.supply,
-            firstName: enriched?.firstName || agg.supply.firstName,
-            email: email!,
-          },
-          agg.bestMatch.demand
-        );
+        if (!introEntry?.text) {
+          breakdown.skippedNoIntro++;
+          console.log(`[Flow] SKIP supply: ${agg.supply.company} — no AI intro generated`);
+          continue;
+        }
 
         sendQueue.push({
           type: 'SUPPLY',
@@ -2774,7 +2712,7 @@ export default function Flow() {
             lastName: enriched?.lastName || agg.supply.lastName,
             companyName: agg.supply.company,
             companyDomain: agg.supply.domain,
-            introText: intro,
+            introText: introEntry.text,
             contactTitle: enriched?.title || agg.supply.title,
           },
           agg,
@@ -2782,7 +2720,7 @@ export default function Flow() {
       }
     }
 
-    console.log(`[Flow] Send queue built: ${sendQueue.length} items (demand + supply)`);
+    console.log(`[Flow] Send queue built: ${sendQueue.length} items (demand + supply)${breakdown.skippedNoIntro > 0 ? `, ${breakdown.skippedNoIntro} skipped (no intro)` : ''}`);
 
     // ==========================================================================
     // PHASE 2: SEND VIA RATE-LIMITED QUEUE
@@ -2989,7 +2927,6 @@ export default function Flow() {
     setState({
       step: 'upload',
       dataPreview: null,
-      isHubFlow: false,
       demandSchema: null,
       supplySchema: null,
       demandRecords: [],
@@ -3003,7 +2940,7 @@ export default function Flow() {
       progress: { current: 0, total: 0, message: '' },
       sentDemand: 0,
       sentSupply: 0,
-      sendBreakdown: { new: 0, existing: 0, needsAttention: 0, details: [] },
+      sendBreakdown: { new: 0, existing: 0, needsAttention: 0, skippedNoIntro: 0, details: [] },
       error: null,
       flowBlock: null,
       auditData: null,
@@ -3051,7 +2988,6 @@ export default function Flow() {
     setState({
       step: 'upload',
       dataPreview: null,
-      isHubFlow: false,
       demandSchema: null,
       supplySchema: null,
       demandRecords: [],
@@ -3065,7 +3001,7 @@ export default function Flow() {
       progress: { current: 0, total: 0, message: '' },
       sentDemand: 0,
       sentSupply: 0,
-      sendBreakdown: { new: 0, existing: 0, needsAttention: 0, details: [] },
+      sendBreakdown: { new: 0, existing: 0, needsAttention: 0, skippedNoIntro: 0, details: [] },
       error: null,
       flowBlock: null,
       auditData: null,
@@ -3246,8 +3182,6 @@ export default function Flow() {
                   ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
                   : errorStr.includes('No supply')
                   ? { type: 'DATASET_INVALID', side: 'supply', message: 'No supply CSV uploaded' }
-                  : errorStr.includes('Hub')
-                  ? { type: 'DATASET_INVALID', side: 'demand', message: errorStr }
                   : { type: 'UNKNOWN_ERROR', message: errorStr };
 
                 const explanation = explain(errorBlock, {});
@@ -4601,6 +4535,35 @@ export default function Flow() {
                         )}
                       </motion.div>
                     )}
+
+                    {/* No emails found — action buttons so user isn't stuck */}
+                    {enrichmentFailed && introPairCount === 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="flex flex-col items-center gap-3 mt-2"
+                      >
+                        <p className="text-[12px] text-white/40">No emails found for this batch.</p>
+                        <button
+                          onClick={() => {
+                            setState(prev => ({
+                              ...prev,
+                              step: 'upload',
+                              matchingResult: null,
+                              enrichedDemand: new Map(),
+                              enrichedSupply: new Map(),
+                              detectedEdges: new Map(),
+                              demandIntros: new Map(),
+                              supplyIntros: new Map(),
+                            }));
+                          }}
+                          className={BTN.primary}
+                        >
+                          Try another batch
+                        </button>
+                      </motion.div>
+                    )}
                   </div>
                 );
               })()}
@@ -4715,11 +4678,21 @@ export default function Flow() {
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: 0.1 }}
-                        className="max-w-md mx-auto mb-4 p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]"
+                        className={`max-w-md mx-auto mb-4 p-3 rounded-xl border ${
+                          state.droppedCounts.errorReason
+                            ? 'bg-red-500/[0.06] border-red-500/[0.12]'
+                            : 'bg-white/[0.02] border-white/[0.04]'
+                        }`}
                       >
-                        <p className="text-[11px] text-white/40 text-center">
-                          {state.droppedCounts.intros} skipped · {state.droppedCounts.demand + state.droppedCounts.supply} ready
-                        </p>
+                        {state.droppedCounts.errorReason ? (
+                          <p className="text-[12px] text-red-400/90 text-center">
+                            {state.droppedCounts.errorReason}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-white/40 text-center">
+                            {state.droppedCounts.intros} skipped · {state.droppedCounts.demand + state.droppedCounts.supply} ready
+                          </p>
+                        )}
                       </motion.div>
                     )}
 
@@ -4755,7 +4728,7 @@ export default function Flow() {
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
                                 {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
-                                <p className="text-[11px] text-white/60 leading-[1.55]">
+                                <p className="text-[11px] text-white/60 leading-[1.55] whitespace-pre-line">
                                   {state.demandIntros.get(recordKey(match.demand))?.text ||
                                     (state.step === 'generating' ? 'Generating intro...' :
                                       state.step === 'ready' ? 'Intro pending — click Generate' :
@@ -4798,7 +4771,7 @@ export default function Flow() {
                               </div>
                               <div className="flex-1 px-3 py-2 overflow-y-auto custom-scroll">
                                 {/* INVARIANT E: Preview truthfulness — never show placeholder after enrichment */}
-                                <p className="text-[11px] text-white/60 leading-[1.55]">
+                                <p className="text-[11px] text-white/60 leading-[1.55] whitespace-pre-line">
                                   {state.supplyIntros.get(item.key)?.text ||
                                     (state.step === 'generating' ? 'Generating intro...' :
                                       state.step === 'ready' ? 'Intro pending — click Generate' :
@@ -4978,6 +4951,11 @@ export default function Flow() {
                 {state.sendBreakdown.existing > 0 && (
                   <p className="text-[12px] text-white/20 mt-1">
                     {state.sendBreakdown.existing} already in Instantly
+                  </p>
+                )}
+                {state.sendBreakdown.skippedNoIntro > 0 && (
+                  <p className="text-[12px] text-white/20 mt-1">
+                    {state.sendBreakdown.skippedNoIntro} skipped — no intro generated
                   </p>
                 )}
 

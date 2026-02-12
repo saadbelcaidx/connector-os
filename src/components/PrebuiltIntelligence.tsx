@@ -13,9 +13,11 @@ import { fetchNihDemand, getNihInstitutes, DEFAULT_NIH_KEYWORDS } from '../servi
 import { fetchUsaSpendingSupply, DEFAULT_CRO_KEYWORDS, FUNDING_AGENCIES } from '../services/UsaSpendingService';
 import { fetchClinicalTrials } from '../services/PublicDatabaseClient';
 import { storeCsvData } from '../services/SignalsClient';
-import { searchMarkets, enrichCompanies, normalizeToRecord, storeAsdemand } from '../services/MarketsService';
+import { searchMarkets, enrichCompanies, normalizeToRecord, storeAsdemand, storeAsSupply } from '../services/MarketsService';
 import type { NormalizedRecord } from '../schemas';
 import { useAuth } from '../AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { getCsvData } from '../services/SignalsClient';
 
 // =============================================================================
 // TYPES
@@ -961,11 +963,28 @@ const FUNDING_OPTIONS = [
 ];
 
 function MarketsModal({ source, onClose, onUse }: ModalProps) {
-  const [step, setStep] = useState<'config' | 'loading' | 'done'>('config');
-  const [demandCount, setDemandCount] = useState(0);
+  const navigate = useNavigate();
+  const [step, setStep] = useState<'config' | 'searching' | 'preview'>('config');
+  const [error, setError] = useState('');
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState('');
-  const [error, setError] = useState('');
+
+  // Preview state
+  const [previewLeads, setPreviewLeads] = useState<any[]>([]);
+  const [enrichedRecords, setEnrichedRecords] = useState<NormalizedRecord[]>([]);
+  const [totalFound, setTotalFound] = useState(0);
+  const [dailyRemaining, setDailyRemaining] = useState(5000);
+
+  // Running counters — read from localStorage on mount
+  const [demandCount, setDemandCount] = useState(0);
+  const [supplyCount, setSupplyCount] = useState(0);
+
+  useEffect(() => {
+    const d = getCsvData('demand');
+    const s = getCsvData('supply');
+    setDemandCount(d?.length || 0);
+    setSupplyCount(s?.length || 0);
+  }, []);
 
   // Filters
   const [selectedSignals, setSelectedSignals] = useState<string[]>(['hires']);
@@ -974,9 +993,11 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
   const [jobListingFilter, setJobListingFilter] = useState('');
   const [selectedFunding, setSelectedFunding] = useState<string[]>([]);
 
-  // Get outreach API key from settings
+  // Get outreach API key from settings (checks all storage locations)
   const getOutreachApiKey = (): string => {
     try {
+      const dedicated = localStorage.getItem('outreach_api_key');
+      if (dedicated) return dedicated;
       const cached = localStorage.getItem('guest_settings');
       if (cached) {
         const parsed = JSON.parse(cached);
@@ -995,13 +1016,12 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
     window.open(`https://chatgpt.com/?prompt=${prompt}`, '_blank');
   };
 
-  // Auto-capitalize job titles (case sensitivity helper)
   const handleJobFilterChange = (value: string) => {
-    // Auto-capitalize first letter of each word
     const capitalized = value.replace(/\b\w/g, c => c.toUpperCase());
     setJobListingFilter(capitalized);
   };
 
+  // Search → Preview (no storage yet)
   const handleSearch = async () => {
     const apiKey = getOutreachApiKey();
     if (!apiKey) {
@@ -1009,18 +1029,17 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
       return;
     }
 
-    if (selectedSignals.length === 0) {
-      setError('Select at least one signal.');
+    if (selectedSignals.length === 0 && selectedIndustries.length === 0) {
+      setError('Select at least one signal or industry.');
       return;
     }
 
     setError('');
-    setStep('loading');
+    setStep('searching');
     setProgress(10);
     setProgressStage('Searching leads');
 
     try {
-      // Parse job listing filter
       const jobFilters = jobListingFilter
         .split(',')
         .map(s => s.trim())
@@ -1028,10 +1047,10 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
 
       const result = await searchMarkets({
         apiKey,
-        newsFilter: selectedSignals,
-        industryFilter: selectedIndustries.length > 0 ? selectedIndustries : undefined,
+        news: selectedSignals,
+        subIndustry: selectedIndustries.length > 0 ? { include: selectedIndustries, exclude: [] } : undefined,
         jobListingFilter: jobFilters.length > 0 ? jobFilters : undefined,
-        fundingFilter: selectedFunding.length > 0 ? selectedFunding : undefined,
+        fundingType: selectedFunding.length > 0 ? selectedFunding : undefined,
         showOneLeadPerCompany: true,
       });
 
@@ -1042,50 +1061,42 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
         return;
       }
 
+      if (typeof result.dailyRemaining === 'number') {
+        setDailyRemaining(result.dailyRemaining);
+      }
+
       setProgress(50);
       setProgressStage('Enriching companies');
 
-      // Extract unique company IDs for enrichment
       const companyIds = [
         ...new Set(
           result.records
-            .map(r => (r.raw as any)?.lead?.company_id)
-            .filter((id): id is number => typeof id === 'number')
+            .map(r => (r.raw as any)?.lead?.companyId)
+            .filter((id): id is string => !!id)
         ),
       ];
 
-      // Enrich companies in batch
-      let companyMap = new Map<number, any>();
+      let companyMap = new Map<string, any>();
       if (companyIds.length > 0) {
         setProgress(60);
         companyMap = await enrichCompanies(companyIds);
         setProgress(80);
       }
 
-      // Re-normalize with company data
       const signalLabel = buildSignalLabelFromFilters(selectedSignals, jobFilters);
-      const enrichedRecords = result.records.map(r => {
+      const records = result.records.map(r => {
         const lead = (r.raw as any)?.lead;
-        const companyId = lead?.company_id;
+        const companyId = lead?.companyId;
         const company = companyId ? companyMap.get(companyId) || null : null;
-        return normalizeToRecord(lead, company, signalLabel);
+        return normalizeToRecord(lead, company, signalLabel, selectedIndustries[0] || null);
       });
 
-      setProgress(90);
-      setProgressStage('Finalizing');
-
-      // Store as demand
-      storeAsdemand(enrichedRecords);
-
-      setDemandCount(enrichedRecords.length);
+      // Store in state for preview — NOT in localStorage yet
+      setPreviewLeads(result.records.map(r => (r.raw as any)?.lead).filter(Boolean));
+      setEnrichedRecords(records);
+      setTotalFound(result.totalFound);
       setProgress(100);
-      setProgressStage('Complete');
-      setStep('done');
-
-      // Notify parent
-      setTimeout(() => {
-        onUse(enrichedRecords, []);
-      }, 1500);
+      setStep('preview');
     } catch (err: any) {
       console.log(`[Markets] Modal error: ${err.message}`);
       setError(err.message || 'Search failed');
@@ -1094,13 +1105,45 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
     }
   };
 
+  // Accumulate as demand
+  const handleAddAsDemand = () => {
+    const existing = getCsvData('demand') || [];
+    const combined = [...existing, ...enrichedRecords];
+    storeAsdemand(combined);
+    setDemandCount(combined.length);
+    setStep('config');
+    setPreviewLeads([]);
+    setEnrichedRecords([]);
+    onUse(combined, getCsvData('supply') || []);
+  };
+
+  // Accumulate as supply (filtered — only service providers pass)
+  const handleAddAsSupply = () => {
+    const existing = getCsvData('supply') || [];
+    const combined = [...existing, ...enrichedRecords];
+    const keptCount = storeAsSupply(combined);
+    setSupplyCount(keptCount);
+    setStep('config');
+    setPreviewLeads([]);
+    setEnrichedRecords([]);
+    onUse(getCsvData('demand') || [], getCsvData('supply') || []);
+  };
+
+  // New search — clear preview, keep filters
+  const handleNewSearch = () => {
+    setStep('config');
+    setPreviewLeads([]);
+    setEnrichedRecords([]);
+    setProgress(0);
+  };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative w-full max-w-xl bg-[#0C0C0C] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-2xl bg-[#0C0C0C] border border-white/[0.1] rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/[0.08] bg-gradient-to-b from-white/[0.02] to-transparent">
           <div className="flex items-center gap-4">
@@ -1127,6 +1170,19 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
               <X className="w-4 h-4 text-white/60" />
             </button>
           </div>
+        </div>
+
+        {/* Running counters bar */}
+        <div className="px-6 py-2.5 border-b border-white/[0.06] flex items-center gap-4 text-[12px]">
+          <span className="text-white/50">
+            Demand: <span className={demandCount > 0 ? 'text-white/90 font-medium' : 'text-white/30'}>{demandCount.toLocaleString()}</span>
+          </span>
+          <span className="text-white/[0.1]">|</span>
+          <span className="text-white/50">
+            Supply: <span className={supplyCount > 0 ? 'text-white/90 font-medium' : 'text-white/30'}>{supplyCount.toLocaleString()}</span>
+          </span>
+          <span className="text-white/[0.1]">|</span>
+          <span className="text-white/30 font-mono">{dailyRemaining.toLocaleString()} remaining today</span>
         </div>
 
         {/* Content */}
@@ -1170,7 +1226,6 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
                   Industry
                   <span className="text-white/30 normal-case ml-1">(optional — search to find your niche)</span>
                 </label>
-                {/* Selected chips */}
                 {selectedIndustries.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-2">
                     {selectedIndustries.map(ind => (
@@ -1184,7 +1239,6 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
                     ))}
                   </div>
                 )}
-                {/* Search input */}
                 <input
                   type="text"
                   value={industrySearch}
@@ -1192,7 +1246,6 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
                   placeholder="Search industries... (e.g. Recruiting, Legal, Biotech)"
                   className="w-full h-9 px-3 text-[12px] bg-[#141414] border border-white/[0.08] rounded-lg text-white/90 focus:outline-none focus:border-white/20 transition-colors hover:border-white/[0.12] hover:bg-[#181818] placeholder:text-white/30 mb-2"
                 />
-                {/* Grouped results */}
                 <div className="max-h-[200px] overflow-y-auto rounded-lg border border-white/[0.06] bg-[#0f0f0f]" style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}>
                   {INDUSTRY_GROUPS
                     .map(group => {
@@ -1276,9 +1329,8 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
             </>
           )}
 
-          {step === 'loading' && (
+          {step === 'searching' && (
             <div className="py-10 px-2">
-              {/* Progress bar */}
               <div className="mb-6">
                 <div className="h-1 w-full bg-white/[0.06] rounded-full overflow-hidden">
                   <div
@@ -1287,8 +1339,6 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
                   />
                 </div>
               </div>
-
-              {/* Stage indicator */}
               <div className="text-center">
                 <p className="text-[13px] text-white/70 mb-1">{progressStage}</p>
                 <p className="text-[11px] text-white/40 font-mono">{progress}%</p>
@@ -1296,20 +1346,62 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
             </div>
           )}
 
-          {step === 'done' && (
-            <div className="py-12 flex flex-col items-center justify-center">
-              <div className="w-12 h-12 rounded-full bg-white/[0.06] flex items-center justify-center mb-4">
-                <Check className="w-6 h-6 text-white/70" />
+          {step === 'preview' && (
+            <>
+              {/* Result badge */}
+              <div className="flex items-center gap-2 text-[12px] text-white/50">
+                <span className="text-white/90 font-medium">{totalFound.toLocaleString()} matching</span>
+                <span className="text-white/20">&middot;</span>
+                <span>{enrichedRecords.length} loaded</span>
               </div>
-              <p className="text-sm text-white/90 font-medium mb-2">Data loaded</p>
-              <p className="text-xs text-white/50">{demandCount} demand records</p>
-            </div>
+
+              {/* Preview table */}
+              <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                      <th className="text-left px-3 py-2 text-white/40 font-medium">Name</th>
+                      <th className="text-left px-3 py-2 text-white/40 font-medium">Title</th>
+                      <th className="text-left px-3 py-2 text-white/40 font-medium">Company</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enrichedRecords.slice(0, 10).map((r, i) => (
+                      <tr
+                        key={r.recordKey}
+                        className="border-b border-white/[0.03] last:border-0"
+                        style={{ animation: `rowFadeIn 0.3s ease ${i * 0.03}s both` }}
+                      >
+                        <td className="px-3 py-2 text-white/80">{r.fullName || '—'}</td>
+                        <td className="px-3 py-2 text-white/50 truncate max-w-[180px]">{r.title || '—'}</td>
+                        <td className="px-3 py-2 text-white/50">{r.company || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {enrichedRecords.length > 10 && (
+                  <div className="px-3 py-2 text-[11px] text-white/30 text-center border-t border-white/[0.04]">
+                    +{enrichedRecords.length - 10} more
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
 
         {/* Footer */}
         {step === 'config' && (
-          <div className="px-6 py-4 border-t border-white/[0.06] bg-[#0A0A0A] flex justify-end">
+          <div className="px-6 py-4 border-t border-white/[0.06] bg-[#0A0A0A] flex items-center justify-between">
+            <div>
+              {(demandCount > 0 && supplyCount > 0) && (
+                <button
+                  onClick={() => { onClose(); navigate('/flow'); }}
+                  className="px-4 py-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[13px] text-white/70 hover:text-white transition-all flex items-center gap-2"
+                >
+                  Start Flow <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
             <button
               onClick={handleSearch}
               className="px-5 py-2 rounded-lg bg-white text-[#0A0A0A] text-[13px] font-medium hover:bg-white/90 active:scale-[0.98] transition-all"
@@ -1318,7 +1410,48 @@ function MarketsModal({ source, onClose, onUse }: ModalProps) {
             </button>
           </div>
         )}
+
+        {step === 'preview' && (
+          <div className="px-6 py-4 border-t border-white/[0.06] bg-[#0A0A0A] flex items-center justify-between">
+            <button
+              onClick={handleNewSearch}
+              className="px-4 py-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-[13px] text-white/60 hover:text-white transition-all"
+            >
+              ← New search
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleAddAsDemand}
+                className="px-4 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.10] text-[13px] text-white/80 hover:text-white transition-all font-medium"
+              >
+                + Demand ({enrichedRecords.length})
+              </button>
+              <button
+                onClick={handleAddAsSupply}
+                className="px-4 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.10] text-[13px] text-white/80 hover:text-white transition-all font-medium"
+              >
+                + Supply ({enrichedRecords.length})
+              </button>
+              {(demandCount > 0 && supplyCount > 0) && (
+                <button
+                  onClick={() => { onClose(); navigate('/flow'); }}
+                  className="px-4 py-2 rounded-lg bg-white text-[#0A0A0A] text-[13px] font-medium hover:bg-white/90 active:scale-[0.98] transition-all flex items-center gap-2"
+                >
+                  Start Flow <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Row fade-in animation */}
+      <style>{`
+        @keyframes rowFadeIn {
+          0% { opacity: 0; transform: translateY(4px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }

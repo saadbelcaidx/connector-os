@@ -3,30 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, Lock, Workflow, Eye, Globe } from 'lucide-react';
 import { FEATURES } from './config/features';
 
-// Chess King Icon — Strategic moves, the operator makes the play
-function KingIcon({ size = 24, style }: { size?: number; style?: React.CSSProperties }) {
-  const color = (style?.color as string) || 'currentColor';
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke={color}
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="12" y1="2" x2="12" y2="5" />
-      <line x1="10.5" y1="3.5" x2="13.5" y2="3.5" />
-      <path d="M7 8C7 6.5 9 5 12 5C15 5 17 6.5 17 8C17 9 16.5 9.5 16 10H8C7.5 9.5 7 9 7 8Z" />
-      <path d="M8 10V14C8 14 8.5 15 12 15C15.5 15 16 14 16 14V10" />
-      <path d="M6 18C6 16.5 8 15 12 15C16 15 18 16.5 18 18V19C18 19.5 17.5 20 17 20H7C6.5 20 6 19.5 6 19V18Z" />
-      <path d="M5 20H19V21C19 21.5 18.5 22 18 22H6C5.5 22 5 21.5 5 21V20Z" />
-    </svg>
-  );
-}
-
 import Dock from './Dock';
 import { useAuth } from './AuthContext';
 import { supabase } from './lib/supabase';
@@ -58,12 +34,12 @@ const apps: AppCard[] = [
     icon: Workflow,
     route: '/flow',
   },
-  // 2.5. Lead database — make your move (SSM only)
+  // 2.5. Signal-based lead search (SSM only)
   {
     id: 'hub',
-    title: 'Connector Hub',
-    description: '9M+ contacts. Query. Select. Route to Flow.',
-    icon: KingIcon,
+    title: 'Prebuilt Markets',
+    description: 'Signal-based lead search. Add to Demand or Supply.',
+    icon: Radar,
     route: '/hub',
     ssmOnly: true,
   },

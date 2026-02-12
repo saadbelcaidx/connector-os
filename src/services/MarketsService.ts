@@ -17,11 +17,16 @@ const API_BASE = import.meta.env.VITE_CONNECTOR_AGENT_API || 'https://api.connec
 
 export interface MarketSearchOptions {
   apiKey: string;
-  newsFilter?: string[];
-  industryFilter?: string[];
+  news?: string[];
+  subIndustry?: { include: string[]; exclude: string[] };
   jobListingFilter?: string[];
-  fundingFilter?: string[];
-  revenueFilter?: string[];
+  title?: { include: string[]; exclude: string[] };
+  employeeCount?: { op: string; min: number; max: number }[];
+  fundingType?: string[];
+  revenue?: string[];
+  keywordFilter?: { include: string; exclude: string };
+  locations?: { include: { place_id: string; label: string }[] };
+  technologies?: string[];
   showOneLeadPerCompany?: boolean;
 }
 
@@ -29,6 +34,7 @@ export interface SearchResult {
   records: NormalizedRecord[];
   totalFound: number;
   redactedCount: number;
+  dailyRemaining?: number;
   error?: string;
 }
 
@@ -65,8 +71,6 @@ interface CompanyIntel {
   jobs?: Array<{ title?: string; location?: string; date?: string }>;
   keywords?: { linkedIn_Data?: string[]; bright_data?: string[] };
   logo?: string;
-  domain?: string;
-  website?: string;
 }
 
 // =============================================================================
@@ -80,11 +84,16 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         apiKey: options.apiKey,
-        newsFilter: options.newsFilter,
-        industryFilter: options.industryFilter,
+        news: options.news,
+        subIndustry: options.subIndustry,
         jobListingFilter: options.jobListingFilter,
-        fundingFilter: options.fundingFilter,
-        revenueFilter: options.revenueFilter,
+        title: options.title,
+        employeeCount: options.employeeCount,
+        fundingType: options.fundingType,
+        revenue: options.revenue,
+        keywordFilter: options.keywordFilter,
+        locations: options.locations,
+        technologies: options.technologies,
         showOneLeadPerCompany: options.showOneLeadPerCompany,
       }),
     });
@@ -98,18 +107,21 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
     const data = await response.json();
     const leads: SearchLead[] = data.data || [];
 
-    console.log(`[Markets] Found ${leads.length} leads, total=${data.total_count}, redacted=${data.redacted_count}`);
+    console.log(`[Markets] Found ${leads.length} leads, total=${data.total_count}, redacted=${data.redacted_count}, remaining=${data.daily_remaining}`);
 
     // Build signal label from filters
     const signalLabel = buildSignalLabel(options);
 
     // Normalize leads to NormalizedRecord[]
-    const records = leads.map(lead => normalizeToRecord(lead, null, signalLabel));
+    // Pass first subIndustry as fallback industry (when Leadsy enrichment returns nothing)
+    const fallbackIndustry = options.subIndustry?.include?.[0] || null;
+    const records = leads.map(lead => normalizeToRecord(lead, null, signalLabel, fallbackIndustry));
 
     return {
       records,
       totalFound: data.total_count || 0,
       redactedCount: data.redacted_count || 0,
+      dailyRemaining: typeof data.daily_remaining === 'number' ? data.daily_remaining : undefined,
     };
   } catch (err: any) {
     console.log(`[Markets] Search error: ${err.message}`);
@@ -121,8 +133,8 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
 // COMPANY ENRICHMENT (BATCH)
 // =============================================================================
 
-export async function enrichCompanies(companyIds: number[]): Promise<Map<number, CompanyIntel>> {
-  const result = new Map<number, CompanyIntel>();
+export async function enrichCompanies(companyIds: string[]): Promise<Map<string, CompanyIntel>> {
+  const result = new Map<string, CompanyIntel>();
   if (companyIds.length === 0) return result;
 
   try {
@@ -142,7 +154,7 @@ export async function enrichCompanies(companyIds: number[]): Promise<Map<number,
 
     for (const [id, company] of Object.entries(companies)) {
       if (company) {
-        result.set(Number(id), company as CompanyIntel);
+        result.set(String(id), company as CompanyIntel);
       }
     }
 
@@ -161,16 +173,19 @@ export async function enrichCompanies(companyIds: number[]): Promise<Map<number,
 function buildSignalLabel(options: MarketSearchOptions): string {
   const parts: string[] = [];
 
-  if (options.newsFilter?.length) {
+  if (options.news?.length) {
     const signalNames: Record<string, string> = {
       hires: 'Hiring',
-      receives_financing: 'Funding raised',
-      increases_headcount_by: 'Headcount growth',
-      launches: 'Product launch',
-      partners_with: 'New partnership',
+      receives_financing: 'Funding',
+      launches: 'Launch',
+      partners_with: 'Partnership',
       acquires: 'Acquisition',
+      expands_offices_to: 'Expanding',
+      goes_public: 'IPO',
+      signs_new_client: 'New client',
+      opens_new_location: 'New location',
     };
-    parts.push(...options.newsFilter.map(f => signalNames[f] || f));
+    parts.push(...options.news.map(f => signalNames[f] || f.replace(/_/g, ' ')));
   }
 
   if (options.jobListingFilter?.length) {
@@ -178,15 +193,6 @@ function buildSignalLabel(options: MarketSearchOptions): string {
   }
 
   return parts.join(' — ') || 'Market signal';
-}
-
-function extractDomain(company: CompanyIntel | null): string {
-  if (!company) return '';
-  if (company.domain) return company.domain.replace(/^www\./, '');
-  if (company.website) {
-    return company.website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-  }
-  return '';
 }
 
 function parseLocation(locationStr?: string): { city: string | null; state: string | null; country: string | null } {
@@ -202,34 +208,82 @@ function parseLocation(locationStr?: string): { city: string | null; state: stri
 export function normalizeToRecord(
   lead: SearchLead,
   company: CompanyIntel | null,
-  signalLabel: string
+  signalLabel: string,
+  searchIndustry?: string | null
 ): NormalizedRecord {
   const firstName = lead.firstName || '';
   const lastName = lead.lastName || '';
   const fullName = lead.fullName || `${firstName} ${lastName}`.trim();
   const companyName = lead.companyName || company?.name || '';
-  const domain = extractDomain(company);
   const location = parseLocation(lead.location);
 
-  // Company intel extras
-  const industry = company?.industries?.[0]?.name || null;
-  const description = company?.description ? company.description.slice(0, 200) : null;
+  // Company intel — extract everything available
+  const primaryIndustry = company?.industries?.[0]?.name || null;
+  const allIndustries = company?.industries?.map(i => i.name).filter(Boolean) || [];
+  const description = company?.description || null;
+  const descriptionTrimmed = description ? description.slice(0, 200) : null;
   const funding = company?.funding?.[0]?.amount
     ? `${company.funding[0].amount} ${company.funding[0].type || ''}`.trim()
     : null;
 
+  // Industry: never null if we have ANY data
+  // Priority: enrichment industry → search filter industry → null
+  const industry = primaryIndustry
+    || (allIndustries.length > 0 ? allIndustries[0] : null)
+    || searchIndustry
+    || null;
+
+  // Signal: use REAL enrichment news title when available
+  // company.news has actual signal text like "Acme hires VP of Engineering"
+  let effectiveSignal = signalLabel;
+  if (company?.news && company.news.length > 0) {
+    // Pick the most recent news item — it has the actual signal text
+    const bestNews = company.news[0];
+    if (bestNews.title) {
+      effectiveSignal = bestNews.title;
+    }
+  } else if (signalLabel === 'Market signal') {
+    effectiveSignal = industry || companyName || 'Active in market';
+  }
+
   // Signal meta
   const signalMeta: SignalMeta = {
     kind: 'GROWTH',
-    label: signalLabel,
+    label: effectiveSignal,
     source: 'Market Intelligence',
   };
+
+  // Headline: first sentence of description (supply capability signal)
+  const headline = description
+    ? description.split(/[.\n]/)[0].trim().slice(0, 120) || null
+    : null;
 
   // Record key
   const disambiguator = simpleHash(JSON.stringify({
     n: fullName, c: companyName, t: lead.jobTitle, cid: lead.companyId,
   }));
   const recordKey = `market:${companyName}:${fullName}:${disambiguator}`.toLowerCase().replace(/\s+/g, '_');
+
+  // Raw: lead (tiny, needed for company enrichment) + keys Flow reads
+  // Do NOT store full company object — it bloats localStorage and causes QuotaExceededError
+  const raw: Record<string, any> = {
+    lead,  // Tiny: firstName, lastName, companyId, jobTitle, linkedIn
+    // Keys Flow reads for intro metadata + regression guards
+    company_description: descriptionTrimmed,
+    description: descriptionTrimmed,
+    capability: descriptionTrimmed,
+    services: descriptionTrimmed,
+  };
+
+  // Funding metadata at keys Flow checks
+  if (company?.funding?.[0]) {
+    const f = company.funding[0];
+    raw.last_funding_type = f.type || null;
+    raw.last_funding_at = f.date || null;
+  }
+  if (company?.employee_count) {
+    raw.num_employees_enum = String(company.employee_count);
+  }
 
   return {
     recordKey,
@@ -238,23 +292,23 @@ export function normalizeToRecord(
     firstName,
     lastName,
     fullName,
-    email: null, // Preview doesn't include emails — enrichment finds them
+    email: null, // Flow enriches via Apollo/Anymail
     emailSource: 'csv' as const,
     emailVerified: false,
     verifiedBy: null,
     verifiedAt: null,
     title: lead.jobTitle || '',
     linkedin: lead.linkedIn || null,
-    headline: null,
+    headline,
     seniorityLevel: null,
 
-    // Company
+    // Company — domain is null; Flow enriches by company name
     company: companyName,
-    domain,
-    domainSource: domain ? 'explicit' : 'none',
+    domain: null,
+    domainSource: 'none',
     industry,
     size: company?.employee_count ? String(company.employee_count) : null,
-    companyDescription: description,
+    companyDescription: descriptionTrimmed,
     companyFunding: funding,
     companyRevenue: null,
     companyFoundedYear: null,
@@ -262,8 +316,8 @@ export function normalizeToRecord(
 
     // Signal
     signalMeta,
-    signal: signalLabel,
-    signalDetail: signalLabel,
+    signal: effectiveSignal,
+    signalDetail: effectiveSignal,
 
     // Location
     city: location.city || (company?.locations?.[0]?.inferred_location?.locality || null),
@@ -272,7 +326,7 @@ export function normalizeToRecord(
 
     // Meta
     schemaId: 'csv',
-    raw: { lead, company },
+    raw,
   };
 }
 
@@ -285,4 +339,103 @@ export function storeAsdemand(records: NormalizedRecord[]): void {
     storeCsvData('demand', records);
     console.log(`[Markets] Stored ${records.length} records as demand`);
   }
+}
+
+// =============================================================================
+// SUPPLY QUALITY GATE
+// =============================================================================
+
+/**
+ * Provider capability patterns — companies that DO things for others.
+ * Consulting, staffing, agencies, advisory, implementation, etc.
+ */
+const PROVIDER_PATTERNS = [
+  /\bconsult/i,
+  /\bagency\b/i,
+  /\bagencies\b/i,
+  /\bservices?\b/i,
+  /\brecruit/i,
+  /\bstaffing\b/i,
+  /\boutsourc/i,
+  /\bsolutions?\s+provider/i,
+  /\bsystems?\s+integrat/i,
+  /\badvisor/i,
+  /\bmanaged\s+services/i,
+  /\bimplementation/i,
+  /\bsupport\s+services/i,
+  /\bvendor\b/i,
+  /\bpartner\b/i,
+  /\bplacement/i,
+  /\btalent\s+(acquisition|search|sourcing)/i,
+  /\bexecutive\s+search/i,
+  /\bprofessional\s+services/i,
+  /\bbpo\b/i,
+  /\bfirm\b/i,
+];
+
+/**
+ * Anti-patterns — companies that BUILD products, not provide services.
+ * These look like demand (hiring for themselves), not supply.
+ */
+const PRODUCT_PATTERNS = [
+  /\bplatform\b/i,
+  /\bsaas\b/i,
+  /\bsoftware\s+company/i,
+  /\bmanufactur/i,
+  /\bconsumer\s+brand/i,
+  /\be-?commerce\s+(company|brand|retailer)/i,
+  /\bdevelops?\s+(software|apps?|products?)/i,
+  /\bbuilds?\s+(software|apps?|products?)/i,
+];
+
+/**
+ * Determine if a record looks like a service provider (supply-worthy).
+ * Checks companyDescription, headline, and industry.
+ */
+function isServiceProvider(record: NormalizedRecord): boolean {
+  const text = [
+    record.companyDescription || '',
+    record.headline || '',
+    record.industry || '',
+    record.raw?.description || '',
+  ].join(' ');
+
+  // No description at all — can't confirm provider capability, drop
+  if (text.trim().length < 10) return false;
+
+  // Check for anti-patterns first — strong signal of product company
+  const hasProductSignal = PRODUCT_PATTERNS.some(p => p.test(text));
+
+  // Check for provider patterns
+  const hasProviderSignal = PROVIDER_PATTERNS.some(p => p.test(text));
+
+  // Provider signal wins unless product signal is also present
+  if (hasProviderSignal && !hasProductSignal) return true;
+
+  // Both present — provider signal still wins (many service companies mention platforms)
+  if (hasProviderSignal && hasProductSignal) return true;
+
+  // Product signal only — drop
+  if (hasProductSignal) return false;
+
+  // No signal either way — drop (can't confirm provider capability)
+  return false;
+}
+
+/**
+ * Store records as supply — only keeps companies with provider capability.
+ * Returns the number of records that passed the filter.
+ */
+export function storeAsSupply(records: NormalizedRecord[]): number {
+  if (records.length === 0) return 0;
+
+  const qualified = records.filter(isServiceProvider);
+  const dropped = records.length - qualified.length;
+
+  if (qualified.length > 0) {
+    storeCsvData('supply', qualified);
+  }
+
+  console.log(`[Markets] Supply gate: ${qualified.length} providers kept, ${dropped} non-providers filtered out of ${records.length}`);
+  return qualified.length;
 }

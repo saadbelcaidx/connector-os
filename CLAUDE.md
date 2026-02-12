@@ -3090,3 +3090,117 @@ Treat Claude like: **a brilliant junior operator with zero context permanence**
 - It will execute perfectly inside a box
 - It will hallucinate confidently outside it
 - Your job is to shrink the box, not repeat yourself
+
+---
+
+## Prebuilt Markets — API Intelligence (Feb 2025)
+
+### Source of Truth
+
+This section is the canonical reference for the Markets data pipeline. Do NOT search the web for Instantly API docs. Do NOT guess parameters. Everything is here.
+
+### The Data Pipeline
+
+```
+SuperSearch (free, any account)
+  → 50 leads per call with companyId
+  → /leadsy/company/{companyId} (shared JWT)
+  → description, funding, news, tech stack, employee count, locations, jobs
+  → Full NormalizedRecord with REAL signals
+```
+
+### Three Endpoints (All Built)
+
+**1. POST /markets/search** — Lead search
+- Client sends: `{ apiKey, newsFilter, industryFilter, jobListingFilter, fundingFilter, revenueFilter, showOneLeadPerCompany }`
+- Server hits: `https://api.instantly.ai/api/v2/supersearch-enrichment/preview-leads-from-supersearch`
+- Auth: member's own Instantly API key (Bearer token)
+- Returns: `{ data: [...leads], total_count, redacted_count, daily_remaining }`
+- **Hard cap: 50 leads per call. Free or paid, doesn't matter.**
+- **Same filters, same call = same 50 leads. Deterministic. No pagination.**
+
+**2. POST /markets/company** — Single company enrichment
+- Client sends: `{ companyId }`
+- Server hits: `https://app.instantly.ai/leadsy/api/v1/company/{companyId}`
+- Auth: shared workspace JWT (`x-auth-jwt` + `x-from-instantly: true`). **JWT never leaves server. Stable 2+ years across 200 members.**
+- Returns: `{ company: { name, description, employee_count, industries, locations, funding, news, technologies, jobs, keywords } }`
+
+**3. POST /markets/enrich-batch** — Batch company enrichment
+- Client sends: `{ companyIds: [id1, id2, ...] }`
+- Same as above but batched with 100ms delay + 24h in-memory cache
+- Returns: `{ companies: { "id1": {...}, "id2": {...} } }`
+
+### Lead Fields (from search)
+
+```
+firstName, lastName, fullName, jobTitle, location,
+linkedIn, companyName, companyLogo, companyId
+```
+
+### Company Fields (from enrichment)
+
+```
+name, description, employee_count
+industries: [{ name, id, primary }]
+locations: [{ address, is_primary, inferred_location: { locality, admin_district, country_region, country_iso } }]
+funding: [{ amount, type, date }]
+news: [{ title, date, type }]  ← 50+ items with types: launches, partners_with, recognized_as, hires, etc.
+technologies: [{ name, type }]  ← full tech stack
+jobs: [{ title, location, date }]  ← hundreds of actual job listings
+keywords: { linkedIn_Data, bright_data, website_Data }
+```
+
+### jobListingFilter Discovery
+
+- **Case-sensitive.** `"Software Engineer"` → 2,955 results. `"software engineer"` → 12 results.
+- **Works on free accounts.** The $9 Hypergrowth plan only buys the UI filter. The API accepts jobListingFilter regardless of plan.
+- **Free vs paid difference:** Free has redacted results (hidden leads). Paid has 0 redacted. But both return 50 full leads per call.
+
+### Stress Test Results (Free Account)
+
+| Metric | Result |
+|--------|--------|
+| Success rate | 100% (35/35 calls) |
+| Rate limits hit | 0 |
+| Avg response time | ~2.1s |
+| Slowest call | 9.1s |
+| Credits consumed | 0 (preview is free) |
+
+### Query Results (Verified)
+
+| Query | Total | Redacted (free) |
+|-------|-------|-----------------|
+| "Software Engineer" alone | 2,884–2,955 | 5,270 (free) / 0 (paid) |
+| "Software Engineer" + hires + Software & Internet | 470–482 | 954 (free) / 0 (paid) |
+| "Registered Nurse" + hires + Healthcare | 468 | — |
+| "Account Executive" + increases_headcount_by | 338 | — |
+
+### The 50-Lead Cap Problem
+
+- 50 per call. No skip, offset, page, limit, cursor param works. All tested, all ignored.
+- Same filters = same 50. Deterministic.
+- **Only way to get >50 unique leads: vary the filters between calls.**
+- Title-splitting strategy: same signal filters, rotate `title.include` groups across calls → different 50 each time.
+
+### Backend Location
+
+- File: `connector-agent-backend/src/index.js`
+- Search endpoint: ~line 1956
+- Company endpoint: ~line 2093
+- Enrich-batch endpoint: ~line 2148
+- JWT env var: `MARKETS_COMPANY_JWT` (set on Railway, not local)
+- Daily cap: 5,000 leads/day per API key (our own limit, tracked in SQLite `markets_usage`)
+
+### Frontend Location
+
+- Service: `src/services/MarketsService.ts`
+- Page: `src/PrebuiltMarkets.tsx`
+- Settings modal: `src/components/PrebuiltIntelligence.tsx` (MarketsModal — unchanged)
+
+### Rules
+
+1. **Never search the web for Instantly API docs.** Everything is reverse-engineered and documented here.
+2. **Never expose the shared JWT to the client.** It stays server-side only.
+3. **Never assume pagination exists.** 50 per call is final.
+4. **jobListingFilter is case-sensitive.** Always capitalize properly.
+5. **The backend code IS the documentation.** Read `index.js`, don't guess.

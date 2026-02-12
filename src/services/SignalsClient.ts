@@ -100,6 +100,27 @@ export function clearCsvData(type: 'demand' | 'supply'): void {
  */
 export function storeCsvData(type: 'demand' | 'supply', data: any[]): void {
   const key = type === 'demand' ? CSV_DEMAND_KEY : CSV_SUPPLY_KEY;
-  localStorage.setItem(key, JSON.stringify(data));
-  console.log(`[CSV] Stored ${data.length} ${type} records in localStorage`);
+  const payload = JSON.stringify(data);
+
+  // Guard: if payload exceeds 4MB, keep only the latest batch
+  if (payload.length > 4_000_000) {
+    console.error(`[CSV] QUOTA_GUARD: ${type} payload is ${(payload.length / 1_000_000).toFixed(1)}MB — trimming to last 50 records`);
+    const trimmed = JSON.stringify(data.slice(-50));
+    localStorage.setItem(key, trimmed);
+    console.log(`[CSV] Stored 50 ${type} records (trimmed) in localStorage`);
+    return;
+  }
+
+  try {
+    localStorage.setItem(key, payload);
+    console.log(`[CSV] Stored ${data.length} ${type} records in localStorage`);
+  } catch (e: any) {
+    if (e?.name === 'QuotaExceededError') {
+      console.error(`[CSV] QUOTA_EXCEEDED: replacing old ${type} data`);
+      localStorage.removeItem(key);
+      localStorage.setItem(key, payload);
+    } else {
+      throw e;
+    }
+  }
 }

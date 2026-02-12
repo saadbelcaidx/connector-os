@@ -241,6 +241,7 @@ export async function enrichRecord(
       name: record.fullName || `${record.firstName} ${record.lastName}`.trim(),
       company: record.company,
       title: record.title || signal,
+      linkedin: record.linkedin,
     },
     routerConfig
   );
@@ -345,6 +346,7 @@ export async function enrichBatch(
           name: record.fullName || `${record.firstName} ${record.lastName}`.trim(),
           company: record.company,
           title: record.title,
+          linkedin: record.linkedin,
         },
         routerConfig
       );

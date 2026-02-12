@@ -222,34 +222,6 @@ export const BLOCKS = {
   },
 
   // Hub
-  HUB_DISABLED: {
-    code: 'HUB_DISABLED',
-    title: 'Hub flow disabled',
-    detail: 'Hub integration is not enabled for this session.',
-    next_step: 'Start a new flow from the Hub.',
-    severity: 'info' as const,
-  },
-  HUB_NO_CONTACTS: {
-    code: 'HUB_NO_CONTACTS',
-    title: 'No Hub contacts',
-    detail: 'No contacts selected from the Hub.',
-    next_step: 'Go to Hub and select contacts first.',
-    severity: 'warning' as const,
-  },
-  HUB_ERROR: (detail: string): FlowBlock => ({
-    code: 'HUB_ERROR',
-    title: 'Hub data error',
-    detail,
-    next_step: 'Please try selecting contacts again from the Hub.',
-    severity: 'error',
-  }),
-  HUB_MISSING_SIDE: {
-    code: 'HUB_MISSING_SIDE',
-    title: 'Hub requires both sides',
-    detail: 'Hub requires both Demand and Supply contacts.',
-    next_step: 'Go back to Hub and select contacts for both sides.',
-    severity: 'warning' as const,
-  },
   CONTRACT_VIOLATION: (detail: string): FlowBlock => ({
     code: 'CONTRACT_VIOLATION',
     title: 'Data validation failed',

@@ -380,6 +380,10 @@ export default function Settings() {
           // Pre-signal context (JSONB from DB, defaults to empty)
           preSignalContext: data.pre_signal_context || {},
         });
+        // Cache outreach key to localStorage for Markets
+        if (data.instantly_api_key) {
+          localStorage.setItem('outreach_api_key', data.instantly_api_key);
+        }
       } else {
         // No DB data, just load AI settings
         setSettings(prev => ({
@@ -430,6 +434,11 @@ export default function Settings() {
         predictLeadsApiKey: settings.predictLeadsApiKey,
         predictLeadsApiToken: settings.predictLeadsApiToken,
       }));
+
+      // Always save outreach key to localStorage (for Markets / PrebuiltIntelligence)
+      if (settings.instantlyApiKey) {
+        localStorage.setItem('outreach_api_key', settings.instantlyApiKey);
+      }
 
       if (isGuest) {
         localStorage.setItem('guest_settings', JSON.stringify({ settings }));

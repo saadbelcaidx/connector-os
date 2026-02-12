@@ -39,18 +39,27 @@ Deno.serve(async (req: Request) => {
 
     switch (type) {
       case 'find_person':
-        // Find email by person name + domain
-        if (!params.domain || !params.full_name) {
+        // Find email by person name + domain OR company_name
+        // Anymail API requires: (domain OR company_name) AND (full_name OR first_name+last_name)
+        if ((!params.domain && !params.company_name) || (!params.full_name && !params.first_name)) {
           return new Response(
-            JSON.stringify({ success: false, error: 'find_person requires domain and full_name' }),
+            JSON.stringify({ success: false, error: 'find_person requires (domain or company_name) and (full_name or first_name+last_name)' }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
         anymailUrl = `${ANYMAIL_BASE_URL}/find-email/person`;
-        anymailPayload = {
-          domain: params.domain,
-          full_name: params.full_name,
-        };
+        anymailPayload = {};
+        if (params.domain) {
+          anymailPayload.domain = params.domain;
+        } else {
+          anymailPayload.company_name = params.company_name;
+        }
+        if (params.full_name) {
+          anymailPayload.full_name = params.full_name;
+        } else {
+          anymailPayload.first_name = params.first_name;
+          anymailPayload.last_name = params.last_name;
+        }
         break;
 
       case 'find_decision_maker':

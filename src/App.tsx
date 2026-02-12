@@ -29,7 +29,7 @@ import Introductions from './Introductions';
 import OperatorRoute from './OperatorRoute';
 import PasswordSetupGate from './PasswordSetupGate';
 import OnboardingWizard from './OnboardingWizard';
-import ConnectorHub from './ConnectorHub';
+import PrebuiltMarkets from './PrebuiltMarkets';
 import ConnectorAgent from './connector-agent/ConnectorAgent';
 import Operator from './Operator';
 import Privacy from './Privacy';
@@ -130,14 +130,14 @@ function AppRoutes() {
       {/* Operator Console - Hidden pipeline dashboard */}
       <Route path="/operator" element={<div className="page-fade"><Operator /></div>} />
 
-      {/* Connector Hub - Lead database (SSM gated) */}
+      {/* Prebuilt Markets - Signal-based lead search (SSM gated) */}
       <Route
         path="/hub"
         element={
           <PrivateRoute>
-            <SSMGate featureName="Connector Hub">
+            <SSMGate featureName="Prebuilt Markets">
               <div className="page-fade">
-                <ConnectorHub />
+                <PrebuiltMarkets />
               </div>
             </SSMGate>
           </PrivateRoute>
