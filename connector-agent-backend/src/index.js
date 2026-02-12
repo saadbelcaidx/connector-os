@@ -1095,6 +1095,7 @@ const { getMxProvider, getCacheStats: getDnsCacheStats, clearAllCaches: clearDns
 const { resolveMailboxProvider } = require('./providerIntel');
 const { reorderPermutations } = require('./permutationPriority');
 const { probeCatchAllConfidence } = require('./catchAllConfidence');
+const { verifyInboxSMTP, detectCatchAllSMTP, getMxHost } = require('./smtpVerifier');
 
 // ============================================================
 // MAIN VERIFY FUNCTION
@@ -1161,7 +1162,62 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
     }
   }
 
-  // Call MailTester (queued, rate-limited, retried)
+  // ── SMTP PRE-STEP: Direct RCPT TO verification (free, zero API cost) ──
+  // Runs before PRX2 fallback. Definitive answers skip PRX2 entirely.
+  try {
+    const smtpResult = await verifyInboxSMTP(emailLower);
+    console.log(`[Verify] SMTP pre-step: ${emailLower} → ${smtpResult.result} (code=${smtpResult.code}) ${smtpResult.ms}ms`);
+
+    if (smtpResult.result === 'deliverable') {
+      // SMTP says inbox exists — but check if domain is catch-all first
+      const catchAllCheck = await detectCatchAllSMTP(domain);
+      if (catchAllCheck.isCatchAll) {
+        // Domain accepts everything — run confidence probes
+        console.log(`[Verify] SMTP catch-all detected for ${domain}, running confidence probes`);
+        const mx = await getMxProvider(domain);
+        const conf = await probeCatchAllConfidence(emailLower, domain, mx.provider, db);
+        cacheConfidence(emailLower, conf);
+
+        // Mark domain as catch-all via domain_stats mb_count (catch-all indicator)
+        try {
+          const existing = db.prepare(`SELECT * FROM domain_stats WHERE domain = ?`).get(domain);
+          if (existing) {
+            db.prepare(`UPDATE domain_stats SET mb_count = mb_count + 100, updated_at = datetime('now') WHERE domain = ?`).run(domain);
+          } else {
+            db.prepare(`INSERT INTO domain_stats (domain, ok_count, ko_count, mb_count, updated_at) VALUES (?, 0, 0, 100, datetime('now'))`).run(domain);
+          }
+        } catch (_) {}
+
+        if (conf.shouldUpgrade) {
+          cacheVerdict(emailLower, 'VALID');
+          return { verdict: 'VALID', catchAll: true, cached: false,
+            confidence: conf.confidence, signals: conf.signals, catchAllUpgrade: true,
+            smtpDirect: true };
+        }
+        return { verdict: 'RISKY', catchAll: true, cached: false,
+          confidence: conf.confidence, signals: conf.signals,
+          smtpDirect: true };
+      }
+
+      // Not catch-all — SMTP deliverable is definitive
+      cacheVerdict(emailLower, 'VALID');
+      return { verdict: 'VALID', cached: false, smtpDirect: true };
+    }
+
+    if (smtpResult.result === 'undeliverable') {
+      // SMTP says inbox doesn't exist — definitive rejection
+      cacheVerdict(emailLower, 'INVALID');
+      return { verdict: 'INVALID', cached: false, smtpDirect: true,
+        smtpCode: smtpResult.code, smtpMessage: smtpResult.message };
+    }
+
+    // smtpResult.result === 'unknown' — fall through to PRX2
+    console.log(`[Verify] SMTP inconclusive for ${emailLower} (${smtpResult.message}), falling back to PRX2`);
+  } catch (smtpErr) {
+    console.log(`[Verify] SMTP pre-step error for ${emailLower}: ${smtpErr.message}, falling back to PRX2`);
+  }
+
+  // Call MailTester (queued, rate-limited, retried) — PRX2 fallback
   const result = await verifyWithMailtester(emailLower, userId, queueType);
 
   if (result && result.verdict) {
@@ -1737,6 +1793,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
         response.signals = result.signals;
         response.catchAllUpgrade = result.catchAllUpgrade || false;
       }
+      if (result.smtpDirect) response.smtpDirect = true;
       res.json(response);
     } else if (result.verdict === 'RISKY') {
       const response = { email: emailToVerify, status: 'risky' };
@@ -1744,6 +1801,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
         response.confidence = result.confidence;
         response.signals = result.signals;
       }
+      if (result.smtpDirect) response.smtpDirect = true;
       res.json(response);
     } else {
       res.json({ email: null, status: 'invalid' });
@@ -2582,6 +2640,75 @@ app.get('/health', (req, res) => {
     queue_depth: 0,
     db: dbStats,
     timestamp: new Date().toISOString(),
+  });
+});
+
+// ============================================================
+// SMTP DIAGNOSTIC ENDPOINT (test port 25 from this host)
+// ============================================================
+
+app.get('/api/smtp/diagnostic', async (req, res) => {
+  const targets = [
+    { domain: 'gmail.com', desc: 'Google (gmail)' },
+    { domain: 'microsoft.com', desc: 'Microsoft 365' },
+    { domain: 'zoho.com', desc: 'Zoho' },
+  ];
+
+  const results = [];
+  for (const target of targets) {
+    try {
+      const mxHost = await getMxHost(target.domain);
+      if (!mxHost) {
+        results.push({ ...target, mxHost: null, port25: 'no_mx' });
+        continue;
+      }
+
+      // Try TCP connect to port 25 with 5s timeout
+      const connectResult = await new Promise((resolve) => {
+        const net = require('net');
+        const socket = net.createConnection({ host: mxHost, port: 25, timeout: 5000 });
+        let banner = '';
+
+        socket.setEncoding('utf8');
+        socket.on('connect', () => {
+          // Connected — wait for banner
+        });
+        socket.on('data', (data) => {
+          banner += data;
+          socket.destroy();
+          resolve({ connected: true, banner: banner.trim().substring(0, 200), ms: Date.now() - start });
+        });
+        socket.on('timeout', () => {
+          socket.destroy();
+          resolve({ connected: false, reason: 'timeout', ms: Date.now() - start });
+        });
+        socket.on('error', (err) => {
+          resolve({ connected: false, reason: err.code || err.message, ms: Date.now() - start });
+        });
+
+        const start = Date.now();
+      });
+
+      results.push({ ...target, mxHost, port25: connectResult });
+    } catch (err) {
+      results.push({ ...target, error: err.message });
+    }
+  }
+
+  // Also test a direct SMTP verify
+  let smtpVerifyTest = null;
+  try {
+    const testResult = await verifyInboxSMTP('test@gmail.com');
+    smtpVerifyTest = testResult;
+  } catch (err) {
+    smtpVerifyTest = { error: err.message };
+  }
+
+  res.json({
+    host: process.env.RAILWAY_STATIC_URL || process.env.HOSTNAME || 'unknown',
+    timestamp: new Date().toISOString(),
+    targets: results,
+    smtpVerifyTest,
   });
 });
 
