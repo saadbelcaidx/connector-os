@@ -137,15 +137,15 @@ export default function Landing() {
           <div className="relative bg-gradient-to-r from-violet-500/[0.08] via-fuchsia-500/[0.06] to-violet-500/[0.08] border-b border-violet-500/15">
             <div className="max-w-6xl mx-auto px-6 py-1.5 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-violet-500/20">
-                  <span className="text-[10px] font-serif text-violet-400">Ψ</span>
-                  <span className="text-[9px] font-bold text-violet-400 uppercase">New</span>
+                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-orange-500/20">
+                  <span className="text-[10px] text-orange-400">◆</span>
+                  <span className="text-[9px] font-bold text-orange-400 uppercase">New</span>
                 </div>
 
                 <p className="text-[12px] text-white/60">
-                  <span className="font-medium text-white/80">Psyche</span>
+                  <span className="font-medium text-white/80">Connector Agent</span>
                   <span className="mx-1.5 text-white/20">—</span>
-                  <span className="hidden sm:inline">Enterprise-grade • </span>7 systems that reply for you
+                  <span className="hidden sm:inline">Find & verify contacts at scale </span>using private SMTP infra
                 </p>
               </div>
 
