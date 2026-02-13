@@ -5,62 +5,60 @@
  * The relay performs EHLO → MAIL FROM → RCPT TO → QUIT.
  * Never sends DATA. No email sent. Just checks if inbox exists.
  *
- * Response codes:
- *   250 = inbox exists (deliverable)
- *   550/551/552/553 = inbox doesn't exist (undeliverable)
- *   451/452/4xx = greylisted or temp failure (unknown)
- *   421 = server busy / connection refused (unknown)
+ * Uses Node built-in http module — works on any Node version (no fetch dependency).
  */
+
+const http = require('http');
+const { URL } = require('url');
 
 const RELAY_URL = process.env.SMTP_RELAY_URL || 'http://163.245.216.239:3025';
 const RELAY_SECRET = process.env.SMTP_RELAY_SECRET || 'smtp-relay-connector-2026';
 const RELAY_TIMEOUT = 20000; // 20s budget for relay call
 
 // ============================================================
-// RELAY HTTP CLIENT
+// RELAY HTTP CLIENT (Node built-in — no fetch, no deps)
 // ============================================================
 
-async function relayCall(endpoint, body) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), RELAY_TIMEOUT);
+function relayCall(endpoint, body) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(endpoint, RELAY_URL);
+    const payload = JSON.stringify(body);
 
-  try {
-    const res = await fetch(`${RELAY_URL}${endpoint}`, {
+    const req = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
         'x-relay-secret': RELAY_SECRET,
       },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+      timeout: RELAY_TIMEOUT,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(data)); }
+          catch (e) { reject(new Error(`relay parse error: ${data.slice(0, 200)}`)); }
+        } else {
+          reject(new Error(`relay ${res.statusCode}: ${data.slice(0, 200)}`));
+        }
+      });
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`relay ${res.status}: ${text}`);
-    }
-
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+    req.on('error', e => reject(new Error(`relay_connect: ${e.code || e.message}`)));
+    req.on('timeout', () => { req.destroy(); reject(new Error('relay_timeout')); });
+    req.write(payload);
+    req.end();
+  });
 }
 
 // ============================================================
 // PUBLIC API
 // ============================================================
 
-/**
- * Verify if an email inbox exists via SMTP relay.
- *
- * @param {string} email - Full email address
- * @returns {Promise<{
- *   result: 'deliverable' | 'undeliverable' | 'unknown',
- *   code: number,
- *   mxHost: string,
- *   ms: number
- * }>}
- */
 async function verifyInboxSMTP(email) {
   const domain = email.split('@')[1]?.toLowerCase();
   if (!domain) {
@@ -79,12 +77,6 @@ async function verifyInboxSMTP(email) {
   }
 }
 
-/**
- * Detect if a domain is catch-all via SMTP relay.
- *
- * @param {string} domain
- * @returns {Promise<{ isCatchAll: boolean, result: object }>}
- */
 async function detectCatchAllSMTP(domain) {
   const t0 = Date.now();
   try {
@@ -104,9 +96,6 @@ async function detectCatchAllSMTP(domain) {
   }
 }
 
-/**
- * Get MX host for a domain (resolved locally, no relay needed).
- */
 async function getMxHost(domain) {
   const dns = require('dns');
   const { promisify } = require('util');
