@@ -23,14 +23,19 @@
 //   ... (rest are less common)
 
 /**
- * Google priority: first.last dominates.
- * Order: first.last, firstlast, initiallast+first, first, lastinitial
+ * Google priority: first.last dominates, but Google ignores dots —
+ * so firstlast and first.last are the SAME mailbox. Don't waste two slots
+ * on the same inbox. Put firstinitial (saadb@) before firstlast since
+ * it's a genuinely different mailbox.
+ *
+ * Order: first.last, initiallast, firstinitial, first, firstlast, last
  */
 const GOOGLE_PRIORITY = [
   'first.last',      // john.doe@ — 95%+ of Google Workspace
-  'firstlast',       // johndoe@
-  'initiallast',     // jdoe@
-  'first',           // john@
+  'initiallast',     // jdoe@ — genuinely different pattern
+  'firstinitial',    // johnd@ — genuinely different pattern (saadb@ etc)
+  'first',           // john@ — genuinely different
+  'firstlast',       // johndoe@ — SAME as first.last on Google (dots ignored), try late
   'last',            // doe@
 ];
 

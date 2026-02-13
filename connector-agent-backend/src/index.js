@@ -1604,9 +1604,18 @@ app.post('/api/email/v2/find', async (req, res) => {
   const allPermutations = generateEmailPermutations(firstName, lastName, domain);
 
   // Provider-aware reorder: try most likely patterns first (same set, different order)
-  const reorderedPermutations = reorderPermutations(allPermutations, providerInfo.provider, firstName, lastName);
+  let reorderedPermutations = reorderPermutations(allPermutations, providerInfo.provider, firstName, lastName);
   if (providerInfo.provider !== 'unknown') {
     console.log(`[Find] cid=${cid} perm_order=${providerInfo.provider}_default top3=${reorderedPermutations.slice(0, 3).join(',')}`);
+  }
+
+  // Google dot-equivalence: remove patterns that are the same mailbox as first.last
+  // Google ignores dots — saad.belcaid@ and saadbelcaid@ hit the same inbox.
+  // Don't waste a top-5 slot on a duplicate. Keep first.last, drop firstlast.
+  if (providerInfo.provider === 'google') {
+    const dotless = `${firstName.toLowerCase()}${lastName.toLowerCase()}@${domain}`;
+    reorderedPermutations = reorderedPermutations.filter(e => e !== dotless);
+    console.log(`[Find] Google: removed dot-equivalent ${dotless}`);
   }
 
   // Take top 5 patterns (or top 3 in degraded mode)
