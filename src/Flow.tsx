@@ -1539,63 +1539,21 @@ export default function Flow() {
   // PREVIEW → MATCHING TRANSITION
   // =============================================================================
 
-  /**
-   * User confirmed data looks correct — proceed to matching.
-   */
-  const continueFromPreview = useCallback(async () => {
-    const { demandRecords, supplyRecords, demandSchema, supplySchema } = state;
-
-    if (!demandSchema) {
-      console.error('[Flow] Cannot continue from preview: no demand schema');
-      return;
-    }
-
-    setState(prev => ({
-      ...prev,
-      step: 'matching',
-      progress: { current: 70, total: 100, message: 'Matching...' },
-    }));
-
-    try {
-      await runMatching(demandRecords, supplyRecords, demandSchema, supplySchema);
-    } catch (err) {
-      // FIX: Error handling mirrors startFlow pattern (lines 1658-1668)
-      // Without this, errors leave step stuck at 'matching' and user must refresh
-      if (err instanceof FlowAbort) {
-        setFlowBlock(err.uxBlock);
-        return;
-      }
-      console.error('[Flow] Matching failed:', err);
-      const detail = err instanceof Error ? err.message : 'Unknown error';
-      setFlowBlock(BLOCKS.MATCHING_FAILED(detail));
-    }
-  }, [state.demandRecords, state.supplyRecords, state.demandSchema, state.supplySchema, setFlowBlock]);
-
-  /**
-   * User says "Wrong data" — go back to upload step.
-   */
-  const cancelPreview = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      step: 'upload',
-      dataPreview: null,
-      demandRecords: [],
-      supplyRecords: [],
-      progress: { current: 0, total: 0, message: '' },
-    }));
-  }, []);
-
   // =============================================================================
-  // STEP 2: MATCHING
+  // STEP 2: MATCHING (defined before continueFromPreview which references it)
   // =============================================================================
 
-  const runMatching = async (
+  const runMatching = useCallback(async (
     demand: NormalizedRecord[],
     supply: NormalizedRecord[],
     demandSchema: Schema,
     supplySchema: Schema | null
   ) => {
     setState(prev => ({ ...prev, progress: { current: 80, total: 100, message: 'Finding matches...' } }));
+
+    // TODO: Enterprise filtering layer
+    // Optional size cap to remove mega-enterprises (employee_count > 10k)
+    // Deferred — no behavior change now
 
     // GUARD — Both datasets required for matching
     if (!guard(supply.length > 0, BLOCKS.NO_SUPPLY_DATASET, setFlowBlock)) return;
@@ -1738,16 +1696,31 @@ export default function Flow() {
     // =======================================================================
     console.log('[MATCH] advancing step', { from: 'matching', to: 'matches_found' });
 
-    setState(prev => ({
-      ...prev,
-      step: 'matches_found',
-      matchingResult: edgeFiltered, // Only edge-positive matches
-      detectedEdges, // Store detected edges for composition
-      progress: { current: 100, total: 100, message: 'Matches found' },
-      // Store schemas for later enrichment call
-      demandSchema,
-      supplySchema,
-    }));
+    setState(prev => {
+      const next = {
+        ...prev,
+        step: 'matches_found' as const,
+        matchingResult: edgeFiltered, // Only edge-positive matches
+        detectedEdges, // Store detected edges for composition
+        progress: { current: 100, total: 100, message: 'Matches found' },
+        // Store schemas for later enrichment call
+        demandSchema,
+        supplySchema,
+      };
+      // Persist synchronously with state update — no race
+      if (flowIdRef.current) {
+        const serialized = serializeState(next);
+        loadFlowAsync(flowIdRef.current).then(existingFlow => {
+          if (existingFlow) {
+            existingFlow.stages.matching.results = serialized;
+            existingFlow.stages.matching.status = 'complete';
+            existingFlow.stages.matching.progress = 100;
+            persistFlow(existingFlow);
+          }
+        });
+      }
+      return next;
+    });
 
     // Don't auto-proceed to enrichment — wait for user action
     console.log('[MATCH] Paused — waiting for user to proceed');
@@ -1770,7 +1743,53 @@ export default function Flow() {
     const philemonCounters = deriveTruthCounters(philemonInput);
     const philemonState = deriveUiState(philemonInput);
     logStateSnapshot('MATCH_COMPLETE', 'matches_found', philemonCounters, philemonState);
-  };
+  }, [setFlowBlock, settings]);
+
+  /**
+   * User confirmed data looks correct — proceed to matching.
+   */
+  const continueFromPreview = useCallback(async () => {
+    const { demandRecords, supplyRecords, demandSchema, supplySchema } = state;
+
+    if (!demandSchema) {
+      console.error('[Flow] Cannot continue from preview: no demand schema');
+      return;
+    }
+
+    setState(prev => ({
+      ...prev,
+      step: 'matching',
+      progress: { current: 70, total: 100, message: 'Matching...' },
+    }));
+
+    try {
+      await runMatching(demandRecords, supplyRecords, demandSchema, supplySchema);
+    } catch (err) {
+      // FIX: Error handling mirrors startFlow pattern
+      // Without this, errors leave step stuck at 'matching' and user must refresh
+      if (err instanceof FlowAbort) {
+        setFlowBlock(err.uxBlock);
+        return;
+      }
+      console.error('[Flow] Matching failed:', err);
+      const detail = err instanceof Error ? err.message : 'Unknown error';
+      setFlowBlock(BLOCKS.MATCHING_FAILED(detail));
+    }
+  }, [state.demandRecords, state.supplyRecords, state.demandSchema, state.supplySchema, setFlowBlock, runMatching]);
+
+  /**
+   * User says "Adjust data" — go back to upload step.
+   */
+  const cancelPreview = useCallback(() => {
+    setState(prev => ({
+      ...prev,
+      step: 'upload',
+      dataPreview: null,
+      demandRecords: [],
+      supplyRecords: [],
+      progress: { current: 0, total: 0, message: '' },
+    }));
+  }, []);
 
   // =============================================================================
   // STEP 2.5: PROCEED TO ENRICHMENT (User clicks "Find the right people")
@@ -3360,7 +3379,7 @@ export default function Flow() {
               {/* Header */}
               <div className="text-center mb-8">
                 <h2 className="text-[18px] font-medium text-white/90 mb-2">Review your data</h2>
-                <p className="text-[13px] text-white/40">Here's what the system detected</p>
+                <p className="text-[13px] text-white/40">Here's what the system inferred from your records</p>
               </div>
 
               {/* Data Summary Card */}
@@ -3375,9 +3394,21 @@ export default function Flow() {
                     </div>
                     <div className="space-y-2">
                       {state.dataPreview.demandBreakdown.map((item, i) => (
-                        <div key={i} className="flex items-center justify-between">
-                          <span className="text-[13px] text-white/70">{item.category}</span>
-                          <span className="text-[13px] text-white/40 tabular-nums">{item.percentage}%</span>
+                        <div key={i}>
+                          {i === 0 ? (
+                            <div>
+                              <span className="text-[11px] text-white/30">Primary signal detected:</span>
+                              <div className="flex items-center justify-between mt-1">
+                                <span className="text-[13px] text-white/70">{item.category}</span>
+                                <span className="text-[13px] text-white/40 tabular-nums">({item.count}/{state.dataPreview.demandTotal} companies)</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between">
+                              <span className="text-[13px] text-white/70">{item.category}</span>
+                              <span className="text-[13px] text-white/40 tabular-nums">{item.percentage}%</span>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -3390,6 +3421,7 @@ export default function Flow() {
                       <span className="text-[11px] text-white/30">{state.dataPreview.supplyTotal} records</span>
                     </div>
                     <div className="space-y-2">
+                      <span className="text-[11px] text-white/30">Capabilities detected:</span>
                       {state.dataPreview.supplyBreakdown.map((item, i) => (
                         <div key={i} className="flex items-center justify-between">
                           <span className="text-[13px] text-white/70">{item.category}</span>
@@ -3400,12 +3432,23 @@ export default function Flow() {
                   </div>
                 </div>
 
-                {/* Detected Match Type */}
+                {/* Supply quality gate stats */}
+                {(() => {
+                  const gateStats = JSON.parse(localStorage.getItem('supply_gate_stats') ?? 'null');
+                  return gateStats ? (
+                    <div className="mt-4">
+                      <span className="text-[11px] text-white/30">Supply quality gate: {gateStats.kept} kept / {gateStats.filtered} filtered</span>
+                    </div>
+                  ) : null;
+                })()}
+
+                {/* Suggested Route */}
                 <div className="mt-6 pt-6 border-t border-white/[0.06]">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Match</span>
+                    <span className="text-[11px] font-medium text-white/40 uppercase tracking-wide">Suggested route</span>
                     <span className="text-[13px] text-white/70">{state.dataPreview.detectedMatchType}</span>
                   </div>
+                  <p className="text-[11px] text-white/30 mt-2">This is a routing guess, not a verdict.</p>
                 </div>
               </div>
 
@@ -3415,13 +3458,13 @@ export default function Flow() {
                   onClick={cancelPreview}
                   className="flex-1 h-11 rounded-xl bg-white/[0.04] hover:bg-white/[0.06] text-white/60 text-[13px] font-medium transition-all"
                 >
-                  Wrong data
+                  Adjust data
                 </button>
                 <button
                   onClick={continueFromPreview}
                   className="flex-1 h-11 rounded-xl bg-white text-black text-[13px] font-medium hover:bg-white/90 transition-all"
                 >
-                  Looks right
+                  Continue
                 </button>
               </div>
 

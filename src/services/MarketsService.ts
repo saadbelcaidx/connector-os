@@ -441,6 +441,7 @@ export function storeAsSupply(records: NormalizedRecord[]): number {
     storeCsvData('supply', qualified);
   }
 
+  localStorage.setItem('supply_gate_stats', JSON.stringify({ kept: qualified.length, filtered: dropped, total: records.length }));
   console.log(`[Markets] Supply gate: ${qualified.length} providers kept, ${dropped} non-providers filtered out of ${records.length}`);
   return qualified.length;
 }
