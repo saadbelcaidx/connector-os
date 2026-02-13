@@ -1817,7 +1817,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
 // BULK CONCURRENCY POOL
 // ============================================================
 
-const BULK_CONCURRENCY = 5; // 5 parallel verifications — own relay, own rules
+const BULK_POOL_SIZE = 5; // 5 parallel verifications — own relay, own rules
 
 /**
  * Run tasks with concurrency limit. Preserves input order in results.
@@ -1972,9 +1972,9 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email' };
   }
 
-  const results = await parallelPool(items, BULK_CONCURRENCY, processFindItem);
+  const results = await parallelPool(items, BULK_POOL_SIZE, processFindItem);
 
-  console.log(`[BulkFind] ${items.length} items → ${found} found, ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_CONCURRENCY})`);
+  console.log(`[BulkFind] ${items.length} items → ${found} found, ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_POOL_SIZE})`);
 
   res.json({
     success: true,
@@ -2026,7 +2026,7 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
   let tokensUsed = 0;
   const t0 = Date.now();
 
-  const results = await parallelPool(emails, BULK_CONCURRENCY, async (email) => {
+  const results = await parallelPool(emails, BULK_POOL_SIZE, async (email) => {
     const result = await verifyEmail(email, userId, 'bulk');
 
     // Charge 1 token per valid verdict (not cached, not unknown)
@@ -2038,7 +2038,7 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
     return { email: result.verdict === 'VALID' ? email : null };
   });
 
-  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_CONCURRENCY})`);
+  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_POOL_SIZE})`);
 
   res.json(results);
 });
