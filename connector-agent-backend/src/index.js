@@ -13,6 +13,8 @@ const Database = require('better-sqlite3');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const path = require('path');
+const http = require('http');
+const { URL } = require('url');
 
 // Web extraction module for crawling company websites
 // DISABLED on Railway (Puppeteer needs too much memory)
@@ -1165,6 +1167,7 @@ async function verifyEmail(email, userId = 'system', queueType = 'interactive') 
   // ── SMTP PRE-STEP: Direct RCPT TO verification (free, zero API cost) ──
   // Runs before PRX2 fallback. Definitive answers skip PRX2 entirely.
   try {
+    await domainThrottle(emailLower); // Per-domain rate limit — prevent MX greylisting
     const smtpResult = await verifyInboxSMTP(emailLower);
     console.log(`[Verify] SMTP pre-step: ${emailLower} → ${smtpResult.result} (code=${smtpResult.code}) ${smtpResult.ms}ms`);
 
@@ -2628,17 +2631,11 @@ app.delete('/api/dev/cache', (req, res) => {
 // Health is informational. It reflects capability, not liveness probes.
 // Keys configured = ready to verify. No network calls in /health.
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const mode = getMode();
 
-  // Mailtester status: keys exist = reachable, no keys = down
-  // RESTRICTED mode = temporary rate-limit protection, still operational
-  let mailtesterStatus = 'down';
-  if (MAILTESTER_API_KEYS.length > 0) {
-    mailtesterStatus = mode === 'RESTRICTED' ? 'throttled' : 'reachable';
-  }
-
-  // Database stats for diagnostics (safe - no key values exposed)
+  // 1. DB readiness check (if this fails, we can't serve requests)
+  let dbOk = false;
   let dbStats = { api_keys: 0, active_keys: 0, email_cache: 0 };
   try {
     const keyCount = db.prepare(`SELECT COUNT(*) as count FROM api_keys`).get();
@@ -2649,17 +2646,58 @@ app.get('/health', (req, res) => {
       active_keys: activeKeyCount?.count || 0,
       email_cache: cacheCount?.count || 0,
     };
+    dbOk = true;
   } catch (e) {
     dbStats.error = e.message;
   }
 
-  res.json({
-    status: 'ok',
+  // 2. SMTP relay reachability (fast ping, 3s timeout)
+  let relayOk = false;
+  let relayMs = 0;
+  try {
+    const relayUrl = process.env.SMTP_RELAY_URL || 'http://163.245.216.239:3025';
+    const t0 = Date.now();
+    await new Promise((resolve, reject) => {
+      const url = new URL('/health', relayUrl);
+      const req = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: 'GET', timeout: 3000 }, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => { resolve(d); });
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.end();
+    });
+    relayMs = Date.now() - t0;
+    relayOk = true;
+  } catch (_) {}
+
+  // 3. Memory check
+  const mem = process.memoryUsage();
+  const heapUsedMB = Math.round(mem.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.round(mem.heapTotal / 1024 / 1024);
+  const rssMB = Math.round(mem.rss / 1024 / 1024);
+  const memOk = heapUsedMB < 450; // Railway containers are typically 512MB
+
+  // Mailtester status
+  let mailtesterStatus = 'down';
+  if (MAILTESTER_API_KEYS.length > 0) {
+    mailtesterStatus = mode === 'RESTRICTED' ? 'throttled' : 'reachable';
+  }
+
+  // Overall status: non-200 only if app truly cannot serve
+  const healthy = dbOk && memOk;
+  const statusCode = healthy ? 200 : 503;
+
+  res.status(statusCode).json({
+    status: healthy ? 'ok' : 'degraded',
     mode,
+    db: { ok: dbOk, ...dbStats },
+    relay: { ok: relayOk, ms: relayMs },
+    memory: { ok: memOk, heap_mb: heapUsedMB, heap_total_mb: heapTotalMB, rss_mb: rssMB },
     mailtester: mailtesterStatus,
     mailtester_keys: MAILTESTER_API_KEYS.length,
-    queue_depth: 0,
-    db: dbStats,
+    uptime_s: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
   });
 });
@@ -2757,6 +2795,49 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================================
+// ============================================================
+// PROCESS CRASH GUARDS — keep alive for logging, then exit clean
+// ============================================================
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled rejection:', reason?.message || reason);
+  console.error('[FATAL] Stack:', reason?.stack?.split('\n').slice(0, 5).join('\n'));
+  // Don't exit — log it, let Railway health check decide
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err.message);
+  console.error('[FATAL] Stack:', err.stack?.split('\n').slice(0, 5).join('\n'));
+  // Give 3s for logs to flush, then exit
+  setTimeout(() => process.exit(1), 3000);
+});
+
+// ============================================================
+// DOMAIN RATE LIMITER — prevent MX server throttling
+// ============================================================
+
+const domainLastCall = new Map(); // domain → timestamp
+const DOMAIN_MIN_INTERVAL_MS = 200; // 200ms between calls to same domain (5 req/s per domain max)
+
+/**
+ * Wait if needed to respect per-domain rate limit.
+ * Call before any SMTP relay request.
+ */
+async function domainThrottle(email) {
+  const domain = email.split('@')[1]?.toLowerCase();
+  if (!domain) return;
+  const last = domainLastCall.get(domain) || 0;
+  const wait = DOMAIN_MIN_INTERVAL_MS - (Date.now() - last);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  domainLastCall.set(domain, Date.now());
+  // Cleanup old entries every 1000 domains
+  if (domainLastCall.size > 1000) {
+    const cutoff = Date.now() - 60000;
+    for (const [d, t] of domainLastCall) { if (t < cutoff) domainLastCall.delete(d); }
+  }
+}
+
+// ============================================================
 // START SERVER
 // ============================================================
 
@@ -2765,17 +2846,24 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   const keyCount = db.prepare(`SELECT COUNT(*) as count FROM api_keys WHERE status = 'active'`).get();
   const dbFileExists = fs.existsSync(dbPath);
   const dbStats = dbFileExists ? fs.statSync(dbPath) : null;
+  const relayUrl = process.env.SMTP_RELAY_URL || 'http://163.245.216.239:3025';
+  const mem = process.memoryUsage();
 
   console.log('');
   console.log('============================================');
   console.log('  CONNECTOR AGENT BACKEND');
   console.log('============================================');
-  console.log(`  Server running on http://localhost:${PORT}`);
-  console.log(`  Database: ${dbPath}`);
-  console.log(`  DB File Exists: ${dbFileExists}`);
-  console.log(`  DB Size: ${dbStats ? Math.round(dbStats.size / 1024) + ' KB' : 'N/A'}`);
-  console.log(`  Active API Keys: ${keyCount.count}`);
-  console.log(`  DATA_DIR env: ${process.env.DATA_DIR || '(not set, using default)'}`);
+  console.log(`  Node:        ${process.version}`);
+  console.log(`  Environment: ${process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'local'}`);
+  console.log(`  Server:      http://0.0.0.0:${PORT}`);
+  console.log(`  SMTP Relay:  ${relayUrl}`);
+  console.log(`  Pool Size:   ${BULK_POOL_SIZE} concurrent`);
+  console.log(`  Database:    ${dbPath}`);
+  console.log(`  DB Exists:   ${dbFileExists}`);
+  console.log(`  DB Size:     ${dbStats ? Math.round(dbStats.size / 1024) + ' KB' : 'N/A'}`);
+  console.log(`  API Keys:    ${keyCount.count} active`);
+  console.log(`  Memory:      ${Math.round(mem.rss / 1024 / 1024)}MB RSS, ${Math.round(mem.heapUsed / 1024 / 1024)}MB heap`);
+  console.log(`  DATA_DIR:    ${process.env.DATA_DIR || '(default)'}`);
   console.log('');
   console.log('  Endpoints:');
   console.log('  - POST /api/keys/generate');
