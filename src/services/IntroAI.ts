@@ -146,7 +146,7 @@ function buildDemandVarsPrompt(
 
 TEMPLATE: "Saw {{company}} [signalEvent]. I'm connected to [whoTheyAre] — want an intro?"
 
-DEMAND CONTEXT:
+DEMAND CONTEXT (for industry tone and vocabulary only — must not change the core execution bridge derived from the SIGNAL):
 Industry: ${demandIndustry}
 Description: ${demandDesc}
 
