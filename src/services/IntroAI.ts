@@ -158,17 +158,21 @@ RULES:
 [signalEvent]: casual fragment completing "Saw {{company}}...". 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X".
 
 [whoTheyAre]:
+Describe what the supplier ENABLES companies with this SIGNAL to achieve faster or better.
+Do NOT describe what the supplier is. Describe what they help the company accomplish.
 MUST be a team/firm/group of people (not product/software).
-MUST directly reference the activity implied by SIGNAL (e.g., hiring, raising, expanding, launching).
-MUST describe how they help companies experiencing that specific SIGNAL, in a way that relates to the demand company's current situation or activity.
-Format: "[type] firm/team/group that helps [industry/domain] companies [action tied to SIGNAL]".
+Tie capability to the SIGNAL pressure — focus on speed, capacity, or execution improvement.
 Prefer the more specific industry term if available in DEMAND CONTEXT.
 No "a/an". No "solutions/optimize/leverage/software/platform/tool".
 No generic restatement of SUPPLY.
+No temporal padding: "during growth", "during hiring surges", "as companies scale".
+No consultant language: "scaling", "digital transformation", "optimization".
 
-If SIGNAL contains "hiring", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not a neutral growth description, not just the activity itself.
-
-If SIGNAL contains "raised", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not a neutral growth description, not just the activity itself.
+Good: "recruiting team that helps fintech companies fill engineering roles faster"
+Good: "engineering partner teams use when product demand outpaces hiring"
+Good: "team companies use when internal recruiting can't keep up"
+Bad: "technology firm specializing in digital automation"
+Bad: "staffing company for growing businesses"
 
 {"signalEvent": "...", "whoTheyAre": "..."}`;
 }
