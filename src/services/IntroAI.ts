@@ -139,10 +139,16 @@ function buildDemandVarsPrompt(
   edge: Edge,
 ): string {
   const supplyDesc = (supply.metadata?.companyDescription || supply.metadata?.description || '').slice(0, 400);
+  const demandIndustry = demand.industry || 'unknown';
+  const demandDesc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 200) || 'n/a';
 
   return `Fill 2 variables. JSON only.
 
 TEMPLATE: "Saw {{company}} [signalEvent]. I'm connected to [whoTheyAre] — want an intro?"
+
+DEMAND CONTEXT:
+Industry: ${demandIndustry}
+Description: ${demandDesc}
 
 SUPPLY: ${supply.capability || 'business services'}${supplyDesc ? ` — ${supplyDesc}` : ''}
 SIGNAL: ${edge.evidence || 'active in market'}
@@ -154,8 +160,8 @@ RULES:
 [whoTheyAre]:
 MUST be a team/firm/group of people (not product/software).
 MUST directly reference the activity implied by SIGNAL (e.g., hiring, raising, expanding, launching).
-MUST describe how they help companies experiencing that specific SIGNAL.
-Format: "[type] firm/team/group that helps companies [action tied to SIGNAL]".
+MUST describe how they help companies experiencing that specific SIGNAL, in a way that relates to the demand company's current situation or activity.
+Format: "[type] firm/team/group that helps [industry/domain] companies [action tied to SIGNAL]".
 No "a/an". No "solutions/optimize/leverage/software/platform/tool".
 No generic restatement of SUPPLY.
 
