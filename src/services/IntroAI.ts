@@ -140,15 +140,13 @@ function buildDemandVarsPrompt(
 ): string {
   const supplyDesc = (supply.metadata?.companyDescription || supply.metadata?.description || '').slice(0, 400);
   const demandIndustry = demand.industry || 'unknown';
-  const demandDesc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 200) || 'n/a';
 
   return `Fill 2 variables. JSON only.
 
 TEMPLATE: "Saw {{company}} [signalEvent]. I'm connected to [whoTheyAre] — want an intro?"
 
-DEMAND CONTEXT (for industry tone and vocabulary only — must not change the core execution bridge derived from the SIGNAL):
+DEMAND CONTEXT (industry classification only — may influence tone, must not change the offer or introduce product-specific vocabulary):
 Industry: ${demandIndustry}
-Description: ${demandDesc}
 
 SUPPLY: ${supply.capability || 'business services'}${supplyDesc ? ` — ${supplyDesc}` : ''}
 SIGNAL: ${edge.evidence || 'active in market'}
