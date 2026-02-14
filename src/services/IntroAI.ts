@@ -138,7 +138,6 @@ function buildDemandVarsPrompt(
   supply: SupplyRecord,
   edge: Edge,
 ): string {
-  const supplyDesc = (supply.metadata?.companyDescription || supply.metadata?.description || '').slice(0, 400);
   const demandIndustry = demand.industry || 'unknown';
 
   return `Fill 2 variables. JSON only.
@@ -148,7 +147,7 @@ TEMPLATE: "Saw {{company}} [signalEvent]. I'm connected to [whoTheyAre] — want
 DEMAND CONTEXT (industry classification only — may influence tone, must not change the offer or introduce product-specific vocabulary):
 Industry: ${demandIndustry}
 
-SUPPLY: ${supply.capability || 'business services'}${supplyDesc ? ` — ${supplyDesc}` : ''}
+SUPPLY CAPABILITY: ${supply.capability || 'business services'}
 SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
