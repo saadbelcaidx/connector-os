@@ -359,8 +359,11 @@ export default function Intelligence({
           <div className="w-16 h-16 rounded-full bg-white/[0.02] border border-white/[0.06] flex items-center justify-center mx-auto mb-5">
             <div className="w-3 h-3 rounded-full bg-red-500/60" />
           </div>
-          <p className="text-[12px] text-white/50 uppercase tracking-widest mb-2">Access Denied</p>
-          <p className="text-[13px] text-white/30 mb-8">Configure API credentials in Settings</p>
+          <p className="text-[12px] text-white/50 uppercase tracking-widest mb-2">Missing credentials</p>
+          <div className="text-[13px] text-white/30 mb-8 space-y-1">
+            {!exaKey && <p>EXA API key not set</p>}
+            {!aiKey && <p>AI provider key not set (OpenAI, Anthropic, or Azure)</p>}
+          </div>
           <button
             onClick={() => navigate('/settings')}
             className="h-10 px-6 rounded-xl bg-white text-[#08090a] text-[13px] font-medium
