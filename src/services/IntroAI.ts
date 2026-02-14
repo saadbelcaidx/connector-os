@@ -148,12 +148,20 @@ SUPPLY: ${supply.capability || 'business services'}${supplyDesc ? ` — ${supply
 SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
-- [signalEvent]: casual fragment completing "Saw {{company}}...". 3-8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X".
-- [whoTheyAre]: MUST be a team/firm/group of people, NOT a product or software. Describe what they do FOR companies with this SIGNAL, not just what they are. Format: "[type] firm/team/group that helps [outcome related to the signal]". No "a/an" prefix. No "solutions/optimize/leverage/software/platform/tool". No company name.
-- Good (signal=hiring engineers): "engineering team that helps companies fill technical roles faster"
-- Good (signal=Series B): "growth consultancy that helps post-raise companies scale"
-- Bad: "technology firm specializing in digital automation" (generic, no bridge to signal)
-- Bad: "business planning software for scaling" (product, not people)
+
+[signalEvent]: casual fragment completing "Saw {{company}}...". 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X".
+
+[whoTheyAre]:
+MUST be a team/firm/group of people (not product/software).
+MUST directly reference the activity implied by SIGNAL (e.g., hiring, raising, expanding, launching).
+MUST describe how they help companies experiencing that specific SIGNAL.
+Format: "[type] firm/team/group that helps companies [action tied to SIGNAL]".
+No "a/an". No "solutions/optimize/leverage/software/platform/tool".
+No generic restatement of SUPPLY.
+
+If SIGNAL contains "hiring", the outcome must reference hiring, scaling capacity, filling positions, or supporting growth.
+
+If SIGNAL contains "raised", outcome must reference post-raise scaling or growth.
 
 {"signalEvent": "...", "whoTheyAre": "..."}`;
 }
