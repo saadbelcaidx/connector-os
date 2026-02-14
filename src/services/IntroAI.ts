@@ -117,7 +117,7 @@ function buildSupplyVarsPrompt(
 TEMPLATE: "I got a couple [dreamICP] who are looking for [painTheySolve]"
 
 DATA:
-- Signal: ${demand.signals?.[0] || edge.evidence || 'active in market'}
+- Signal: ${edge.evidence || 'active in market'}
 - Industry: ${demand.industry || 'general'}
 - Description: ${desc}
 ${funding ? `- Funding: ${funding}\n` : ''}
