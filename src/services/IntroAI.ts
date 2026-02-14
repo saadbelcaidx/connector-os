@@ -159,9 +159,9 @@ Format: "[type] firm/team/group that helps companies [action tied to SIGNAL]".
 No "a/an". No "solutions/optimize/leverage/software/platform/tool".
 No generic restatement of SUPPLY.
 
-If SIGNAL contains "hiring", the outcome must reference hiring, scaling capacity, filling positions, or supporting growth.
+If SIGNAL contains "hiring", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not just the activity itself.
 
-If SIGNAL contains "raised", outcome must reference post-raise scaling or growth.
+If SIGNAL contains "raised", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not just the activity itself.
 
 {"signalEvent": "...", "whoTheyAre": "..."}`;
 }
