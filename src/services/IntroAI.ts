@@ -162,12 +162,13 @@ MUST be a team/firm/group of people (not product/software).
 MUST directly reference the activity implied by SIGNAL (e.g., hiring, raising, expanding, launching).
 MUST describe how they help companies experiencing that specific SIGNAL, in a way that relates to the demand company's current situation or activity.
 Format: "[type] firm/team/group that helps [industry/domain] companies [action tied to SIGNAL]".
+Prefer the more specific industry term if available in DEMAND CONTEXT.
 No "a/an". No "solutions/optimize/leverage/software/platform/tool".
 No generic restatement of SUPPLY.
 
-If SIGNAL contains "hiring", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not just the activity itself.
+If SIGNAL contains "hiring", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not a neutral growth description, not just the activity itself.
 
-If SIGNAL contains "raised", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not just the activity itself.
+If SIGNAL contains "raised", the outcome must reference the constraint, pressure, or internal limitation implied by the SIGNAL — not a neutral growth description, not just the activity itself.
 
 {"signalEvent": "...", "whoTheyAre": "..."}`;
 }
