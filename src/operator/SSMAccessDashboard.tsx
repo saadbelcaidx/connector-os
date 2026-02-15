@@ -107,7 +107,7 @@ async function sendMagicLink(email: string): Promise<boolean> {
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, type: 'magiclink' }),
+      body: JSON.stringify({ email, type: 'magiclink', redirectTo: 'https://app.connector-os.com/auth/callback' }),
     });
     return response.ok;
   } catch {
@@ -123,7 +123,7 @@ async function sendPasswordReset(email: string): Promise<boolean> {
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, type: 'recovery' }),
+      body: JSON.stringify({ email, type: 'recovery', redirectTo: 'https://app.connector-os.com/auth/callback' }),
     });
     return response.ok;
   } catch {

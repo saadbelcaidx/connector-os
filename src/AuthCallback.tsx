@@ -50,15 +50,15 @@ export default function AuthCallback() {
         let session = null;
         let sessionError = null;
 
-        for (let attempt = 0; attempt < 5; attempt++) {
+        for (let attempt = 0; attempt < 8; attempt++) {
           const result = await supabase.auth.getSession();
           session = result.data.session;
           sessionError = result.error;
 
           if (session || sessionError) break;
 
-          // Wait a bit and retry
-          await new Promise(r => setTimeout(r, 200));
+          // Wait and retry — longer window for slow connections
+          await new Promise(r => setTimeout(r, 400));
         }
 
         if (sessionError) {
@@ -83,8 +83,8 @@ export default function AuthCallback() {
 
           // Check if there's an access token in the hash
           if (hash.includes('access_token')) {
-            // Supabase should have auto-exchanged, wait a bit more
-            await new Promise(r => setTimeout(r, 500));
+            // Supabase should have auto-exchanged, wait longer for slow connections
+            await new Promise(r => setTimeout(r, 1500));
             const retry = await supabase.auth.getSession();
 
             if (retry.data.session) {
