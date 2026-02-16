@@ -2023,29 +2023,49 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     }
 
     // Use hedged verification for bulk (relay + PRX2 hedge)
+    // CRITICAL: Wrap ENTIRE contact (all permutations) in item budget
     const domainVerifyStart = Date.now();
+    const CONTACT_BUDGET_MS = parseInt(process.env.BULK_ITEM_BUDGET_MS || '12000', 10);
 
     let foundEmail = null;
-    for (const email of permutations) {
-      // PRX2 function wrapper
-      const prx2Fn = async () => {
-        const result = await verifyWithMailtester(email, userId, 'bulk');
-        return result || { verdict: 'UNKNOWN', cached: false };
-      };
 
-      // Catch-all probe function wrapper
-      const catchAllProbeFn = async (emailAddr, dom) => {
-        const mx = await getMxProvider(dom);
-        return await probeCatchAllConfidence(emailAddr, dom, mx.provider, db);
-      };
+    // Item budget wrapper - timeout for ENTIRE contact, not per permutation
+    const findWithBudget = async () => {
+      for (const email of permutations) {
+        // PRX2 function wrapper
+        const prx2Fn = async () => {
+          const result = await verifyWithMailtester(email, userId, 'bulk');
+          return result || { verdict: 'UNKNOWN', cached: false };
+        };
 
-      // Use hedged verify instead of direct verifyEmail
-      const verifyResult = await hedgedVerify(email, prx2Fn, catchAllProbeFn, 'bulk');
+        // Catch-all probe function wrapper
+        const catchAllProbeFn = async (emailAddr, dom) => {
+          const mx = await getMxProvider(dom);
+          return await probeCatchAllConfidence(emailAddr, dom, mx.provider, db);
+        };
 
-      if (verifyResult.verdict === 'VALID') {
-        foundEmail = email;
-        break;
+        // Use hedged verify instead of direct verifyEmail
+        const verifyResult = await hedgedVerify(email, prx2Fn, catchAllProbeFn, 'bulk');
+
+        if (verifyResult.verdict === 'VALID') {
+          return email;
+        }
       }
+      return null;
+    };
+
+    // Race: findWithBudget vs timeout
+    try {
+      foundEmail = await Promise.race([
+        findWithBudget(),
+        new Promise((resolve) => setTimeout(() => {
+          console.log(`[BulkFind] Contact budget exceeded (${CONTACT_BUDGET_MS}ms) for ${domain}`);
+          resolve(null);
+        }, CONTACT_BUDGET_MS))
+      ]);
+    } catch (err) {
+      console.error(`[BulkFind] Error finding email for ${domain}:`, err.message);
+      foundEmail = null;
     }
 
     if (foundEmail) {
