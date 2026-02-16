@@ -231,12 +231,19 @@ interface NormalizedVerifyResult {
   _row?: number;      // Original row index for sorting
 }
 
+// Capitalize provider names for display
+function formatProvider(provider: string | undefined): string | undefined {
+  if (!provider) return undefined;
+  // Capitalize first letter: "google" → "Google", "microsoft" → "Microsoft"
+  return provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
 function normalizeVerifyResult(inputEmail: string, apiResult: any, rowIndex?: number): NormalizedVerifyResult {
   const email = (apiResult?.email && typeof apiResult.email === 'string') ? apiResult.email : null;
   return {
     _input: inputEmail,
     email,
-    hosted_at: apiResult?.hosted_at,
+    hosted_at: formatProvider(apiResult?.hosted_at),
     status: email ? 'valid' : 'invalid',
     _row: rowIndex,
   };
@@ -2189,6 +2196,7 @@ function ConnectorAgentInner() {
                                       } else {
                                         resultsWithRow = chunkResults.map((r: any, i: number) => ({
                                           ...r,
+                                          hosted_at: formatProvider(r.hosted_at),
                                           _row: chunk[i]?._row ?? i,
                                           _input: chunk[i]?.email || chunk[i]?.input || '',
                                         }));
@@ -3351,6 +3359,7 @@ function ConnectorAgentInner() {
                           } else {
                             normalizedChunk = chunkResults.map((r: any, i: number) => ({
                               ...r,
+                              hosted_at: formatProvider(r.hosted_at),
                               _input: chunk[i]?.input || '',
                             }));
                           }
