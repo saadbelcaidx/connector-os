@@ -1974,14 +1974,8 @@ function ConnectorAgentInner() {
                                     });
                                   }
 
-                                  // Group by domain to maximize cache hits (DNS, MX, provider)
-                                  items.sort((a, b) => {
-                                    const domainA = bulkMode === 'find' ? a.domain : (a.email?.split('@')[1] || '');
-                                    const domainB = bulkMode === 'find' ? b.domain : (b.email?.split('@')[1] || '');
-                                    return domainA.localeCompare(domainB);
-                                  });
-
                                   // Chunk and execute (adaptive sizing)
+                                  // Note: Original upload order preserved to spread slow domains across batches
                                   const totalItems = items.length;
                                   setBulkTotalRows(totalItems);
                                   // batches will be recalculated as chunk size adapts
