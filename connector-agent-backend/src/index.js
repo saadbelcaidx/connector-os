@@ -16,6 +16,10 @@ const path = require('path');
 const http = require('http');
 const { URL } = require('url');
 
+// Stripe-grade bulk performance modules
+const { hedgedVerify, getCircuitBreakerStats, clearCircuitBreaker, HEDGE_DELAY_MS, BULK_ITEM_BUDGET_MS } = require('./hedgedVerify');
+const { scheduledBulkProcess, simpleBulkProcess, GLOBAL_MAX_CONCURRENCY, PER_DOMAIN_MAX_INFLIGHT } = require('./bulkScheduler');
+
 // Web extraction module for crawling company websites
 // DISABLED on Railway (Puppeteer needs too much memory)
 // Set DISABLE_WEB_EXTRACTOR=true to skip loading
@@ -2018,31 +2022,30 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       permutations = permutations.slice(0, 1);
     }
 
-    // Use adaptive timeout based on domain history
-    const adaptiveTimeout = getAdaptiveTimeout(domain);
+    // Use hedged verification for bulk (relay + PRX2 hedge)
     const domainVerifyStart = Date.now();
 
     let foundEmail = null;
     for (const email of permutations) {
-      const verifyResult = await withTimeout(
-        verifyEmail(email, userId, 'bulk'),
-        adaptiveTimeout
-      );
-      if (verifyResult.timeout) {
-        // Skip slow domain, continue to next permutation
-        recordDomainPerformance(domain, adaptiveTimeout, true);
-        continue;
-      }
+      // PRX2 function wrapper
+      const prx2Fn = async () => {
+        const result = await verifyWithMailtester(email, userId, 'bulk');
+        return result || { verdict: 'UNKNOWN', cached: false };
+      };
+
+      // Catch-all probe function wrapper
+      const catchAllProbeFn = async (emailAddr, dom) => {
+        const mx = await getMxProvider(dom);
+        return await probeCatchAllConfidence(emailAddr, dom, mx.provider, db);
+      };
+
+      // Use hedged verify instead of direct verifyEmail
+      const verifyResult = await hedgedVerify(email, prx2Fn, catchAllProbeFn, 'bulk');
+
       if (verifyResult.verdict === 'VALID') {
         foundEmail = email;
-        recordDomainPerformance(domain, Date.now() - domainVerifyStart, false);
         break;
       }
-    }
-
-    // Record performance if no email found
-    if (!foundEmail) {
-      recordDomainPerformance(domain, Date.now() - domainVerifyStart, false);
     }
 
     if (foundEmail) {
@@ -2061,9 +2064,26 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email' };
   }
 
-  const results = await parallelPool(items, BULK_POOL_SIZE, processFindItem);
+  // Use scheduled bulk process with layered concurrency
+  const getDomain = (item) => {
+    const rawDomain = item.domain || '';
+    return rawDomain
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '')
+      .toLowerCase()
+      .trim();
+  };
 
-  console.log(`[BulkFind] ${items.length} items → ${found} found, ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_POOL_SIZE})`);
+  let results;
+  try {
+    results = await scheduledBulkProcess(items, getDomain, processFindItem);
+  } catch (err) {
+    console.error(`[BulkFind] Scheduler error, falling back to simple pool: ${err.message}`);
+    results = await simpleBulkProcess(items, BULK_POOL_SIZE, processFindItem);
+  }
+
+  console.log(`[BulkFind] ${items.length} items → ${found} found, ${tokensUsed} charged, ${Date.now() - t0}ms (global=${GLOBAL_MAX_CONCURRENCY}, perDomain=${PER_DOMAIN_MAX_INFLIGHT}, hedge=${HEDGE_DELAY_MS}ms)`);
 
   res.json({
     success: true,
@@ -2115,16 +2135,22 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
   let tokensUsed = 0;
   const t0 = Date.now();
 
-  const results = await parallelPool(emails, BULK_POOL_SIZE, async (email) => {
-    const result = await withTimeout(
-      verifyEmail(email, userId, 'bulk'),
-      30000
-    );
+  // Process function for each email
+  async function processVerifyItem(email) {
+    // PRX2 function wrapper
+    const prx2Fn = async () => {
+      const result = await verifyWithMailtester(email, userId, 'bulk');
+      return result || { verdict: 'UNKNOWN', cached: false };
+    };
 
-    // If timeout, treat as invalid (no charge)
-    if (result.timeout) {
-      return { email: null };
-    }
+    // Catch-all probe function wrapper
+    const catchAllProbeFn = async (emailAddr, dom) => {
+      const mx = await getMxProvider(dom);
+      return await probeCatchAllConfidence(emailAddr, dom, mx.provider, db);
+    };
+
+    // Use hedged verify
+    const result = await hedgedVerify(email, prx2Fn, catchAllProbeFn, 'bulk');
 
     // Charge 1 token per valid verdict (not cached, not unknown)
     if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {
@@ -2133,9 +2159,20 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
     }
 
     return { email: result.verdict === 'VALID' ? email : null };
-  });
+  }
 
-  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged, ${Date.now() - t0}ms (concurrency=${BULK_POOL_SIZE})`);
+  // Use scheduled bulk process with layered concurrency
+  const getDomain = (email) => email.split('@')[1] || '';
+
+  let results;
+  try {
+    results = await scheduledBulkProcess(emails, getDomain, processVerifyItem);
+  } catch (err) {
+    console.error(`[BulkVerify] Scheduler error, falling back to simple pool: ${err.message}`);
+    results = await simpleBulkProcess(emails, BULK_POOL_SIZE, processVerifyItem);
+  }
+
+  console.log(`[BulkVerify] ${emails.length} emails → ${tokensUsed} charged, ${Date.now() - t0}ms (global=${GLOBAL_MAX_CONCURRENCY}, perDomain=${PER_DOMAIN_MAX_INFLIGHT}, hedge=${HEDGE_DELAY_MS}ms)`);
 
   res.json(results);
 });
@@ -2702,6 +2739,59 @@ app.get('/admin/status', (req, res) => {
     metrics_60s: breakdown,
     dns_intel: getDnsCacheStats(),
   });
+});
+
+// ============================================================
+// CIRCUIT BREAKER ADMIN ENDPOINTS
+// ============================================================
+
+/**
+ * GET /admin/circuit-breaker
+ * View circuit breaker stats (domains currently bypassed)
+ */
+app.get('/admin/circuit-breaker', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+
+  if (secret !== ADMIN_SECRET) {
+    return res.status(401).json({ success: false, error: 'Invalid admin secret' });
+  }
+
+  const stats = getCircuitBreakerStats();
+
+  res.json({
+    success: true,
+    bypassed_domains: stats,
+    config: {
+      global_concurrency: GLOBAL_MAX_CONCURRENCY,
+      per_domain_concurrency: PER_DOMAIN_MAX_INFLIGHT,
+      hedge_delay_ms: HEDGE_DELAY_MS,
+      item_budget_ms: BULK_ITEM_BUDGET_MS,
+    },
+  });
+});
+
+/**
+ * DELETE /admin/circuit-breaker/:domain
+ * Clear circuit breaker for specific domain or all domains
+ */
+app.delete('/admin/circuit-breaker/:domain?', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+
+  if (secret !== ADMIN_SECRET) {
+    return res.status(401).json({ success: false, error: 'Invalid admin secret' });
+  }
+
+  const { domain } = req.params;
+
+  if (domain && domain !== 'all') {
+    const cleared = clearCircuitBreaker(domain);
+    console.log(`[Admin] Circuit breaker cleared for domain: ${domain}`);
+    return res.json({ success: true, cleared: domain });
+  }
+
+  clearCircuitBreaker();
+  console.log(`[Admin] Circuit breaker cleared for all domains`);
+  res.json({ success: true, cleared: 'all' });
 });
 
 // ============================================================

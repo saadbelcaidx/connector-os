@@ -2997,6 +2997,195 @@ import { Eye } from 'lucide-react';  // Removed Fingerprint
 
 ---
 
+## Connector Agent — Stripe-Grade Bulk Performance (Feb 2025)
+
+**Files:** `connector-agent-backend/src/hedgedVerify.js`, `connector-agent-backend/src/bulkScheduler.js`
+
+### The Problem
+
+Bulk email verification was slow/stalling:
+- Relay-first strategy waited for relay timeouts (7-20s) before falling back to PRX2
+- BULK_POOL_SIZE = 5 (severe bottleneck)
+- No provider-aware routing (Google, Mimecast blocked SMTP)
+- No circuit breaker (slow domains compounded delays)
+- Frontend timeout loops at 90s created retry hell
+
+### The Solution
+
+Implemented **hedged requests + provider routing + circuit breaker + layered concurrency**:
+
+| Component | Purpose | File |
+|-----------|---------|------|
+| **Hedged Requests** | Start relay, then PRX2 after 400ms if relay delayed | hedgedVerify.js |
+| **Provider Routing** | Skip relay for SMTP-hostile providers (Google, Proton, Mimecast) | hedgedVerify.js |
+| **Circuit Breaker** | Auto-bypass slow domains (3 timeouts = 30min bypass) | hedgedVerify.js |
+| **Layered Concurrency** | Global (25) + per-domain (2) + per-provider caps | bulkScheduler.js |
+| **Per-Item Budget** | 12s max per contact (fail-fast, no stalls) | hedgedVerify.js |
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `BULK_GLOBAL_CONCURRENCY` | 25 | Global max concurrent verifications |
+| `BULK_DOMAIN_CONCURRENCY` | 2 | Max concurrent per domain (prevent greylisting) |
+| `BULK_GOOGLE_CONCURRENCY` | 5 | Max concurrent for Google domains |
+| `BULK_MICROSOFT_CONCURRENCY` | 10 | Max concurrent for Microsoft domains |
+| `BULK_GATEWAY_CONCURRENCY` | 5 | Max concurrent for security gateways |
+| `BULK_UNKNOWN_CONCURRENCY` | 5 | Max concurrent for unknown providers |
+| `HEDGE_DELAY_MS` | 400 | Delay before starting PRX2 hedge |
+| `BULK_ITEM_BUDGET_MS` | 12000 | Max time per contact (12s) |
+
+**Set in Railway environment variables for production.**
+
+### Provider Routing Rules
+
+| Provider | Behavior (Bulk) | Behavior (Single) | Reason |
+|----------|----------------|------------------|--------|
+| Google, Proton | PRX2 only (skip relay) | PRX2 only | SMTP blocking |
+| Mimecast, Proofpoint, Barracuda | PRX2 only (skip relay) | PRX2 only | Security gateways |
+| Microsoft, Zoho, Fastmail | Hedged (relay + PRX2) | Relay → PRX2 fallback | SMTP-friendly |
+| Unknown/Custom | Hedged (relay + PRX2) | Relay → PRX2 fallback | Unknown behavior |
+
+### Circuit Breaker Logic
+
+**Triggers:**
+- 3+ timeouts within window → OPEN (30min bypass)
+- Timeout rate > 20% over last 20 samples → OPEN
+- EMA latency > 4000ms AND count >= 3 → OPEN
+
+**When OPEN:**
+- Bulk: PRX2 only (no relay attempt)
+- Single: PRX2 only (reduce user pain)
+- Auto-closes after 30 minutes
+- Logs: `[CircuitBreaker] OPEN: domain (timeouts=3, rate=25.0%, ema=4500ms) bypass_ttl=30m`
+
+**Decay:**
+- Every 50 samples, reduce timeout count by 1
+- Every 10 minutes, cleanup stale domains (cap at 5000)
+
+### Admin Endpoints
+
+**GET /admin/circuit-breaker**
+Headers: `x-admin-secret: <ADMIN_SECRET>`
+Response:
+```json
+{
+  "bypassed_domains": [
+    { "domain": "slow-domain.com", "timeouts": 3, "emaMs": 4500, "bypassRemaining": "28m" }
+  ],
+  "config": {
+    "global_concurrency": 25,
+    "per_domain_concurrency": 2,
+    "hedge_delay_ms": 400,
+    "item_budget_ms": 12000
+  }
+}
+```
+
+**DELETE /admin/circuit-breaker/:domain**
+Clear circuit breaker for domain or all:
+```bash
+curl -X DELETE https://api.connector-os.com/admin/circuit-breaker/slow-domain.com \
+  -H "x-admin-secret: <secret>"
+
+curl -X DELETE https://api.connector-os.com/admin/circuit-breaker/all \
+  -H "x-admin-secret: <secret>"
+```
+
+### Validation Checklist
+
+**After deployment:**
+1. Run bulk find on 900 contacts
+2. Observe no 90s frontend timeouts (should complete in 3-8 minutes)
+3. Check logs for bypass events: `grep CircuitBreaker railway.log`
+4. Confirm relay/PRX2 routing: `grep "SMTP-hostile provider" railway.log`
+5. Verify concurrency caps: `grep "global=" railway.log`
+
+**Expected behavior:**
+- Google domains → PRX2 directly (no relay attempt)
+- Microsoft domains → relay first, PRX2 hedge after 400ms
+- Slow domains → circuit breaker OPEN after 3 timeouts, PRX2 only
+
+### Performance Metrics
+
+| Metric | Before | After |
+|--------|--------|-------|
+| **Concurrency** | 5 | 25 (5x) |
+| **Per-domain cap** | None | 2 (prevent greylisting) |
+| **Provider routing** | No | Yes (skip relay for Google/Mimecast) |
+| **Circuit breaker** | No | Yes (auto-bypass slow domains) |
+| **Hedging** | No | Yes (relay + PRX2 race) |
+| **Estimated bulk time (900 contacts)** | 22+ minutes | 3-8 minutes |
+
+### Tests
+
+Run tests:
+```bash
+cd connector-agent-backend
+node test/hedgedVerify.test.js
+```
+
+Tests validate:
+- Provider routing (Google = SMTP-hostile, Microsoft = relay-preferred)
+- Circuit breaker (3 timeouts → bypass for 30min)
+- Concurrency caps (global + per-domain + per-provider)
+- Hedged request (relay → PRX2 delay → race)
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Bulk Find/Verify                         │
+│                 (scheduledBulkProcess)                      │
+└─────────────────┬───────────────────────────────────────────┘
+                  │
+                  ├─► Global concurrency cap (25)
+                  ├─► Per-domain concurrency cap (2)
+                  └─► Per-provider concurrency cap (5-10)
+                  │
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    hedgedVerify()                           │
+│                                                             │
+│  1. Check provider (getMxProvider)                         │
+│  2. SMTP-hostile? → PRX2 only (skip relay)                │
+│  3. Circuit breaker open? → PRX2 only (skip relay)        │
+│  4. Else: Hedged request                                   │
+│     - Start relay immediately                              │
+│     - After 400ms: start PRX2 (if relay still pending)    │
+│     - Race for first definitive verdict                    │
+│  5. Record domain performance (circuit breaker stats)      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Files Modified
+
+| File | Changes |
+|------|---------|
+| `hedgedVerify.js` | **NEW** — Hedged requests, provider routing, circuit breaker |
+| `bulkScheduler.js` | **NEW** — Layered concurrency scheduler |
+| `index.js` | Integrated hedgedVerify + scheduledBulkProcess into bulk endpoints |
+| `test/hedgedVerify.test.js` | **NEW** — Unit tests for hedging + circuit breaker |
+
+### Doctrine Adherence
+
+**Zero API contract changes:**
+- `/find-bulk` response format unchanged
+- `/verify-bulk` response format unchanged
+- Quota billing semantics unchanged
+
+**Graceful degradation:**
+- If scheduledBulkProcess fails → fallback to simple pool
+- If provider detection fails → treat as 'unknown', hedge anyway
+- If circuit breaker logic errors → fail-open (don't block verification)
+
+**No quota loopholes:**
+- Hedging = 1 API call wins, loser ignored
+- Only bill once per email (winner charges token)
+- Circuit breaker bypass uses PRX2 (still charges)
+
+---
+
 ## API Key Doctrine (CRITICAL)
 
 **One-line rule: If the user can't act on it, they should never see it.**
