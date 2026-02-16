@@ -2024,6 +2024,10 @@ function ConnectorAgentInner() {
                                 setBulkProcessedCount(0);
                                 setBulkStreamingResults([]);
 
+                                // Hoist batch tracking to full onClick scope (accessible in try/catch/finally)
+                                let batchRecord: ConnectorAgentBatch | null = null;
+                                let batchId = '';
+
                                 try {
                                   console.log('[BulkProcess] Entered try block');
                                   // Adaptive chunk size: start at 10, adjust based on performance
@@ -2064,7 +2068,7 @@ function ConnectorAgentInner() {
 
                                   // === BATCH PERSISTENCE: Create batch record ===
                                   console.log('[BulkProcess] Creating batch record...');
-                                  const batchId = generateBatchId();
+                                  batchId = generateBatchId();
                                   setCurrentBatchId(batchId);
                                   const originalInputs = items.map(item =>
                                     bulkMode === 'find'
@@ -2072,7 +2076,7 @@ function ConnectorAgentInner() {
                                       : { input: item.email, email: item.email }
                                   );
                                   let persistedResults: Array<{ input: string; email: string | null }> = [];
-                                  let batchRecord: ConnectorAgentBatch = {
+                                  batchRecord = {
                                     id: batchId,
                                     type: bulkMode,
                                     createdAt: new Date().toISOString(),
@@ -2245,7 +2249,7 @@ function ConnectorAgentInner() {
                                   setBulkCurrentBatch(0);
                                   setBulkTotalBatches(0);
                                   // Ensure batch is never left as in_progress on exception
-                                  if (batchRecord.status === 'in_progress') {
+                                  if (batchRecord && batchRecord.status === 'in_progress') {
                                     batchRecord.status = 'completed';
                                     saveBatch(batchRecord);
                                     setBatchHistory(getAllBatches());
