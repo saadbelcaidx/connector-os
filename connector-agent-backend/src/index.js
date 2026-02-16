@@ -375,47 +375,82 @@ function generateEmailPermutations(firstName, lastName, domain, middleName = nul
   const m = middleName ? middleName.toLowerCase().trim() : null;
   const mi = m ? m[0] : null;
 
-  const patterns = [
-    // Tier 1: Most common (try first)
-    `${f}.${l}@${domain}`,      // john.doe@company.com
-    `${f}${l}@${domain}`,       // johndoe@company.com
-    `${fi}${l}@${domain}`,      // jdoe@company.com
-    `${f}@${domain}`,           // john@company.com
-    `${f}${li}@${domain}`,      // johnd@company.com (THIS IS saadb pattern)
+  // ARCHITECTURAL FIX: Single-letter lastName detection
+  // In UAE/India/Middle East markets, "Ritvik R" means firstName + middle initial
+  // System treats "R" as middle initial, prioritizes firstName-only patterns
+  // Contract: Single char lastName = incomplete data, adjust pattern priority
+  const isSingleCharLastName = l.length === 1;
+  if (isSingleCharLastName) {
+    console.log(`[Permutations] Single-char lastName detected: "${lastName}" — treating as middle initial (UAE/India pattern)`);
+  }
 
-    // Tier 2: Common variations
-    `${fi}.${l}@${domain}`,     // j.doe@company.com
-    `${f}.${li}@${domain}`,     // john.d@company.com
-    `${f}_${l}@${domain}`,      // john_doe@company.com
-    `${f}-${l}@${domain}`,      // john-doe@company.com
-    `${fi}${l}@${domain}`,      // jdoe@company.com
-    `${fi}_${l}@${domain}`,     // j_doe@company.com
-    `${fi}-${l}@${domain}`,     // j-doe@company.com
+  const patterns = [];
 
-    // Tier 3: Last name first patterns
-    `${l}.${f}@${domain}`,      // doe.john@company.com
-    `${l}${f}@${domain}`,       // doejohn@company.com
-    `${l}_${f}@${domain}`,      // doe_john@company.com
-    `${l}-${f}@${domain}`,      // doe-john@company.com
-    `${l}${fi}@${domain}`,      // doej@company.com
-    `${l}.${fi}@${domain}`,     // doe.j@company.com
-    `${li}${f}@${domain}`,      // djohn@company.com
-    `${li}.${f}@${domain}`,     // d.john@company.com
-
-    // Tier 4: Simple patterns
-    `${l}@${domain}`,           // doe@company.com
-    `${fi}${li}@${domain}`,     // jd@company.com (initials)
-    `${li}${fi}@${domain}`,     // dj@company.com (reversed initials)
-  ];
-
-  // Tier 5: Middle name patterns (if provided)
-  if (m && mi) {
+  if (isSingleCharLastName) {
+    // TIER 1: firstName-only patterns (most likely for incomplete data)
     patterns.push(
-      `${f}.${mi}.${l}@${domain}`,    // john.m.doe@company.com
-      `${f}${mi}${l}@${domain}`,      // johnmdoe@company.com
-      `${fi}${mi}${l}@${domain}`,     // jmdoe@company.com
-      `${f}.${m}.${l}@${domain}`,     // john.michael.doe@company.com
+      `${f}@${domain}`,           // ritvik@company.com (HIGHEST PRIORITY)
+      `${fi}${l}@${domain}`,      // rr@company.com (firstName initial + middle initial)
     );
+
+    // TIER 2: firstName + single-char patterns (fallback)
+    patterns.push(
+      `${f}.${l}@${domain}`,      // ritvik.r@company.com
+      `${f}${l}@${domain}`,       // ritvikr@company.com
+      `${f}_${l}@${domain}`,      // ritvik_r@company.com
+      `${f}-${l}@${domain}`,      // ritvik-r@company.com
+    );
+
+    // TIER 3: Initial-based (low priority for single char)
+    patterns.push(
+      `${fi}.${l}@${domain}`,     // r.r@company.com
+      `${fi}${li}@${domain}`,     // rr@company.com (duplicate, dedupe handles)
+      `${li}${fi}@${domain}`,     // rr@company.com (reversed, dedupe handles)
+    );
+  } else {
+    // STANDARD PATTERN GENERATION (full lastName provided)
+    patterns.push(
+      // Tier 1: Most common (try first)
+      `${f}.${l}@${domain}`,      // john.doe@company.com
+      `${f}${l}@${domain}`,       // johndoe@company.com
+      `${fi}${l}@${domain}`,      // jdoe@company.com
+      `${f}@${domain}`,           // john@company.com
+      `${f}${li}@${domain}`,      // johnd@company.com (THIS IS saadb pattern)
+
+      // Tier 2: Common variations
+      `${fi}.${l}@${domain}`,     // j.doe@company.com
+      `${f}.${li}@${domain}`,     // john.d@company.com
+      `${f}_${l}@${domain}`,      // john_doe@company.com
+      `${f}-${l}@${domain}`,      // john-doe@company.com
+      `${fi}${l}@${domain}`,      // jdoe@company.com (duplicate, dedupe handles)
+      `${fi}_${l}@${domain}`,     // j_doe@company.com
+      `${fi}-${l}@${domain}`,     // j-doe@company.com
+
+      // Tier 3: Last name first patterns
+      `${l}.${f}@${domain}`,      // doe.john@company.com
+      `${l}${f}@${domain}`,       // doejohn@company.com
+      `${l}_${f}@${domain}`,      // doe_john@company.com
+      `${l}-${f}@${domain}`,      // doe-john@company.com
+      `${l}${fi}@${domain}`,      // doej@company.com
+      `${l}.${fi}@${domain}`,     // doe.j@company.com
+      `${li}${f}@${domain}`,      // djohn@company.com
+      `${li}.${f}@${domain}`,     // d.john@company.com
+
+      // Tier 4: Simple patterns
+      `${l}@${domain}`,           // doe@company.com
+      `${fi}${li}@${domain}`,     // jd@company.com (initials)
+      `${li}${fi}@${domain}`,     // dj@company.com (reversed initials)
+    );
+
+    // Tier 5: Middle name patterns (if provided)
+    if (m && mi) {
+      patterns.push(
+        `${f}.${mi}.${l}@${domain}`,    // john.m.doe@company.com
+        `${f}${mi}${l}@${domain}`,      // johnmdoe@company.com
+        `${fi}${mi}${l}@${domain}`,     // jmdoe@company.com
+        `${f}.${m}.${l}@${domain}`,     // john.michael.doe@company.com
+      );
+    }
   }
 
   // Dedupe (some patterns might overlap)
