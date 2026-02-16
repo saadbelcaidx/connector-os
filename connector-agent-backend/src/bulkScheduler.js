@@ -50,6 +50,7 @@ async function scheduledBulkProcess(items, getDomain, processFn) {
   let inflightTotal = 0;
   const inflightByDomain = new Map(); // domain -> count
   const inflightByProvider = new Map(); // provider -> count
+  const activeTasks = []; // Track all active processing tasks
 
   // Resolve provider for each item upfront (cached, fast)
   const itemProviders = new Map(); // index -> provider string
@@ -118,8 +119,8 @@ async function scheduledBulkProcess(items, getDomain, processFn) {
       inflightByDomain.set(domain, (inflightByDomain.get(domain) || 0) + 1);
       inflightByProvider.set(provider, (inflightByProvider.get(provider) || 0) + 1);
 
-      // Process item
-      (async () => {
+      // Process item (track promise to ensure completion before returning)
+      const task = (async () => {
         try {
           results[index] = await processFn(item, index);
         } catch (err) {
@@ -132,6 +133,7 @@ async function scheduledBulkProcess(items, getDomain, processFn) {
           inflightByProvider.set(provider, Math.max(0, (inflightByProvider.get(provider) || 0) - 1));
         }
       })();
+      activeTasks.push(task);
     }
   }
 
@@ -143,6 +145,9 @@ async function scheduledBulkProcess(items, getDomain, processFn) {
   }
 
   await Promise.all(workers);
+
+  // Ensure all processing tasks complete before returning
+  await Promise.all(activeTasks);
 
   return results;
 }
