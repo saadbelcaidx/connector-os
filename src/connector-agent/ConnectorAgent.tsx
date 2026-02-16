@@ -2340,9 +2340,16 @@ function ConnectorAgentInner() {
                                     animation: `fadeSlideIn 0.3s ease ${i * 0.05}s both`,
                                   }}
                                 >
-                                  <span className="font-mono text-white/50 truncate max-w-[200px]">
-                                    {result.email || (result.firstName && result.lastName ? `${result.firstName} ${result.lastName}` : result._input || 'Missing name')}
-                                  </span>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-mono text-white/50 truncate max-w-[200px]">
+                                      {result.email || (result.firstName && result.lastName ? `${result.firstName} ${result.lastName}` : result._input || 'Missing name')}
+                                    </span>
+                                    {result.hosted_at && (
+                                      <span className="text-[10px] text-white/30">
+                                        {result.hosted_at}
+                                      </span>
+                                    )}
+                                  </div>
                                   {bulkMode === 'find' ? (
                                     <span className={result.email ? 'text-violet-400' : 'text-white/30'}>
                                       {result.email ? 'Found' : 'Searching'}
