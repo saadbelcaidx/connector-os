@@ -1549,7 +1549,10 @@ app.post('/api/email/v2/find', async (req, res) => {
     const age = Date.now() - new Date(cached.created_at).getTime();
     const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
     if (age < SEVEN_DAYS) {
-      return res.json({ email: cached.email, status: (cached.verdict || 'valid').toLowerCase() });
+      // Get provider info for cached results
+      const mx = await getMxProvider(domain);
+      const hostedAt = mx.provider || 'Custom';
+      return res.json({ email: cached.email, status: (cached.verdict || 'valid').toLowerCase(), hosted_at: hostedAt });
     }
   }
 
@@ -1565,11 +1568,18 @@ app.post('/api/email/v2/find', async (req, res) => {
 
   // RESTRICTED: No API calls, return NOT_FOUND (no charge)
   if (mode === 'RESTRICTED') {
-    return res.json({ email: null });
+    const mx = await getMxProvider(domain);
+    const hostedAt = mx.provider || 'Custom';
+    return res.json({ email: null, hosted_at: hostedAt });
   }
 
   // Wrap main logic in try-catch to handle ECONNRESET and network errors
   try {
+
+  // Get provider info early (used throughout)
+  const cid = effectiveKeyId ? effectiveKeyId.slice(0, 8) : domain.slice(0, 8);
+  const providerInfo = await resolveMailboxProvider(domain, cid);
+  const hostedAt = providerInfo.provider || 'Custom';
 
   // Helper to cache and return found email
   const cacheAndReturn = (email, source, isCatchAll = false) => {
@@ -1600,7 +1610,7 @@ app.post('/api/email/v2/find', async (req, res) => {
     }
 
     console.log(`[Find] ${verdict} via ${source}: ${email}${isCatchAll ? ' (catch-all)' : ''}`);
-    return res.json({ email, status: verdict.toLowerCase() });
+    return res.json({ email, status: verdict.toLowerCase(), hosted_at: hostedAt });
   };
 
   // ============================================================
@@ -1622,15 +1632,12 @@ app.post('/api/email/v2/find', async (req, res) => {
   // ============================================================
   // DNS INTELLIGENCE (free signals — liveness, provider, SPF, autodiscover)
   // ============================================================
-  const cid = effectiveKeyId ? effectiveKeyId.slice(0, 8) : domain.slice(0, 8);
-
-  // Resolve provider (runs liveness + MX + SPF + autodiscover in parallel, 2.5s budget)
-  const providerInfo = await resolveMailboxProvider(domain, cid);
+  // Note: providerInfo already fetched earlier in try block
 
   // DOMAIN LIVENESS: short-circuit dead domains (saves all downstream API calls)
   if (providerInfo.live === false) {
     console.log(`[Find] cid=${cid} domain=${domain} DOMAIN_DEAD — skipping all verification`);
-    return res.json({ email: null });
+    return res.json({ email: null, hosted_at: hostedAt });
   }
 
   console.log(`[Find] cid=${cid} provider=${providerInfo.provider} gateway_mx=${providerInfo.gatewayMx || 'none'} evidence=${JSON.stringify(providerInfo.evidence)}`);
@@ -1768,16 +1775,22 @@ app.post('/api/email/v2/find', async (req, res) => {
   // If all attempts hit service_busy, that's retryable - not a definitive "not found"
   if (allServiceBusy && !hasRealVerdict) {
     console.log(`[Find] SERVICE BUSY: All verification attempts timed out`);
-    return res.json({ email: null });
+    return res.json({ email: null, hosted_at: hostedAt });
   }
 
   console.log(`[Find] FAILED: No deliverable email for ${firstName} ${lastName} @ ${domain}`);
-  res.json({ email: null });
+  res.json({ email: null, hosted_at: hostedAt });
 
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
     console.error(`[Find] ERROR: ${err.code || err.message} for ${firstName} ${lastName} @ ${domain}`);
-    return res.json({ email: null });
+    // Try to get hostedAt for error case
+    let errorHostedAt = 'Custom';
+    try {
+      const mx = await getMxProvider(domain);
+      errorHostedAt = mx.provider || 'Custom';
+    } catch {}
+    return res.json({ email: null, hosted_at: errorHostedAt });
   }
 });
 
@@ -1823,6 +1836,11 @@ app.post('/api/email/v2/verify', async (req, res) => {
   }
 
   const emailLower = emailToVerify.toLowerCase();
+  const domain = emailToVerify.split('@')[1] || '';
+
+  // Get provider info
+  const mx = await getMxProvider(domain);
+  const hostedAt = mx.provider || 'Custom';
 
   // FAST PATH: Check if email was previously found by FIND (already verified)
   // Only trust VALID verdicts — RISKY/null must go through real verification
@@ -1831,7 +1849,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
   `).get(emailLower);
   if (foundEmail && foundEmail.verdict === 'VALID') {
     console.log(`[Verify] CACHE HIT from email_cache: ${emailLower} (verdict=${foundEmail.verdict})`);
-    return res.json({ email: emailToVerify, status: 'valid' });
+    return res.json({ email: emailToVerify, status: 'valid', hosted_at: hostedAt });
   }
 
   // Check quota first (don't deduct yet)
@@ -1851,7 +1869,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
 
     // Handle deadline exceeded - retryable, no charge
     if (result.verdict === 'SERVICE_BUSY') {
-      return res.json({ email: null });
+      return res.json({ email: null, hosted_at: hostedAt });
     }
 
     // Token accounting: only charge on VALID, RISKY, or INVALID (not cached, not service_busy)
@@ -1862,7 +1880,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
     // VALID or RISKY = return email with status, anything else = null
     // Include confidence data when available (catch-all probing)
     if (result.verdict === 'VALID') {
-      const response = { email: emailToVerify, status: 'valid' };
+      const response = { email: emailToVerify, status: 'valid', hosted_at: hostedAt };
       if (result.confidence !== undefined) {
         response.confidence = result.confidence;
         response.signals = result.signals;
@@ -1871,7 +1889,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
       if (result.smtpDirect) response.smtpDirect = true;
       res.json(response);
     } else if (result.verdict === 'RISKY') {
-      const response = { email: emailToVerify, status: 'risky' };
+      const response = { email: emailToVerify, status: 'risky', hosted_at: hostedAt };
       if (result.confidence !== undefined) {
         response.confidence = result.confidence;
         response.signals = result.signals;
@@ -1879,12 +1897,12 @@ app.post('/api/email/v2/verify', async (req, res) => {
       if (result.smtpDirect) response.smtpDirect = true;
       res.json(response);
     } else {
-      res.json({ email: null, status: 'invalid' });
+      res.json({ email: null, status: 'invalid', hosted_at: hostedAt });
     }
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
     console.error(`[Verify] ERROR: ${err.code || err.message} for ${emailToVerify}`);
-    return res.json({ email: null });
+    return res.json({ email: null, hosted_at: hostedAt });
   }
 });
 
@@ -1976,7 +1994,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     const { firstName, lastName, domain: rawDomain } = item;
 
     if (!firstName || !lastName || !rawDomain) {
-      return { ...item, success: false, error: 'Missing fields' };
+      return { ...item, success: false, error: 'Missing fields', hosted_at: 'Custom' };
     }
 
     const domain = rawDomain
@@ -1987,11 +2005,11 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       .trim();
 
     if (!domain || !domain.includes('.')) {
-      return { ...item, success: false, error: 'Invalid domain format' };
+      return { ...item, success: false, error: 'Invalid domain format', hosted_at: 'Custom' };
     }
 
     if (mode === 'RESTRICTED') {
-      return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email' };
+      return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email', hosted_at: 'Custom' };
     }
 
     // Check cache with TTL
@@ -2005,7 +2023,10 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
       if (age < SEVEN_DAYS) {
         found++;
-        return { firstName, lastName, domain, success: true, email: cachedResult.email, verdict: cachedResult.verdict };
+        // For cached results, we need to get provider info
+        const mx = await getMxProvider(domain);
+        const cachedHostedAt = mx.provider || 'Custom';
+        return { firstName, lastName, domain, success: true, email: cachedResult.email, verdict: cachedResult.verdict, hosted_at: cachedHostedAt };
       }
     }
 
@@ -2014,8 +2035,10 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     const bulkProviderInfo = await resolveMailboxProvider(domain, `bulk-${domain.slice(0, 8)}`);
 
     if (bulkProviderInfo.live === false) {
-      return { firstName, lastName, domain, success: false, reason: 'domain_dead' };
+      return { firstName, lastName, domain, success: false, reason: 'domain_dead', hosted_at: 'Custom' };
     }
+
+    const hostedAt = bulkProviderInfo.provider || 'Custom';
 
     let permutations = reorderPermutations(rawPermutations, bulkProviderInfo.provider, firstName, lastName);
     if (mode === 'DEGRADED') {
@@ -2078,10 +2101,10 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       `).run(uuidv4(), domain.toLowerCase(), firstName.toLowerCase(), lastName.toLowerCase(), foundEmail, new Date().toISOString());
 
       found++;
-      return { firstName, lastName, domain, success: true, email: foundEmail, verdict: 'VALID' };
+      return { firstName, lastName, domain, success: true, email: foundEmail, verdict: 'VALID', hosted_at: hostedAt };
     }
 
-    return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email' };
+    return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email', hosted_at: hostedAt };
   }
 
   // Use scheduled bulk process with layered concurrency
@@ -2157,6 +2180,12 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
 
   // Process function for each email
   async function processVerifyItem(email) {
+    const domain = email.split('@')[1] || '';
+
+    // Get provider info
+    const mx = await getMxProvider(domain);
+    const hostedAt = mx.provider || 'Custom';
+
     // PRX2 function wrapper
     const prx2Fn = async () => {
       const result = await verifyWithMailtester(email, userId, 'bulk');
@@ -2165,7 +2194,6 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
 
     // Catch-all probe function wrapper
     const catchAllProbeFn = async (emailAddr, dom) => {
-      const mx = await getMxProvider(dom);
       return await probeCatchAllConfidence(emailAddr, dom, mx.provider, db);
     };
 
@@ -2178,7 +2206,10 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
       tokensUsed += 1;
     }
 
-    return { email: result.verdict === 'VALID' ? email : null };
+    return {
+      email: result.verdict === 'VALID' ? email : null,
+      hosted_at: hostedAt
+    };
   }
 
   // Use scheduled bulk process with layered concurrency

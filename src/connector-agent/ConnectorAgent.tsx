@@ -63,10 +63,12 @@ interface ApiKeyData {
 
 interface FindResult {
   email: string | null;
+  hosted_at?: string;
 }
 
 interface VerifyResult {
   email: string | null;
+  hosted_at?: string;
   status?: 'valid' | 'risky' | 'invalid';
   confidence?: number;
   signals?: string[];
@@ -224,6 +226,7 @@ function batchToCSV(batch: ConnectorAgentBatch): string {
 interface NormalizedVerifyResult {
   _input: string;     // Original email that was verified
   email: string | null; // string = valid, null = invalid
+  hosted_at?: string; // Mail provider (Google, Microsoft, etc.)
   status: 'valid' | 'invalid';
   _row?: number;      // Original row index for sorting
 }
@@ -233,13 +236,21 @@ function normalizeVerifyResult(inputEmail: string, apiResult: any, rowIndex?: nu
   return {
     _input: inputEmail,
     email,
+    hosted_at: apiResult?.hosted_at,
     status: email ? 'valid' : 'invalid',
     _row: rowIndex,
   };
 }
 
 function normalizeVerifyChunk(chunk: Array<{ email?: string; _row?: number; [k: string]: any }>, inputEmails: string[]): NormalizedVerifyResult[] {
-  return chunk.map((r, i) => normalizeVerifyResult(inputEmails[i] || '', r, r._row ?? i));
+  return chunk.map((r, i) => {
+    // Defensive: API may return null items in response array
+    if (!r) {
+      console.warn('[normalizeVerifyChunk] Null item at index', i, 'input:', inputEmails[i]);
+      return { _input: inputEmails[i] || '', email: null, status: 'invalid' as const, _row: i };
+    }
+    return normalizeVerifyResult(inputEmails[i] || '', r, r._row ?? i);
+  });
 }
 
 // Runtime contract guard — called after every verify batch completes
@@ -2059,6 +2070,13 @@ function ConnectorAgentInner() {
                                     });
                                   }
 
+                                  // Defensive filter: remove any null/undefined entries
+                                  const itemsBeforeFilter = items.length;
+                                  items = items.filter(Boolean);
+                                  if (items.length < itemsBeforeFilter) {
+                                    console.warn(`[BulkProcess] Filtered out ${itemsBeforeFilter - items.length} null items`);
+                                  }
+
                                   // Chunk and execute (adaptive sizing)
                                   // Note: Original upload order preserved to spread slow domains across batches
                                   const totalItems = items.length;
@@ -2287,7 +2305,7 @@ function ConnectorAgentInner() {
                               </div>
                               <div>
                                 <p className="text-[12px] text-white/80 font-medium">
-                                  {bulkMode === 'find' ? 'Resolving contacts' : 'Verifying contacts'}
+                                  {bulkMode === 'find' ? 'Finding contacts' : 'Verifying contacts'}
                                 </p>
                                 <p className="text-[10px] text-white/40">
                                   {bulkTotalBatches > 1 ? `Batch ${bulkCurrentBatch} of ${bulkTotalBatches}` : 'Processing'}
@@ -2323,11 +2341,11 @@ function ConnectorAgentInner() {
                                   }}
                                 >
                                   <span className="font-mono text-white/50 truncate max-w-[200px]">
-                                    {result.email || result._input || (result.firstName && result.lastName ? `${result.firstName} ${result.lastName}` : 'Missing name')}
+                                    {result.email || (result.firstName && result.lastName ? `${result.firstName} ${result.lastName}` : result._input || 'Missing name')}
                                   </span>
                                   {bulkMode === 'find' ? (
                                     <span className={result.email ? 'text-violet-400' : 'text-white/30'}>
-                                      {result.email ? 'resolved' : 'pending'}
+                                      {result.email ? 'Found' : 'Searching'}
                                     </span>
                                   ) : (
                                     <span className={result.status === 'valid' ? 'text-emerald-400' : 'text-red-400/60'}>
@@ -2356,8 +2374,8 @@ function ConnectorAgentInner() {
                           <span className="text-white/50">Total: <span className="text-white/90 font-medium">{bulkSummary.total}</span></span>
                           {bulkMode === 'find' ? (
                             <>
-                              <span className="text-violet-400">Resolved: <span className="font-medium">{bulkSummary.found}</span></span>
-                              <span className="text-white/40">Pending: <span className="font-medium">{bulkSummary.not_found}</span></span>
+                              <span className="text-violet-400">Found: <span className="font-medium">{bulkSummary.found}</span></span>
+                              <span className="text-white/40">Not found: <span className="font-medium">{bulkSummary.not_found}</span></span>
                             </>
                           ) : (
                             <>
@@ -2510,14 +2528,14 @@ function ConnectorAgentInner() {
                               if (!bulkResults) return;
                               let csv = '';
                               if (bulkMode === 'find') {
-                                csv = 'first_name,last_name,domain,email,status\n';
+                                csv = 'first_name,last_name,domain,email,hosted_at,status\n';
                                 bulkResults.forEach(row => {
-                                  csv += `"${row.firstName || ''}","${row.lastName || ''}","${row.domain || ''}","${row.email || ''}","${row.email ? 'found' : 'not_found'}"\n`;
+                                  csv += `"${row.firstName || ''}","${row.lastName || ''}","${row.domain || ''}","${row.email || ''}","${row.hosted_at || ''}","${row.email ? 'found' : 'not_found'}"\n`;
                                 });
                               } else {
-                                csv = 'input,status\n';
+                                csv = 'input,email,hosted_at,status\n';
                                 bulkResults.forEach(row => {
-                                  csv += `"${row._input || row.email || ''}","${row.status || 'invalid'}"\n`;
+                                  csv += `"${row._input || row.email || ''}","${row.email || ''}","${row.hosted_at || ''}","${row.status || 'invalid'}"\n`;
                                 });
                               }
                               const blob = new Blob([csv], { type: 'text/csv' });
