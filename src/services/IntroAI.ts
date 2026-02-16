@@ -144,7 +144,7 @@ function buildDemandVarsPrompt(
 
   return `Fill 2 variables. JSON only.
 
-TEMPLATE: "Saw {{company}} [signalEvent]. I'm connected to [whoTheyAre] — want an intro?"
+TEMPLATE: "Saw [COMPANY] [signalEvent]. I'm connected to [whoTheyAre] — want an intro?"
 
 DEMAND CONTEXT:
 Industry: ${demandIndustry}
@@ -155,7 +155,7 @@ SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
 
-[signalEvent]: casual fragment completing "Saw {{company}}...". 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X".
+[signalEvent]: what happened (present tense). 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X". Examples: "is hiring engineers", "just raised Series B", "opened a new office".
 
 [whoTheyAre]:
 Describe what the supplier ENABLES companies with this SIGNAL to achieve faster or better.
