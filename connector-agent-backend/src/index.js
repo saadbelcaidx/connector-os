@@ -526,8 +526,9 @@ function withTimeout(promise, ms) {
  */
 const domainStats = new Map();
 const STATS_DECAY_INTERVAL = 10 * 60 * 1000; // 10 minutes
-const SLOW_DOMAIN_THRESHOLD_MS = 20000; // 20s average = slow
-const SLOW_DOMAIN_TIMEOUT_MS = 10000; // Timeout slow domains at 10s instead of 30s
+const SLOW_DOMAIN_THRESHOLD_MS = 15000; // 15s average = slow (lowered to catch issues faster)
+const SLOW_DOMAIN_TIMEOUT_MS = 12000; // Timeout slow domains at 12s (relay 7s + PRX2 fallback 5s)
+const NORMAL_DOMAIN_TIMEOUT_MS = 20000; // Normal domains get 20s (reduced from 30s for faster batches)
 
 // Decay stats every 10 minutes to prevent stale data
 setInterval(() => {
@@ -537,16 +538,16 @@ setInterval(() => {
 /**
  * Get adaptive timeout for a domain based on historical performance
  * @param {string} domain
- * @returns {number} Timeout in milliseconds (10s for slow domains, 30s otherwise)
+ * @returns {number} Timeout in milliseconds (12s for slow domains, 20s otherwise)
  */
 function getAdaptiveTimeout(domain) {
   const stats = domainStats.get(domain);
-  if (!stats) return 30000; // Default 30s
+  if (!stats) return NORMAL_DOMAIN_TIMEOUT_MS; // Default 20s
 
   const avgMs = stats.totalMs / stats.count;
   const isSlow = avgMs > SLOW_DOMAIN_THRESHOLD_MS || stats.failures > 2;
 
-  return isSlow ? SLOW_DOMAIN_TIMEOUT_MS : 30000;
+  return isSlow ? SLOW_DOMAIN_TIMEOUT_MS : NORMAL_DOMAIN_TIMEOUT_MS;
 }
 
 /**

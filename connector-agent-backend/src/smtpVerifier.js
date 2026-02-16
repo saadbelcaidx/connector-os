@@ -13,7 +13,7 @@ const { URL } = require('url');
 
 const RELAY_URL = process.env.SMTP_RELAY_URL || 'http://163.245.216.239:3025';
 const RELAY_SECRET = process.env.SMTP_RELAY_SECRET || 'smtp-relay-connector-2026';
-const RELAY_TIMEOUT = 20000; // 20s budget for relay call
+const RELAY_TIMEOUT = 7000; // 7s budget for relay call (fast fail → fallback sooner)
 
 // ============================================================
 // CONNECTION POOLING (HTTP Agent with keepAlive)
