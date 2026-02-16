@@ -520,6 +520,88 @@ function AnimatedCounter({ value, duration = 1 }: { value: number; duration?: nu
 }
 
 // ============================================================
+// FUZZY COLUMN DETECTION (Stripe-grade)
+// ============================================================
+
+/**
+ * Flexible column detection that handles real-world CSV variations.
+ *
+ * Matches:
+ * - Different separators: "First Name", "first_name", "first-name", "firstName"
+ * - Case variations: "FIRST_NAME", "First_Name", "firstname"
+ * - Partial matches: "companyDomain" contains "domain"
+ *
+ * @param headers - CSV column headers
+ * @param patterns - Patterns to match (ordered by priority)
+ * @returns Matched column name or null
+ */
+function detectColumn(headers: string[], patterns: string[]): string | null {
+  // Normalize: remove spaces, underscores, hyphens, lowercase
+  const normalize = (str: string) => str.toLowerCase().replace(/[\s_-]/g, '');
+  const headersNormalized = headers.map(normalize);
+
+  // 1. Exact match (after normalization)
+  for (const pattern of patterns) {
+    const patternNorm = normalize(pattern);
+    const matchIndex = headersNormalized.indexOf(patternNorm);
+    if (matchIndex !== -1) {
+      return headers[matchIndex];
+    }
+  }
+
+  // 2. Partial match (pattern contained in header)
+  // Only for domain fields to match "companyDomain", "company_domain", etc.
+  const isDomainPattern = patterns.some(p => normalize(p) === 'domain');
+  if (isDomainPattern) {
+    for (const pattern of patterns) {
+      const patternNorm = normalize(pattern);
+      const matchIndex = headersNormalized.findIndex(h => h.includes(patternNorm));
+      if (matchIndex !== -1) {
+        return headers[matchIndex];
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Auto-detect and map CSV columns to required fields.
+ * Returns null if detection fails (user must map manually).
+ */
+function autoDetectColumns(headers: string[], mode: 'find' | 'verify'): Record<string, string> | null {
+  if (mode === 'find') {
+    const firstNameCol = detectColumn(headers, [
+      'first_name', 'firstname', 'first name', 'fname', 'given_name', 'givenname'
+    ]);
+    const lastNameCol = detectColumn(headers, [
+      'last_name', 'lastname', 'last name', 'lname', 'surname', 'family_name', 'familyname'
+    ]);
+    const domainCol = detectColumn(headers, [
+      'domain', 'company_domain', 'companydomain', 'company domain', 'email_domain', 'emaildomain'
+    ]);
+
+    if (firstNameCol && lastNameCol && domainCol) {
+      return {
+        first_name: firstNameCol,
+        last_name: lastNameCol,
+        domain: domainCol,
+      };
+    }
+  } else {
+    const emailCol = detectColumn(headers, [
+      'email', 'email_address', 'emailaddress', 'e-mail', 'mail'
+    ]);
+
+    if (emailCol) {
+      return { email: emailCol };
+    }
+  }
+
+  return null; // Detection failed, needs manual mapping
+}
+
+// ============================================================
 // MAIN COMPONENT
 // ============================================================
 
@@ -1480,35 +1562,19 @@ function ConnectorAgentInner() {
                                 setBulkRawHeaders(headers);
                                 setBulkParsedData(results.data as any[]);
 
-                                const headersLower = headers.map(h => h.toLowerCase().trim());
-                                if (bulkMode === 'find') {
-                                  const hasFirstName = headersLower.some(h => h === 'first_name' || h === 'firstname');
-                                  const hasLastName = headersLower.some(h => h === 'last_name' || h === 'lastname');
-                                  const hasDomain = headersLower.includes('domain');
-                                  if (!hasFirstName || !hasLastName || !hasDomain) {
-                                    setBulkNeedsMapping(true);
-                                    setBulkColumnMap({});
-                                  } else {
-                                    setBulkNeedsMapping(false);
-                                    const map: Record<string, string> = {};
-                                    headers.forEach(h => {
-                                      const hl = h.toLowerCase().trim();
-                                      if (hl === 'first_name' || hl === 'firstname') map['first_name'] = h;
-                                      if (hl === 'last_name' || hl === 'lastname') map['last_name'] = h;
-                                      if (hl === 'domain') map['domain'] = h;
-                                    });
-                                    setBulkColumnMap(map);
-                                  }
+                                // Use fuzzy column detection (handles "First Name", "companyDomain", etc.)
+                                const detectedMap = autoDetectColumns(headers, bulkMode);
+
+                                if (detectedMap) {
+                                  // Auto-detection succeeded
+                                  setBulkNeedsMapping(false);
+                                  setBulkColumnMap(detectedMap);
+                                  console.log('[CSV] Auto-detected columns:', detectedMap);
                                 } else {
-                                  const hasEmail = headersLower.includes('email');
-                                  if (!hasEmail) {
-                                    setBulkNeedsMapping(true);
-                                    setBulkColumnMap({});
-                                  } else {
-                                    setBulkNeedsMapping(false);
-                                    const emailHeader = headers.find(h => h.toLowerCase().trim() === 'email');
-                                    setBulkColumnMap({ email: emailHeader || '' });
-                                  }
+                                  // Detection failed, user must map manually
+                                  setBulkNeedsMapping(true);
+                                  setBulkColumnMap({});
+                                  console.log('[CSV] Auto-detection failed, manual mapping required');
                                 }
                               }
                             });
@@ -1558,37 +1624,19 @@ function ConnectorAgentInner() {
                                   setBulkRawHeaders(headers);
                                   setBulkParsedData(results.data as any[]);
 
-                                  // Check if mapping needed
-                                  const headersLower = headers.map(h => h.toLowerCase().trim());
-                                  if (bulkMode === 'find') {
-                                    const hasFirstName = headersLower.some(h => h === 'first_name' || h === 'firstname');
-                                    const hasLastName = headersLower.some(h => h === 'last_name' || h === 'lastname');
-                                    const hasDomain = headersLower.includes('domain');
-                                    if (!hasFirstName || !hasLastName || !hasDomain) {
-                                      setBulkNeedsMapping(true);
-                                      setBulkColumnMap({});
-                                    } else {
-                                      setBulkNeedsMapping(false);
-                                      // Auto-map
-                                      const map: Record<string, string> = {};
-                                      headers.forEach(h => {
-                                        const hl = h.toLowerCase().trim();
-                                        if (hl === 'first_name' || hl === 'firstname') map['first_name'] = h;
-                                        if (hl === 'last_name' || hl === 'lastname') map['last_name'] = h;
-                                        if (hl === 'domain') map['domain'] = h;
-                                      });
-                                      setBulkColumnMap(map);
-                                    }
+                                  // Use fuzzy column detection (handles "First Name", "companyDomain", etc.)
+                                  const detectedMap = autoDetectColumns(headers, bulkMode);
+
+                                  if (detectedMap) {
+                                    // Auto-detection succeeded
+                                    setBulkNeedsMapping(false);
+                                    setBulkColumnMap(detectedMap);
+                                    console.log('[CSV] Auto-detected columns:', detectedMap);
                                   } else {
-                                    const hasEmail = headersLower.includes('email');
-                                    if (!hasEmail) {
-                                      setBulkNeedsMapping(true);
-                                      setBulkColumnMap({});
-                                    } else {
-                                      setBulkNeedsMapping(false);
-                                      const emailHeader = headers.find(h => h.toLowerCase().trim() === 'email');
-                                      setBulkColumnMap({ email: emailHeader || '' });
-                                    }
+                                    // Detection failed, user must map manually
+                                    setBulkNeedsMapping(true);
+                                    setBulkColumnMap({});
+                                    console.log('[CSV] Auto-detection failed, manual mapping required');
                                   }
                                 }
                               });
@@ -1768,6 +1816,31 @@ function ConnectorAgentInner() {
                       </div>
                     )}
 
+                    {/* Auto-detection Success Card */}
+                    {bulkParsedData && !bulkNeedsMapping && Object.keys(bulkColumnMap).length > 0 && (
+                      <div className="p-3 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/[0.12] space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                            <svg className="w-2.5 h-2.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                          <p className="text-[11px] text-emerald-400 font-medium">Columns detected</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(bulkColumnMap).map(([field, csvCol]) => (
+                            <div key={field} className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.04] border border-white/[0.06]">
+                              <span className="text-[9px] text-white/40 font-mono">{field}</span>
+                              <svg className="w-2.5 h-2.5 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                              <span className="text-[9px] text-white/70 font-medium">{csvCol}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Column Mapper (if needed) */}
                     {bulkParsedData && bulkNeedsMapping && (
                       <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-4">
@@ -1937,7 +2010,13 @@ function ConnectorAgentInner() {
                             <button
                               disabled={insufficientCredits || validCount === 0 || isProcessing}
                               onClick={async () => {
-                                if (!api || !bulkParsedData) return;
+                                console.log('[BulkProcess] Button clicked, mode:', bulkMode);
+                                console.log('[BulkProcess] api:', !!api, 'bulkParsedData:', !!bulkParsedData);
+                                if (!api || !bulkParsedData) {
+                                  console.error('[BulkProcess] Early return - missing api or bulkParsedData');
+                                  return;
+                                }
+                                console.log('[BulkProcess] Starting processing...');
                                 setIsProcessing(true);
                                 setBulkError(null);
                                 setBulkResults(null);
@@ -1946,10 +2025,12 @@ function ConnectorAgentInner() {
                                 setBulkStreamingResults([]);
 
                                 try {
+                                  console.log('[BulkProcess] Entered try block');
                                   // Adaptive chunk size: start at 10, adjust based on performance
                                   let adaptiveChunkSize = 10;
 
                                   // Build items array
+                                  console.log('[BulkProcess] Building items array, mode:', bulkMode, 'map:', bulkColumnMap);
                                   const seenSet = new Set<string>();
                                   let items: any[] = [];
 
@@ -1977,10 +2058,12 @@ function ConnectorAgentInner() {
                                   // Chunk and execute (adaptive sizing)
                                   // Note: Original upload order preserved to spread slow domains across batches
                                   const totalItems = items.length;
+                                  console.log('[BulkProcess] Built items array:', totalItems, 'items');
                                   setBulkTotalRows(totalItems);
                                   // batches will be recalculated as chunk size adapts
 
                                   // === BATCH PERSISTENCE: Create batch record ===
+                                  console.log('[BulkProcess] Creating batch record...');
                                   const batchId = generateBatchId();
                                   setCurrentBatchId(batchId);
                                   const originalInputs = items.map(item =>
@@ -1999,7 +2082,9 @@ function ConnectorAgentInner() {
                                     originalInputs,
                                     results: [],
                                   };
+                                  console.log('[BulkProcess] Saving batch record:', batchId);
                                   saveBatch(batchRecord);
+                                  console.log('[BulkProcess] Batch record saved');
 
                                   // Clear parsed data early so progress UI shows
                                   setBulkParsedData(null);
@@ -2011,9 +2096,11 @@ function ConnectorAgentInner() {
                                   let processedSoFar = 0;
                                   let batchNum = 0;
 
+                                  console.log('[BulkProcess] Starting processing loop, totalItems:', totalItems);
                                   while (processedSoFar < totalItems && !stopped) {
                                     batchNum++;
                                     setBulkCurrentBatch(batchNum);
+                                    console.log(`[BulkProcess] Batch ${batchNum}: processing ${processedSoFar}-${Math.min(processedSoFar + adaptiveChunkSize, totalItems)}`);
                                     const chunkStart = Date.now();
                                     const chunk = items.slice(processedSoFar, processedSoFar + adaptiveChunkSize);
 
@@ -2232,7 +2319,7 @@ function ConnectorAgentInner() {
                                   }}
                                 >
                                   <span className="font-mono text-white/50 truncate max-w-[200px]">
-                                    {result.email || result._input || `${result.firstName} ${result.lastName}`}
+                                    {result.email || result._input || (result.firstName && result.lastName ? `${result.firstName} ${result.lastName}` : 'Missing name')}
                                   </span>
                                   {bulkMode === 'find' ? (
                                     <span className={result.email ? 'text-violet-400' : 'text-white/30'}>
@@ -2374,7 +2461,9 @@ function ConnectorAgentInner() {
                                     <tr key={i} className="border-t border-white/[0.04]">
                                       {bulkMode === 'find' ? (
                                         <>
-                                          <td className="px-3 py-2 text-white/70">{row.firstName} {row.lastName}</td>
+                                          <td className="px-3 py-2 text-white/70">
+                                            {row.firstName && row.lastName ? `${row.firstName} ${row.lastName}` : 'Missing name'}
+                                          </td>
                                           <td className="px-3 py-2 text-white/50">{row.domain}</td>
                                           <td className="px-3 py-2">
                                             {row.email ? (
