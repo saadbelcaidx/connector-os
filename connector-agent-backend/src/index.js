@@ -506,6 +506,64 @@ function sleep(ms) {
 }
 
 /**
+ * Wrap a promise with a timeout for per-contact verification
+ * @param {Promise} promise - The async operation to timeout
+ * @param {number} ms - Timeout in milliseconds
+ * @returns {Promise} - Resolves with result or timeout flag
+ */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise(resolve =>
+      setTimeout(() => resolve({ timeout: true }), ms)
+    )
+  ]);
+}
+
+/**
+ * Track domain performance stats for adaptive timeout
+ * Map: domain -> { totalMs, count, failures }
+ */
+const domainStats = new Map();
+const STATS_DECAY_INTERVAL = 10 * 60 * 1000; // 10 minutes
+const SLOW_DOMAIN_THRESHOLD_MS = 20000; // 20s average = slow
+const SLOW_DOMAIN_TIMEOUT_MS = 10000; // Timeout slow domains at 10s instead of 30s
+
+// Decay stats every 10 minutes to prevent stale data
+setInterval(() => {
+  domainStats.clear();
+}, STATS_DECAY_INTERVAL);
+
+/**
+ * Get adaptive timeout for a domain based on historical performance
+ * @param {string} domain
+ * @returns {number} Timeout in milliseconds (10s for slow domains, 30s otherwise)
+ */
+function getAdaptiveTimeout(domain) {
+  const stats = domainStats.get(domain);
+  if (!stats) return 30000; // Default 30s
+
+  const avgMs = stats.totalMs / stats.count;
+  const isSlow = avgMs > SLOW_DOMAIN_THRESHOLD_MS || stats.failures > 2;
+
+  return isSlow ? SLOW_DOMAIN_TIMEOUT_MS : 30000;
+}
+
+/**
+ * Record domain performance for adaptive timeout adjustment
+ * @param {string} domain
+ * @param {number} durationMs
+ * @param {boolean} failed
+ */
+function recordDomainPerformance(domain, durationMs, failed = false) {
+  const stats = domainStats.get(domain) || { totalMs: 0, count: 0, failures: 0 };
+  stats.totalMs += durationMs;
+  stats.count += 1;
+  if (failed) stats.failures += 1;
+  domainStats.set(domain, stats);
+}
+
+/**
  * Enqueue a task for processing (no hard timeout - caller handles deadline)
  * @param {string} userId - User ID for fairness
  * @param {Function} task - Async task to execute
@@ -1959,13 +2017,31 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       permutations = permutations.slice(0, 1);
     }
 
+    // Use adaptive timeout based on domain history
+    const adaptiveTimeout = getAdaptiveTimeout(domain);
+    const domainVerifyStart = Date.now();
+
     let foundEmail = null;
     for (const email of permutations) {
-      const verifyResult = await verifyEmail(email, userId, 'bulk');
+      const verifyResult = await withTimeout(
+        verifyEmail(email, userId, 'bulk'),
+        adaptiveTimeout
+      );
+      if (verifyResult.timeout) {
+        // Skip slow domain, continue to next permutation
+        recordDomainPerformance(domain, adaptiveTimeout, true);
+        continue;
+      }
       if (verifyResult.verdict === 'VALID') {
         foundEmail = email;
+        recordDomainPerformance(domain, Date.now() - domainVerifyStart, false);
         break;
       }
+    }
+
+    // Record performance if no email found
+    if (!foundEmail) {
+      recordDomainPerformance(domain, Date.now() - domainVerifyStart, false);
     }
 
     if (foundEmail) {
@@ -2039,7 +2115,15 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
   const t0 = Date.now();
 
   const results = await parallelPool(emails, BULK_POOL_SIZE, async (email) => {
-    const result = await verifyEmail(email, userId, 'bulk');
+    const result = await withTimeout(
+      verifyEmail(email, userId, 'bulk'),
+      30000
+    );
+
+    // If timeout, treat as invalid (no charge)
+    if (result.timeout) {
+      return { email: null };
+    }
 
     // Charge 1 token per valid verdict (not cached, not unknown)
     if (!result.cached && (result.verdict === 'VALID' || result.verdict === 'INVALID')) {

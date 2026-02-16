@@ -16,6 +16,29 @@ const RELAY_SECRET = process.env.SMTP_RELAY_SECRET || 'smtp-relay-connector-2026
 const RELAY_TIMEOUT = 20000; // 20s budget for relay call
 
 // ============================================================
+// CONNECTION POOLING (HTTP Agent with keepAlive)
+// ============================================================
+
+/**
+ * HTTP Agent with connection pooling
+ * - Reuses TCP connections to relay service
+ * - Max 10 concurrent sockets
+ * - 60s keepalive timeout
+ * - Auto-closes idle connections
+ */
+const pooledAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 60000, // 60s keepalive
+  maxSockets: 10, // Max concurrent connections
+  maxFreeSockets: 5, // Max idle connections
+  timeout: RELAY_TIMEOUT,
+});
+
+// Cleanup on shutdown
+process.on('SIGTERM', () => pooledAgent.destroy());
+process.on('SIGINT', () => pooledAgent.destroy());
+
+// ============================================================
 // RELAY HTTP CLIENT (Node built-in — no fetch, no deps)
 // ============================================================
 
@@ -35,6 +58,7 @@ function relayCall(endpoint, body) {
         'x-relay-secret': RELAY_SECRET,
       },
       timeout: RELAY_TIMEOUT,
+      agent: pooledAgent, // Use pooled connections
     }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);

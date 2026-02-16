@@ -71,6 +71,7 @@ interface VerifyResult {
   confidence?: number;
   signals?: string[];
   catchAllUpgrade?: boolean;
+  smtpDirect?: boolean;
 }
 
 // Bulk Source Adapter (CSV / Google Sheets)
@@ -330,9 +331,9 @@ class ConnectorAgentAPI {
       headers['Authorization'] = `Bearer ${this.apiKey}`;
     }
 
-    // Timeout: 30s for single calls, 90s for bulk endpoints
+    // Timeout: 30s for single calls, 180s for bulk endpoints
     const isBulk = endpoint.includes('bulk');
-    const timeoutMs = isBulk ? 90000 : 30000;
+    const timeoutMs = isBulk ? 180000 : 30000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -1840,8 +1841,8 @@ function ConnectorAgentInner() {
 
                     {/* Pre-flight Summary */}
                     {bulkParsedData && (() => {
-                      const FIND_CHUNK = 10;
-                      const VERIFY_CHUNK = 10;
+                      const FIND_CHUNK = 5;
+                      const VERIFY_CHUNK = 5;
                       const map = bulkColumnMap;
                       const isMapped = bulkMode === 'find'
                         ? map['first_name'] && map['last_name'] && map['domain']
@@ -1945,6 +1946,9 @@ function ConnectorAgentInner() {
                                 setBulkStreamingResults([]);
 
                                 try {
+                                  // Adaptive chunk size: start at 10, adjust based on performance
+                                  let adaptiveChunkSize = 10;
+
                                   // Build items array
                                   const seenSet = new Set<string>();
                                   let items: any[] = [];
@@ -1970,11 +1974,17 @@ function ConnectorAgentInner() {
                                     });
                                   }
 
-                                  // Chunk and execute
+                                  // Group by domain to maximize cache hits (DNS, MX, provider)
+                                  items.sort((a, b) => {
+                                    const domainA = bulkMode === 'find' ? a.domain : (a.email?.split('@')[1] || '');
+                                    const domainB = bulkMode === 'find' ? b.domain : (b.email?.split('@')[1] || '');
+                                    return domainA.localeCompare(domainB);
+                                  });
+
+                                  // Chunk and execute (adaptive sizing)
                                   const totalItems = items.length;
-                                  const batches = Math.ceil(totalItems / chunkSize);
                                   setBulkTotalRows(totalItems);
-                                  setBulkTotalBatches(batches);
+                                  // batches will be recalculated as chunk size adapts
 
                                   // === BATCH PERSISTENCE: Create batch record ===
                                   const batchId = generateBatchId();
@@ -2004,10 +2014,14 @@ function ConnectorAgentInner() {
 
                                   let allResults: any[] = [];
                                   let stopped = false;
+                                  let processedSoFar = 0;
+                                  let batchNum = 0;
 
-                                  for (let b = 0; b < batches && !stopped; b++) {
-                                    setBulkCurrentBatch(b + 1);
-                                    const chunk = items.slice(b * chunkSize, (b + 1) * chunkSize);
+                                  while (processedSoFar < totalItems && !stopped) {
+                                    batchNum++;
+                                    setBulkCurrentBatch(batchNum);
+                                    const chunkStart = Date.now();
+                                    const chunk = items.slice(processedSoFar, processedSoFar + adaptiveChunkSize);
 
                                     // Retry logic: up to 2 retries per chunk on transient failure
                                     let res: any = null;
@@ -2023,24 +2037,24 @@ function ConnectorAgentInner() {
                                         if (res && !res.error?.includes('NETWORK_ERROR')) break;
                                         // Network error — wait and retry
                                         chunkRetries++;
-                                        console.warn(`[BulkProcess] Chunk ${b + 1}/${batches} attempt ${attempt + 1} failed (NETWORK_ERROR), retrying in ${2 * (attempt + 1)}s...`);
+                                        console.warn(`[BulkProcess] Chunk ${batchNum} attempt ${attempt + 1} failed (NETWORK_ERROR), retrying in ${2 * (attempt + 1)}s...`);
                                         if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
                                       } catch (chunkErr) {
                                         chunkRetries++;
-                                        console.warn(`[BulkProcess] Chunk ${b + 1}/${batches} attempt ${attempt + 1} threw:`, chunkErr);
+                                        console.warn(`[BulkProcess] Chunk ${batchNum} attempt ${attempt + 1} threw:`, chunkErr);
                                         if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
                                         else res = { error: 'Network error after 3 attempts' };
                                       }
                                     }
                                     if (chunkRetries > 0) {
-                                      console.log(`[BulkProcess] Chunk ${b + 1}/${batches} completed after ${chunkRetries} retries`);
+                                      console.log(`[BulkProcess] Chunk ${batchNum} completed after ${chunkRetries} retries (size=${chunk.length})`);
                                     }
 
                                     // Check for hard-stop errors (quota, auth, rate limit)
                                     if (res?.error) {
                                       const err = typeof res.error === 'string' ? res.error : JSON.stringify(res.error);
                                       const errLower = err.toLowerCase();
-                                      console.error(`[BulkProcess] Chunk ${b + 1}/${batches} error: ${err}`);
+                                      console.error(`[BulkProcess] Chunk ${batchNum} error: ${err}`);
                                       if (errLower.includes('401') || errLower.includes('unauthorized') || errLower.includes('authentication') || errLower.includes('invalid') || errLower.includes('api key')) {
                                         setBulkError('Authentication failed — check your API key');
                                         stopped = true;
@@ -2083,7 +2097,7 @@ function ConnectorAgentInner() {
 
                                       // === BATCH PERSISTENCE: Save after each chunk ===
                                       const chunkPersisted = chunkResults.map((r: any, i: number) => ({
-                                        input: originalInputs[b * chunkSize + i]?.input || '',
+                                        input: originalInputs[processedSoFar + i]?.input || '',
                                         email: (r?.email && typeof r.email === 'string') ? r.email : null,
                                       }));
                                       persistedResults = [...persistedResults, ...chunkPersisted];
@@ -2093,9 +2107,21 @@ function ConnectorAgentInner() {
                                     }
 
                                     // Update progress with actual count
-                                    const completed = Math.min((b + 1) * chunkSize, totalItems);
-                                    setBulkProcessedCount(completed);
-                                    setBulkProgress(Math.round((completed / totalItems) * 100));
+                                    processedSoFar += chunk.length;
+                                    setBulkProcessedCount(processedSoFar);
+                                    setBulkProgress(Math.round((processedSoFar / totalItems) * 100));
+
+                                    // Adaptive chunk size adjustment
+                                    const chunkDuration = Date.now() - chunkStart;
+                                    if (chunkDuration > 45000) {
+                                      // Chunk took >45s → reduce size
+                                      adaptiveChunkSize = Math.max(5, adaptiveChunkSize - 1);
+                                      console.log(`[BulkProcess] Chunk slow (${Math.round(chunkDuration/1000)}s) → reducing chunk size to ${adaptiveChunkSize}`);
+                                    } else if (chunkDuration < 15000) {
+                                      // Chunk took <15s → increase size
+                                      adaptiveChunkSize = Math.min(10, adaptiveChunkSize + 1);
+                                      console.log(`[BulkProcess] Chunk fast (${Math.round(chunkDuration/1000)}s) → increasing chunk size to ${adaptiveChunkSize}`);
+                                    }
                                   }
 
                                   // Sort and set final results
@@ -2943,6 +2969,11 @@ function ConnectorAgentInner() {
                                     {result.confidence}% confidence
                                   </span>
                                 )}
+                                {result.smtpDirect && (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-medium tracking-wider bg-violet-500/[0.1] text-violet-400">
+                                    SMTP Direct
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -3129,7 +3160,7 @@ function ConnectorAgentInner() {
                     setBulkProcessedCount(pendingResumeBatch.completedCount);
                     setBulkStreamingResults([]);
 
-                    const CHUNK_SIZE = 10;
+                    const CHUNK_SIZE = 5;
                     const totalItems = pendingResumeBatch.inputCount;
                     const batches = Math.ceil(remainingInputs.length / CHUNK_SIZE);
                     setBulkTotalRows(totalItems);
