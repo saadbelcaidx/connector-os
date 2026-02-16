@@ -2072,7 +2072,7 @@ function ConnectorAgentInner() {
                                       : { input: item.email, email: item.email }
                                   );
                                   let persistedResults: Array<{ input: string; email: string | null }> = [];
-                                  const batchRecord: ConnectorAgentBatch = {
+                                  let batchRecord: ConnectorAgentBatch = {
                                     id: batchId,
                                     type: bulkMode,
                                     createdAt: new Date().toISOString(),
