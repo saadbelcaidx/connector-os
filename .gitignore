@@ -33,3 +33,4 @@ data/onet/
 public/semantic/bizgraph-*.json
 docs/CONNECTOR_COURSE_DRAFT.md
 nul
+.claude/settings.local.json

@@ -3221,8 +3221,10 @@ function ConnectorAgentInner() {
                     setBulkMode(pendingResumeBatch.type);
                     setShowResumeModal(false);
 
-                    // Calculate remaining items
-                    const remainingInputs = pendingResumeBatch.originalInputs.slice(pendingResumeBatch.completedCount);
+                    // Calculate remaining items (filter out any nulls that might have been saved)
+                    const remainingInputs = pendingResumeBatch.originalInputs
+                      .slice(pendingResumeBatch.completedCount)
+                      .filter(item => item != null);
                     if (remainingInputs.length === 0) {
                       // Already complete, just mark it
                       const batch = getBatch(pendingResumeBatch.id);
