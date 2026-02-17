@@ -475,6 +475,13 @@ export default function ReplyBrainV1() {
               } catch {}
             }
 
+            // Infer provider from existing keys if provider is 'none' or missing
+            if (!aiProvider || aiProvider === 'none') {
+              if (aiOpenaiKey) aiProvider = 'openai';
+              else if (aiAnthropicKey) aiProvider = 'anthropic';
+              else if (aiAzureKey) aiProvider = 'azure';
+            }
+
             if (aiProvider && aiProvider !== 'none') {
               const config: AIConfig = { provider: aiProvider, apiKey: '' };
               if (aiProvider === 'openai' && aiOpenaiKey) {
