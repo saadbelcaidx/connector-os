@@ -1810,11 +1810,11 @@ app.post('/api/email/v2/find', async (req, res) => {
   // If all attempts hit service_busy, that's retryable - not a definitive "not found"
   if (allServiceBusy && !hasRealVerdict) {
     console.log(`[Find] SERVICE BUSY: All verification attempts timed out`);
-    return res.json({ email: null, hosted_at: hostedAt });
+    return res.status(503).json({ email: null, hosted_at: hostedAt, reason: 'service_busy' });
   }
 
   console.log(`[Find] FAILED: No deliverable email for ${firstName} ${lastName} @ ${domain}`);
-  res.json({ email: null, hosted_at: hostedAt });
+  return res.status(404).json({ email: null, hosted_at: hostedAt, reason: 'not_found' });
 
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
@@ -1825,7 +1825,7 @@ app.post('/api/email/v2/find', async (req, res) => {
       const mx = await getMxProvider(domain);
       errorHostedAt = mx.provider || 'Custom';
     } catch {}
-    return res.json({ email: null, hosted_at: errorHostedAt });
+    return res.status(500).json({ email: null, hosted_at: errorHostedAt, reason: 'error' });
   }
 });
 
@@ -1904,7 +1904,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
 
     // Handle deadline exceeded - retryable, no charge
     if (result.verdict === 'SERVICE_BUSY') {
-      return res.json({ email: null, hosted_at: hostedAt });
+      return res.status(503).json({ email: null, hosted_at: hostedAt, reason: 'service_busy' });
     }
 
     // Token accounting: only charge on VALID, RISKY, or INVALID (not cached, not service_busy)
@@ -1932,12 +1932,12 @@ app.post('/api/email/v2/verify', async (req, res) => {
       if (result.smtpDirect) response.smtpDirect = true;
       res.json(response);
     } else {
-      res.json({ email: null, status: 'invalid', hosted_at: hostedAt });
+      return res.status(422).json({ email: emailToVerify, status: 'invalid', hosted_at: hostedAt });
     }
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
     console.error(`[Verify] ERROR: ${err.code || err.message} for ${emailToVerify}`);
-    return res.json({ email: null, hosted_at: hostedAt });
+    return res.status(500).json({ email: null, hosted_at: hostedAt, reason: 'error' });
   }
 });
 
@@ -2165,7 +2165,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
 
   res.json({
     success: true,
-    results,
+    results: results.filter(r => r.success),
     summary: { total: items.length, found, not_found: items.length - found },
     tokens_used: tokensUsed,
   });

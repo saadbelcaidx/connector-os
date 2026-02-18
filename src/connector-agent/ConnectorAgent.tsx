@@ -2169,13 +2169,13 @@ function ConnectorAgentInner() {
                                         setBulkError('Authentication failed — check your API key');
                                         stopped = true;
                                       } else if (errLower.includes('402') || errLower.includes('insufficient') || errLower.includes('quota') || errLower.includes('credit') || errLower.includes('payment')) {
-                                        setBulkError('Insufficient credits — processed ' + allResults.length + '/' + totalItems + ' before quota hit');
+                                        setBulkError('Insufficient credits — processed ' + processedSoFar + '/' + totalItems + ' before quota hit');
                                         stopped = true;
                                       } else if (errLower.includes('429') || errLower.includes('rate limit') || errLower.includes('too many')) {
-                                        setBulkError('Rate limited — processed ' + allResults.length + '/' + totalItems + '. Try again in a few minutes.');
+                                        setBulkError('Rate limited — processed ' + processedSoFar + '/' + totalItems + '. Try again in a few minutes.');
                                         stopped = true;
                                       } else if (err.includes('Network error after 3 attempts') || err.includes('NETWORK_ERROR')) {
-                                        setBulkError('Network error — processed ' + allResults.length + '/' + totalItems + '. Check your connection and resume.');
+                                        setBulkError('Network error — processed ' + processedSoFar + '/' + totalItems + '. Check your connection and resume.');
                                         stopped = true;
                                       }
                                       // Unknown errors — continue to next chunk
@@ -2213,7 +2213,7 @@ function ConnectorAgentInner() {
                                       }));
                                       persistedResults = [...persistedResults, ...chunkPersisted];
                                       batchRecord.results = persistedResults;
-                                      batchRecord.completedCount = persistedResults.length;
+                                      batchRecord.completedCount = processedSoFar + chunk.length;
                                       saveBatch(batchRecord);
                                     }
 
@@ -2248,24 +2248,27 @@ function ConnectorAgentInner() {
 
                                   // === BATCH PERSISTENCE: Mark completed ===
                                   batchRecord.status = 'completed';
-                                  batchRecord.completedCount = persistedResults.length;
+                                  batchRecord.completedCount = processedSoFar;
                                   saveBatch(batchRecord);
                                   setBatchHistory(getAllBatches());
                                   setCurrentBatchId(null);
 
                                   // Calculate summary
                                   if (bulkMode === 'find') {
+                                    const foundCount = allResults.filter((r: any) => r.email).length;
                                     setBulkSummary({
-                                      total: allResults.length,
-                                      found: allResults.filter((r: any) => r.email).length,
-                                      not_found: allResults.filter((r: any) => !r.email).length,
+                                      total: totalItems,
+                                      found: foundCount,
+                                      not_found: totalItems - foundCount,
                                     });
+                                    setBulkFilter('found');
                                   } else {
                                     setBulkSummary({
-                                      total: allResults.length,
+                                      total: totalItems,
                                       valid: allResults.filter((r: any) => r.status === 'valid').length,
                                       invalid: allResults.filter((r: any) => r.status === 'invalid' || r.status !== 'valid').length,
                                     });
+                                    setBulkFilter('valid');
                                   }
 
                                   const quotaResult = await api.getQuota();
@@ -3293,6 +3296,7 @@ function ConnectorAgentInner() {
                     let persistedResults = [...batchRecord.results];
                     let allResults: any[] = [];
                     let stopped = false;
+                    let resumedSoFar = 0;
 
                     try {
                       for (let b = 0; b < batches && !stopped; b++) {
@@ -3337,13 +3341,13 @@ function ConnectorAgentInner() {
                             setBulkError('Authentication failed — check your API key');
                             stopped = true;
                           } else if (errLower.includes('402') || errLower.includes('insufficient') || errLower.includes('quota') || errLower.includes('credit') || errLower.includes('payment')) {
-                            setBulkError('Insufficient credits — processed ' + (pendingResumeBatch.completedCount + allResults.length) + '/' + totalItems + ' before quota hit');
+                            setBulkError('Insufficient credits — processed ' + (pendingResumeBatch.completedCount + resumedSoFar) + '/' + totalItems + ' before quota hit');
                             stopped = true;
                           } else if (errLower.includes('429') || errLower.includes('rate limit') || errLower.includes('too many')) {
-                            setBulkError('Rate limited — processed ' + (pendingResumeBatch.completedCount + allResults.length) + '/' + totalItems + '. Try again in a few minutes.');
+                            setBulkError('Rate limited — processed ' + (pendingResumeBatch.completedCount + resumedSoFar) + '/' + totalItems + '. Try again in a few minutes.');
                             stopped = true;
                           } else if (err.includes('Network error after 3 attempts') || err.includes('NETWORK_ERROR')) {
-                            setBulkError('Network error — processed ' + (pendingResumeBatch.completedCount + allResults.length) + '/' + totalItems + '. Check your connection and resume.');
+                            setBulkError('Network error — processed ' + (pendingResumeBatch.completedCount + resumedSoFar) + '/' + totalItems + '. Check your connection and resume.');
                             stopped = true;
                           }
                         }
@@ -3373,7 +3377,8 @@ function ConnectorAgentInner() {
                           }));
                           persistedResults = [...persistedResults, ...chunkPersisted];
                           batchRecord.results = persistedResults;
-                          batchRecord.completedCount = persistedResults.length;
+                          resumedSoFar += chunk.length;
+                          batchRecord.completedCount = pendingResumeBatch.completedCount + resumedSoFar;
                           saveBatch(batchRecord);
                         }
 
@@ -3400,17 +3405,20 @@ function ConnectorAgentInner() {
 
                       // Calculate summary
                       if (batchRecord.type === 'find') {
+                        const foundCount = persistedResults.filter((r: any) => r.email).length;
                         setBulkSummary({
-                          total: allResults.length,
-                          found: allResults.filter((r: any) => r.email).length,
-                          not_found: allResults.filter((r: any) => !r.email).length,
+                          total: totalItems,
+                          found: foundCount,
+                          not_found: totalItems - foundCount,
                         });
+                        setBulkFilter('found');
                       } else {
                         setBulkSummary({
-                          total: allResults.length,
+                          total: totalItems,
                           valid: allResults.filter((r: any) => r.status === 'valid').length,
                           invalid: allResults.filter((r: any) => r.status === 'invalid' || r.status !== 'valid').length,
                         });
+                        setBulkFilter('valid');
                       }
 
                       const quotaResult = await api.getQuota();
