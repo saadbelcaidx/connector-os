@@ -286,6 +286,8 @@ export default function PrebuiltMarkets() {
   const [enrichedRecords, setEnrichedRecords] = useState<NormalizedRecord[]>([]);
   const [totalFound, setTotalFound] = useState(0);
   const [dailyRemaining, setDailyRemaining] = useState(5000);
+  const [exhausted, setExhausted] = useState(false);
+  const [targetCount, setTargetCount] = useState(300);
 
   // Running counters
   const [demandCount, setDemandCount] = useState(0);
@@ -401,6 +403,7 @@ export default function PrebuiltMarkets() {
         locations,
         technologies: techFilters.length > 0 ? techFilters : undefined,
         showOneLeadPerCompany: true,
+        targetCount,
       });
 
       if (result.error) {
@@ -442,6 +445,7 @@ export default function PrebuiltMarkets() {
 
       setEnrichedRecords(records);
       setTotalFound(result.totalFound);
+      setExhausted(result.exhausted || false);
       setProgress(100);
       setStep('preview');
     } catch (err: any) {
@@ -468,6 +472,26 @@ export default function PrebuiltMarkets() {
     setSupplyCount(combined.length);
     setStep('config');
     setEnrichedRecords([]);
+  };
+
+  const handleExportCsv = () => {
+    if (enrichedRecords.length === 0) return;
+    const columns = ['fullName', 'firstName', 'lastName', 'email', 'title', 'company', 'domain', 'industry', 'signal', 'city', 'state', 'country', 'linkedin', 'companyDescription'] as const;
+    const header = columns.join(',');
+    const escape = (v: any) => {
+      if (v == null || v === '') return '';
+      const s = String(v).replace(/"/g, '""');
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s}"` : s;
+    };
+    const rows = enrichedRecords.map(r => columns.map(c => escape((r as any)[c])).join(','));
+    const csv = [header, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `leads_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleNewSearch = () => {
@@ -908,7 +932,12 @@ export default function PrebuiltMarkets() {
               <div className="flex items-center gap-3 text-[13px]">
                 <span className="text-white/80 font-medium">{enrichedRecords.length} leads</span>
                 <span className="text-white/15">/</span>
-                <span className="text-white/30">{totalFound.toLocaleString()} matching</span>
+                <span className="text-white/30">{targetCount} target</span>
+                {exhausted && enrichedRecords.length < targetCount && (
+                  <span className="text-amber-400/70 text-[11px]">
+                    Filters yielded {enrichedRecords.length} companies. Broaden titles or signals to increase pool.
+                  </span>
+                )}
               </div>
               <button onClick={handleNewSearch}
                 className="h-8 px-3.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] text-white/40 hover:text-white/70 transition-all">
@@ -953,6 +982,11 @@ export default function PrebuiltMarkets() {
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
+              <button onClick={handleExportCsv} disabled={enrichedRecords.length === 0}
+                className="h-9 px-4 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[13px] text-white/40 hover:text-white/70 transition-all disabled:opacity-20 disabled:pointer-events-none">
+                Export CSV
+              </button>
+              <div className="w-px h-5 bg-white/[0.06]" />
               <button onClick={handleAddAsDemand}
                 className="h-9 px-4 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[13px] text-white/70 hover:text-white transition-all font-medium">
                 + Demand ({enrichedRecords.length})
@@ -979,11 +1013,19 @@ export default function PrebuiltMarkets() {
             <span className="text-[12px] text-white/30">
               {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount !== 1 ? 's' : ''} active` : 'No filters selected'}
             </span>
-            <button onClick={handleSearch} disabled={!hasFilters}
-              className="h-9 px-5 rounded-md bg-white text-[#09090b] text-[13px] font-medium hover:bg-white/90 active:scale-[0.98] transition-all disabled:opacity-30 disabled:pointer-events-none flex items-center gap-2">
-              <Search className="w-3.5 h-3.5" />
-              Search
-            </button>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.12] transition-colors">
+                <span className="text-[11px] text-white/40 uppercase tracking-wide">Target</span>
+                <input type="number" value={targetCount} min={50} max={1000} step={50}
+                  onChange={e => setTargetCount(Math.max(50, Math.min(1000, parseInt(e.target.value) || 300)))}
+                  className="w-16 bg-transparent text-sm text-white/90 focus:outline-none text-right appearance-none" />
+              </div>
+              <button onClick={handleSearch} disabled={!hasFilters}
+                className="h-9 px-5 rounded-md bg-white text-[#09090b] text-[13px] font-medium hover:bg-white/90 active:scale-[0.98] transition-all disabled:opacity-30 disabled:pointer-events-none flex items-center gap-2">
+                <Search className="w-3.5 h-3.5" />
+                Search
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -992,6 +1034,16 @@ export default function PrebuiltMarkets() {
         @keyframes rowFadeIn {
           0% { opacity: 0; transform: translateY(4px); }
           100% { opacity: 1; transform: translateY(0); }
+        }
+        /* Hide number arrows (Chrome, Safari, Edge) */
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        /* Hide number arrows (Firefox) */
+        input[type="number"] {
+          -moz-appearance: textfield;
         }
       `}</style>
 

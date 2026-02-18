@@ -28,6 +28,7 @@ export interface MarketSearchOptions {
   locations?: { include: { place_id: string; label: string }[] };
   technologies?: string[];
   showOneLeadPerCompany?: boolean;
+  targetCount?: number;
 }
 
 export interface SearchResult {
@@ -35,6 +36,7 @@ export interface SearchResult {
   totalFound: number;
   redactedCount: number;
   dailyRemaining?: number;
+  exhausted?: boolean;
   error?: string;
 }
 
@@ -95,6 +97,7 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
         locations: options.locations,
         technologies: options.technologies,
         showOneLeadPerCompany: options.showOneLeadPerCompany,
+        targetCount: options.targetCount,
       }),
     });
 
@@ -126,6 +129,7 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
       totalFound: data.total_count || 0,
       redactedCount: data.redacted_count || 0,
       dailyRemaining: typeof data.daily_remaining === 'number' ? data.daily_remaining : undefined,
+      exhausted: data.exhausted || false,
     };
   } catch (err: any) {
     console.log(`[Markets] Search error: ${err.message}`);

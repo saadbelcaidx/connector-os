@@ -2371,7 +2371,9 @@ const TITLE_PACKS = [
 ];
 
 const SEARCH_ENDPOINT = 'https://app.instantly.ai/backend/api/v2/supersearch-enrichment/preview-leads-from-supersearch';
-const TARGET_UNIQUE = 300;
+const DEFAULT_TARGET = 300;
+const MAX_TARGET = 1000;
+const MIN_TARGET = 50;
 const QUERY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24h
 
 function hashQuery(obj) {
@@ -2383,8 +2385,8 @@ function hashQuery(obj) {
  * Proxy search request to provider API using member's API key.
  * Client never sees provider domain or auth mechanism.
  *
- * Backend silently expands each search by rotating title packs,
- * deduplicates by person+company, and caps at ~300 uniques.
+ * Backend expands each search via signal × title cartesian product,
+ * deduplicates by company, and caps at user's targetCount (default 300, max 1000).
  */
 app.post('/markets/search', async (req, res) => {
   const {
@@ -2400,11 +2402,15 @@ app.post('/markets/search', async (req, res) => {
     locations,
     technologies,
     showOneLeadPerCompany,
+    targetCount,
   } = req.body;
 
   if (!apiKey) {
     return res.status(400).json({ error: 'API key required' });
   }
+
+  // Volume control: user sets target, clamped to MIN/MAX
+  const effectiveTarget = Math.max(MIN_TARGET, Math.min(MAX_TARGET, targetCount || DEFAULT_TARGET));
 
   // Daily cap: 5000 leads/day per API key
   const DAILY_LEAD_CAP = 5000;
@@ -2424,8 +2430,10 @@ app.post('/markets/search', async (req, res) => {
   }
 
   // Build base search_filters — exact API param names, exact shapes
+  // NOTE: news (signals) and title are NOT set here — they are injected per-pack
+  // to avoid Instantly's bundling loss (66% for signals, 72% for titles).
+  // Industries bundle correctly (0% loss) so they stay in base.
   const search_filters = {};
-  if (news && news.length > 0) search_filters.news = news;
   if (subIndustry) search_filters.subIndustry = subIndustry; // { include: [], exclude: [] }
   if (jobListingFilter && jobListingFilter.length > 0) search_filters.jobListingFilter = jobListingFilter;
   if (employeeCount && employeeCount.length > 0) search_filters.employeeCount = employeeCount; // [{ op, min, max }]
@@ -2437,9 +2445,11 @@ app.post('/markets/search', async (req, res) => {
 
   // Detect user-provided title filter — titles are injected per-pack below, not into base search_filters
   const hasUserTitleFilter = title && title.include && title.include.length > 0;
+  // Detect user-provided signals
+  const signalsList = (news && news.length > 0) ? news : ['hires']; // fallback to hires if empty
 
   // Query cache — identical query within 24h returns cached result
-  const queryHash = hashQuery({ search_filters, showOneLeadPerCompany, hasUserTitleFilter });
+  const queryHash = hashQuery({ search_filters, signalsList, showOneLeadPerCompany, hasUserTitleFilter, titleInclude: hasUserTitleFilter ? title.include : null, effectiveTarget });
   const cached = db.prepare(
     'SELECT response_json, created_at FROM markets_query_cache WHERE query_hash = ?'
   ).get(queryHash);
@@ -2461,17 +2471,27 @@ app.post('/markets/search', async (req, res) => {
     let totalCount = 0;
     let redactedCount = 0;
 
-    // Determine packs: user-provided titles split into individual packs (1 title per call),
-    // else rotate all standard packs. This maximizes unique companies from the 50-per-call API cap.
-    const packsToRun = hasUserTitleFilter
-      ? title.include.map(t => ({ name: `user-${t}`, titles: [t] }))
+    // Generate signal × title cartesian product packs.
+    // Instantly loses 66% of pool when signals are bundled, 72% when titles are bundled.
+    // Each pack = 1 signal + 1 title group. Loop breaks at effectiveTarget.
+    const titlePacks = hasUserTitleFilter
+      ? title.include.map(t => ({ name: t, titles: [t] }))
       : TITLE_PACKS;
 
-    for (const pack of packsToRun) {
-      if (uniqueLeads.length >= TARGET_UNIQUE) break;
+    const packsToRun = [];
+    for (const sig of signalsList) {
+      for (const tp of titlePacks) {
+        packsToRun.push({ name: `${sig}×${tp.name}`, signal: sig, titles: tp.titles });
+      }
+    }
 
-      // Every pack gets its own title filter — user-provided or standard
-      const packFilters = { ...search_filters, title: { include: pack.titles, exclude: [] } };
+    console.log(`[Markets] ${packsToRun.length} packs to run (${signalsList.length} signals × ${titlePacks.length} title groups)`);
+
+    for (const pack of packsToRun) {
+      if (uniqueLeads.length >= effectiveTarget) break;
+
+      // Each pack gets its own signal + title filter — everything else from base
+      const packFilters = { ...search_filters, news: [pack.signal], title: { include: pack.titles, exclude: [] } };
 
       const payload = {
         search_filters: packFilters,
@@ -2532,9 +2552,9 @@ app.post('/markets/search', async (req, res) => {
       }
     }
 
-    const leads = uniqueLeads.slice(0, TARGET_UNIQUE);
+    const leads = uniqueLeads.slice(0, effectiveTarget);
     const leadsReturned = leads.length;
-    console.log(`[Markets] Search complete: ${leadsReturned} unique leads from ${hasUserTitleFilter ? 'user title filter' : TITLE_PACKS.length + ' packs'}`);
+    console.log(`[Markets] Search complete: ${leadsReturned} unique leads from ${signalsList.length} signals × ${titlePacks.length} title groups (${packsToRun.length} packs, stopped at ${uniqueLeads.length})`);
 
     // Increment daily usage
     db.prepare(`INSERT INTO markets_usage (api_key, search_date, leads_fetched)
@@ -2543,11 +2563,19 @@ app.post('/markets/search', async (req, res) => {
       DO UPDATE SET leads_fetched = leads_fetched + ?`
     ).run(apiKey, today, leadsReturned, leadsReturned);
 
+    // Determine if packs were exhausted before reaching target
+    const packsExhausted = uniqueLeads.length < effectiveTarget;
+
     const responseBody = {
       data: leads,
       total_count: totalCount,
       redacted_count: redactedCount,
       daily_remaining: DAILY_LEAD_CAP - (currentUsage + leadsReturned),
+      // Volume control observability — pure metadata, zero semantic change
+      target: effectiveTarget,
+      returned: leadsReturned,
+      exhausted: packsExhausted,
+      packs_attempted: packsToRun.length,
     };
 
     // Cache the response
