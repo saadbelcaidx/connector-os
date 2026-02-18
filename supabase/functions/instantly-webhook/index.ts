@@ -21,7 +21,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const SUPABASE_URL          = (Deno.env.get('SUPABASE_URL') || '').trim();
 const SERVICE_KEY           = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
-const DEFAULT_TRACKING_DOMAIN = (Deno.env.get('DEFAULT_TRACKING_DOMAIN') || 'relay.so').trim();
+const DEFAULT_TRACKING_DOMAIN = (Deno.env.get('DEFAULT_TRACKING_DOMAIN') || 'go.introrelay.com').trim();
 
 const cors = {
   'Access-Control-Allow-Origin':  '*',
