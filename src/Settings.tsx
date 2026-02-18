@@ -1813,7 +1813,7 @@ export default function Settings() {
                       <div>
                         <span className="text-[13px] font-medium text-white/90">Tracking Domain</span>
                         <p className="text-[12px] text-white/40 mt-0.5">Tracking links send from our server</p>
-                        <p className="text-[11px] text-white/20 mt-1">Links will send as: go.introrelay.com/x7k2mq</p>
+                        <p className="text-[11px] text-white/20 mt-1">Each reply gets a unique link — go.introrelay.com/[slug]</p>
                       </div>
                     </div>
                   </div>
