@@ -369,7 +369,12 @@ export default function Settings() {
           vslFollowupsEnabled: data.vsl_followups_enabled || false,
           vslWatchedDelayHours: data.vsl_watched_delay_hours || 24,
           vslNotWatchedDelayHours: data.vsl_not_watched_delay_hours || 48,
-          customVslDomain: data.custom_vsl_domain || '',
+          customVslDomain: (() => {
+            const raw = data.custom_vsl_domain || '';
+            // Auto-clear if a video URL was accidentally saved as custom domain
+            if (raw.includes('http') || raw.includes('/') || raw.includes('loom.com') || raw.includes('youtube.com') || raw.includes('youtu.be')) return '';
+            return raw;
+          })(),
           // Targeting
           targetIndustries: data.target_industries || [],
           // AI from localStorage
@@ -483,7 +488,13 @@ export default function Settings() {
           vsl_followups_enabled: settings.vslFollowupsEnabled,
           vsl_watched_delay_hours: settings.vslWatchedDelayHours,
           vsl_not_watched_delay_hours: settings.vslNotWatchedDelayHours,
-          custom_vsl_domain: settings.customVslDomain || null,
+          custom_vsl_domain: (() => {
+            const d = (settings.customVslDomain || '').trim();
+            if (!d) return null;
+            // Block video URLs saved as tracking domain
+            if (d.includes('loom.com') || d.includes('youtube.com') || d.includes('youtu.be') || d.includes('/')) return null;
+            return d.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          })(),
           // Targeting
           target_industries: settings.targetIndustries,
           // Pre-signal context (JSONB)
@@ -1762,7 +1773,7 @@ export default function Settings() {
                           <span className="text-[13px] font-medium text-white/90">Pre-Alignment VSL</span>
                           <InfoTip content="Auto-sent on positive replies. 3-5 min video explaining how you work. Loom or YouTube unlisted link." />
                         </div>
-                        <p className="text-[12px] text-white/40 mt-0.5">Auto-injected on interest</p>
+                        <p className="text-[12px] text-white/40 mt-0.5">Paste Loom or unlisted YouTube link</p>
                       </div>
                     </div>
                     <div className="w-[280px]">
@@ -1794,55 +1805,15 @@ export default function Settings() {
 
                 {/* Tracking Domain — only show if VSL URL is set */}
                 {settings.vslUrl && (
-                  <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
-                    <div className="flex items-start justify-between gap-6">
-                      <div className="flex items-start gap-3 flex-1">
-                        <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
-                          <Link size={16} strokeWidth={1.5} className="text-violet-400/70" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[13px] font-medium text-white/90">Tracking Domain</span>
-                            <InfoTip content="Optional. Leave blank to use the shared relay.so domain. Set a custom domain (Cloudflare required) to brand links as your own." />
-                          </div>
-                          <p className="text-[12px] text-white/40 mt-0.5">Optional — shared domain used by default</p>
-                        </div>
+                  <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06]">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                        <Link size={16} strokeWidth={1.5} className="text-violet-400/70" />
                       </div>
-                      <div className="w-[280px]">
-                        <div className="space-y-1.5">
-                          <Input
-                            value={settings.customVslDomain}
-                            onChange={(v) => setSettings({ ...settings, customVslDomain: v })}
-                            placeholder="watch.yourbrand.com"
-                            width="w-full"
-                          />
-                          {settings.customVslDomain && (
-                            <p className="text-[11px] text-emerald-400/80">
-                              Links will send as: {settings.customVslDomain.replace(/^https?:\/\//, '')}/x7k2mq
-                            </p>
-                          )}
-                          {!settings.customVslDomain && (
-                            <p className="text-[11px] text-white/30">
-                              Using shared domain: relay.so/x7k2mq
-                            </p>
-                          )}
-                        </div>
-                        <div className="mt-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-                          <p className="text-[11px] text-white/40 font-mono leading-relaxed">
-                            Cloudflare DNS → Add record:<br />
-                            CNAME  watch  →  old-morning-ce46vsl-trackeros.saadb.workers.dev<br />
-                            Proxy: ON (orange cloud)
-                          </p>
-                          <a
-                            href="https://developers.cloudflare.com/workers/configuration/routing/custom-domains/"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 mt-2 text-[11px] text-violet-400/70 hover:text-violet-400 transition-colors"
-                          >
-                            <ExternalLink size={10} />
-                            Cloudflare custom domain setup guide
-                          </a>
-                        </div>
+                      <div>
+                        <span className="text-[13px] font-medium text-white/90">Tracking Domain</span>
+                        <p className="text-[12px] text-white/40 mt-0.5">Tracking links send from our server</p>
+                        <p className="text-[11px] text-white/20 mt-1">Links will send as: go.introrelay.com/x7k2mq</p>
                       </div>
                     </div>
                   </div>
