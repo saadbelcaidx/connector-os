@@ -1928,7 +1928,7 @@ export default function Flow() {
           const result = await enrichRecord(record, supplySchema, config, undefined, correlationId);
           enrichedSupply.set(key, result);
         } catch (err) {
-          console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain}`);
+          console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain} error=${err instanceof Error ? err.message : String(err)}`);
           // Construct error result with new format
           enrichedSupply.set(key, {
             action: record.email ? 'VERIFY' : 'FIND_COMPANY_CONTACT',
@@ -4745,7 +4745,7 @@ export default function Flow() {
                           </p>
                         ) : (
                           <p className="text-[11px] text-white/40 text-center">
-                            {state.droppedCounts.intros} skipped · {state.droppedCounts.demand + state.droppedCounts.supply} ready
+                            {state.droppedCounts.demand} matches ready · {state.droppedCounts.intros} skipped (supply email not found)
                           </p>
                         )}
                       </motion.div>

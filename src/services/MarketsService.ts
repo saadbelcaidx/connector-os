@@ -101,7 +101,11 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       console.log(`[Markets] Search failed: ${response.status}`);
-      return { records: [], totalFound: 0, redactedCount: 0, error: err.error || 'Search failed' };
+      const rawError = err.error || 'Search failed';
+      const translatedError = rawError.includes('Daily limit reached')
+        ? 'Daily search limit reached (5,000 leads). Resets at midnight UTC.'
+        : rawError;
+      return { records: [], totalFound: 0, redactedCount: 0, error: translatedError };
     }
 
     const data = await response.json();
