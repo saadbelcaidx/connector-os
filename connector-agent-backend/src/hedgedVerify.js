@@ -14,7 +14,7 @@
  */
 
 const { verifyInboxSMTP, detectCatchAllSMTP } = require('./smtpVerifier');
-const { getMxProvider } = require('./dnsIntel');
+const { resolveMailboxProvider } = require('./providerIntel');
 
 // ============================================================
 // ENV CONFIG
@@ -175,12 +175,12 @@ async function hedgedVerify(email, prx2Fn, catchAllProbeFn, queueType = 'bulk') 
 
   const startTime = Date.now();
 
-  // Get provider info for routing
+  // Get provider info for routing (includes M365 tenant attribution)
   let mxInfo;
   try {
-    mxInfo = await getMxProvider(domain, `hedge-${domain.slice(0, 8)}`);
+    mxInfo = await resolveMailboxProvider(domain, `hedge-${domain.slice(0, 8)}`);
   } catch (err) {
-    console.error(`[HedgedVerify] MX lookup failed for ${domain}: ${err.message}`);
+    console.error(`[HedgedVerify] Provider lookup failed for ${domain}: ${err.message}`);
     mxInfo = { provider: 'unknown', smtpBlocking: false };
   }
 

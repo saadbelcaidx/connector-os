@@ -16,6 +16,7 @@ const {
   getMxProvider,
   inferMailboxProviderFromSpf,
   inferProviderFromAutodiscover,
+  getMicrosoftTenantId,
   GATEWAY_PROVIDERS,
 } = require('./dnsIntel');
 
@@ -106,9 +107,27 @@ async function resolveMailboxProvider(domain, cid = '-') {
   // but the real mailbox provider is behind it (revealed by SPF or autodiscover)
   const gatewayMx = mx.isGateway ? mx.provider : null;
 
+  // Microsoft 365 tenant attribution: confirm M365 via OIDC endpoint.
+  // Confirmed M365 tenants block SMTP relay (route to PRX2 only, like Google).
+  let isM365 = false;
+  let tenantId = null;
+  if (provider === 'microsoft') {
+    try {
+      const tenant = await Promise.race([
+        getMicrosoftTenantId(domain),
+        new Promise((resolve) => setTimeout(() => resolve({ isM365: false, tenantId: null }), 3000)),
+      ]);
+      isM365 = tenant.isM365;
+      tenantId = tenant.tenantId;
+    } catch (_) {
+      // Fail-open: if tenant check errors, keep smtpBlocking false
+    }
+  }
+
   // If MX is a gateway and SPF/autodiscover revealed the real provider,
-  // the gateway's smtpBlocking status is irrelevant — use the real provider's
-  const smtpBlocking = SMTP_BLOCKING_PROVIDERS.has(provider);
+  // the gateway's smtpBlocking status is irrelevant — use the real provider's.
+  // Confirmed M365 tenants are treated as SMTP-hostile (PRX2 only, like Google).
+  const smtpBlocking = SMTP_BLOCKING_PROVIDERS.has(provider) || isM365;
 
   const evidence = {
     mx: mx.provider,
@@ -120,6 +139,7 @@ async function resolveMailboxProvider(domain, cid = '-') {
     `[DNS] cid=${cid} step=RESOLVE domain=${domain} ms=${ms} ` +
     `provider=${provider} decided_by=${decidedBy} ` +
     `gateway_mx=${gatewayMx || 'none'} smtp_blocking=${smtpBlocking} ` +
+    `is_m365=${isM365} tenant_id=${tenantId || 'none'} ` +
     `evidence=${JSON.stringify(evidence)}`
   );
 
@@ -130,6 +150,7 @@ async function resolveMailboxProvider(domain, cid = '-') {
     evidence,
     live: liveness.live,
     ms,
+    ...(isM365 ? { isM365: true, tenantId } : {}),
   };
 }
 

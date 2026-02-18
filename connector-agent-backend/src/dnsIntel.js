@@ -12,6 +12,7 @@
 
 const dns = require('dns');
 const dnsPromises = dns.promises;
+const https = require('https');
 
 // ============================================================
 // LRU CACHE WITH TTL
@@ -74,6 +75,7 @@ const livenessCache = new LruTtlCache(1000);
 const mxCache = new LruTtlCache(2000);
 const spfCache = new LruTtlCache(2000);
 const autodiscoverCache = new LruTtlCache(2000);
+const tenantCache = new LruTtlCache(2000);
 
 // TTLs
 const TTL_LIVENESS = 6 * 60 * 60 * 1000;         // 6h
@@ -82,6 +84,9 @@ const TTL_LIVENESS_TIMEOUT = 2 * 60 * 1000;        // 2min (DNS timeout — don'
 const TTL_MX = 24 * 60 * 60 * 1000;               // 24h
 const TTL_SPF = 24 * 60 * 60 * 1000;              // 24h
 const TTL_AUTODISCOVER = 24 * 60 * 60 * 1000;     // 24h
+const TTL_TENANT_HIT = 7 * 24 * 60 * 60 * 1000;  // 7 days (confirmed M365)
+const TTL_TENANT_MISS = 24 * 60 * 60 * 1000;      // 1 day (not M365)
+const TTL_TENANT_ERROR = 60 * 60 * 1000;           // 1h (on network error)
 
 // ============================================================
 // TIMEOUT WRAPPER
@@ -367,6 +372,81 @@ function clearAllCaches() {
 }
 
 // ============================================================
+// MICROSOFT 365 TENANT ATTRIBUTION
+// ============================================================
+
+/**
+ * Check if a domain is a confirmed Microsoft 365 tenant.
+ *
+ * Uses Microsoft's OIDC discovery endpoint:
+ *   GET https://login.microsoftonline.com/{domain}/v2.0/.well-known/openid-configuration
+ *
+ * Returns { isM365: true, tenantId: '...' } for confirmed M365 tenants.
+ * Returns { isM365: false, tenantId: null } for non-M365 or on error.
+ *
+ * Cache: 7 days on hit, 1 day on miss, 1h on network error.
+ *
+ * @param {string} domain
+ * @returns {Promise<{ isM365: boolean, tenantId: string|null }>}
+ */
+async function getMicrosoftTenantId(domain) {
+  const cached = tenantCache.get(domain);
+  if (cached !== null) return cached;
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const url = `https://login.microsoftonline.com/${domain}/v2.0/.well-known/openid-configuration`;
+
+      const req = https.get(url, (res) => {
+        if (res.statusCode === 404 || res.statusCode === 400) {
+          res.resume();
+          return resolve({ isM365: false, tenantId: null });
+        }
+
+        if (res.statusCode !== 200) {
+          res.resume();
+          return resolve({ isM365: false, tenantId: null });
+        }
+
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body);
+            // issuer: "https://login.microsoftonline.com/{tenantId}/v2.0"
+            const match = (json.issuer || '').match(
+              /login\.microsoftonline\.com\/([^/]+)\/v2\.0/
+            );
+            if (match && match[1] && match[1] !== 'common' && match[1] !== 'organizations') {
+              resolve({ isM365: true, tenantId: match[1] });
+            } else {
+              resolve({ isM365: false, tenantId: null });
+            }
+          } catch (_) {
+            resolve({ isM365: false, tenantId: null });
+          }
+        });
+      });
+
+      req.setTimeout(3000, () => {
+        req.destroy();
+        reject(new Error('TENANT_TIMEOUT'));
+      });
+
+      req.on('error', (err) => reject(err));
+    });
+
+    const ttl = result.isM365 ? TTL_TENANT_HIT : TTL_TENANT_MISS;
+    tenantCache.set(domain, result, ttl);
+    return result;
+  } catch (err) {
+    const miss = { isM365: false, tenantId: null };
+    tenantCache.set(domain, miss, TTL_TENANT_ERROR);
+    return miss;
+  }
+}
+
+// ============================================================
 // EXPORTS
 // ============================================================
 
@@ -375,6 +455,7 @@ module.exports = {
   getMxProvider,
   inferMailboxProviderFromSpf,
   inferProviderFromAutodiscover,
+  getMicrosoftTenantId,
   getCacheStats,
   clearAllCaches,
   // Exported for testing
