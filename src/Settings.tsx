@@ -446,7 +446,7 @@ export default function Settings() {
       if (isGuest) {
         localStorage.setItem('guest_settings', JSON.stringify({ settings }));
       } else {
-        await supabase.from('operator_settings').upsert({
+        const { error: upsertError } = await supabase.from('operator_settings').upsert({
           user_id: user!.id,
           // AI config (persisted to DB so Msg Simulator can read it)
           ai_provider: settings.aiProvider || null,
@@ -490,6 +490,11 @@ export default function Settings() {
           pre_signal_context: settings.preSignalContext,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
+
+        if (upsertError) {
+          console.error('[Settings] Upsert failed:', upsertError);
+          throw upsertError;
+        }
 
         // Register campaigns to user_campaigns for multi-tenant webhook lookup
         const campaignsToRegister: { campaign_id: string; provider: string; campaign_name: string }[] = [];
@@ -1798,9 +1803,9 @@ export default function Settings() {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-[13px] font-medium text-white/90">Tracking Domain</span>
-                            <InfoTip content="Required for VSL click tracking. Your leads see your brand, not Connector OS. Set up a CNAME pointing to our Cloudflare Worker." />
+                            <InfoTip content="Optional. Leave blank to use the shared relay.so domain. Set a custom domain (Cloudflare required) to brand links as your own." />
                           </div>
-                          <p className="text-[12px] text-white/40 mt-0.5">Your brand, invisible infra</p>
+                          <p className="text-[12px] text-white/40 mt-0.5">Optional — shared domain used by default</p>
                         </div>
                       </div>
                       <div className="w-[280px]">
@@ -1813,12 +1818,12 @@ export default function Settings() {
                           />
                           {settings.customVslDomain && (
                             <p className="text-[11px] text-emerald-400/80">
-                              Links will send as: {settings.customVslDomain.replace(/^https?:\/\//, '')}/abc123
+                              Links will send as: {settings.customVslDomain.replace(/^https?:\/\//, '')}/x7k2mq
                             </p>
                           )}
                           {!settings.customVslDomain && (
-                            <p className="text-[11px] text-amber-400/70">
-                              Required — VSL send is blocked until set
+                            <p className="text-[11px] text-white/30">
+                              Using shared domain: relay.so/x7k2mq
                             </p>
                           )}
                         </div>

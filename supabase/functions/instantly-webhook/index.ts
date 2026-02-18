@@ -19,8 +19,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
  * on replies — acceptable, Postgres trigger handles correlation safely).
  */
 
-const SUPABASE_URL = (Deno.env.get('SUPABASE_URL') || '').trim();
-const SERVICE_KEY  = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+const SUPABASE_URL          = (Deno.env.get('SUPABASE_URL') || '').trim();
+const SERVICE_KEY           = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+const DEFAULT_TRACKING_DOMAIN = (Deno.env.get('DEFAULT_TRACKING_DOMAIN') || 'relay.so').trim();
 
 const cors = {
   'Access-Control-Allow-Origin':  '*',
@@ -261,13 +262,12 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  if (!custom_vsl_domain) {
-    console.error(`[instantly-webhook] No custom_vsl_domain set for user ${user_id} — VSL send blocked. Set a tracking domain in Settings.`);
-    return new Response(
-      JSON.stringify({ ok: true, stage, vsl: false, error: 'custom_vsl_domain_missing' }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
+  // Use operator's custom domain if set, otherwise fall back to shared tracking domain
+  const trackingDomain = custom_vsl_domain
+    ? custom_vsl_domain.replace(/^https?:\/\//, '').replace(/\/$/, '')
+    : DEFAULT_TRACKING_DOMAIN;
+
+  console.log(`[instantly-webhook] Tracking domain: ${trackingDomain} (${custom_vsl_domain ? 'custom' : 'shared'})`);
 
   // Generate unique 6-char slug + store in vsl_links
   const slug = Array.from(crypto.getRandomValues(new Uint8Array(4)))
@@ -295,9 +295,7 @@ Deno.serve(async (req: Request) => {
     }),
   });
 
-  // Clean domain (strip protocol if user pasted it)
-  const domain = custom_vsl_domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-  const trackedVslUrl = `https://${domain}/${slug}`;
+  const trackedVslUrl = `https://${trackingDomain}/${slug}`;
 
   // Build AI config from operator settings
   const aiConfig: Record<string, string> = {};

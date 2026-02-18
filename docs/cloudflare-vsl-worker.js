@@ -34,7 +34,19 @@ export default {
     }
 
     // Proxy to vsl-redirect with slug param
+    // Use redirect: 'manual' so we pass the 302 back to the browser
+    // (redirect: 'follow' would proxy the final page HTML, keeping the URL stuck on this domain)
     const target = `${VSL_REDIRECT_URL}?slug=${encodeURIComponent(slug)}`;
-    return fetch(target, { redirect: 'follow' });
+    try {
+      const res = await fetch(target, { redirect: 'manual' });
+      const location = res.headers.get('Location');
+      if (location) {
+        return Response.redirect(location, 302);
+      }
+      // Non-redirect response (e.g. 410 expired, 400 bad slug) — pass through
+      return new Response(await res.text(), { status: res.status });
+    } catch {
+      return new Response('Service unavailable', { status: 503 });
+    }
   },
 };
