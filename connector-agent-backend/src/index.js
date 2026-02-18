@@ -778,7 +778,7 @@ async function verifyWithPrx2Direct(email) {
       // mb (catch-all/accept-all) — check if provider blocks SMTP by design
       recordMetric('mb');
       const domain = email.split('@')[1];
-      const mx = await getMxProvider(domain);
+      const mx = await resolveMailboxProvider(domain);
       if (mx.smtpBlocking) {
         console.log(`[PRX2] ${email} - code=${data.code} BUT ${mx.provider} blocks SMTP → upgrading to VALID`);
         return { verdict: 'VALID', mxUpgrade: true, mxProvider: mx.provider, raw: data };
@@ -856,7 +856,7 @@ async function verifyWithDocumentedApiDirect(email, retryCount = 0) {
       // mb (catch-all/accept-all) — check if provider blocks SMTP by design
       recordMetric('mb');
       const domain = email.split('@')[1];
-      const mx = await getMxProvider(domain);
+      const mx = await resolveMailboxProvider(domain);
       if (mx.smtpBlocking) {
         console.log(`[DocAPI] ${email} - code=${data.code} BUT ${mx.provider} blocks SMTP → upgrading to VALID`);
         return { verdict: 'VALID', mxUpgrade: true, mxProvider: mx.provider, raw: data };
