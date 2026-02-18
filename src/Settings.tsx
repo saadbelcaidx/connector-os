@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload, Download, X, Lock, Globe, Palette } from 'lucide-react';
+import { ArrowLeft, Database, Send, User, Shield, Check, Loader2, Key, LogOut, Eye, EyeOff, ExternalLink, Copy, ChevronLeft, Search, Mail, Zap, Calendar, ArrowUpRight, ArrowDownRight, Users, Briefcase, Sparkles, Bot, Cloud, Brain, BarChart3, Lightbulb, Target, TrendingUp, Upload, Download, X, Lock, Globe, Palette, Link } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { useAuth } from './AuthContext';
 import Dock from './Dock';
@@ -53,6 +53,7 @@ interface Settings {
   vslFollowupsEnabled: boolean;
   vslWatchedDelayHours: number;
   vslNotWatchedDelayHours: number;
+  customVslDomain: string;
   // Targeting (for reply-brain)
   targetIndustries: string[];
   // AI (3 providers: OpenAI, Azure, Claude)
@@ -94,6 +95,7 @@ const DEFAULT_SETTINGS: Settings = {
   vslFollowupsEnabled: false,
   vslWatchedDelayHours: 24,
   vslNotWatchedDelayHours: 48,
+  customVslDomain: '',
   // Targeting
   targetIndustries: [],
   // AI
@@ -367,6 +369,7 @@ export default function Settings() {
           vslFollowupsEnabled: data.vsl_followups_enabled || false,
           vslWatchedDelayHours: data.vsl_watched_delay_hours || 24,
           vslNotWatchedDelayHours: data.vsl_not_watched_delay_hours || 48,
+          customVslDomain: data.custom_vsl_domain || '',
           // Targeting
           targetIndustries: data.target_industries || [],
           // AI from localStorage
@@ -480,6 +483,7 @@ export default function Settings() {
           vsl_followups_enabled: settings.vslFollowupsEnabled,
           vsl_watched_delay_hours: settings.vslWatchedDelayHours,
           vsl_not_watched_delay_hours: settings.vslNotWatchedDelayHours,
+          custom_vsl_domain: settings.customVslDomain || null,
           // Targeting
           target_industries: settings.targetIndustries,
           // Pre-signal context (JSONB)
@@ -1782,6 +1786,62 @@ export default function Settings() {
                     </div>
                   </div>
                 </div>
+
+                {/* Tracking Domain — only show if VSL URL is set */}
+                {settings.vslUrl && (
+                  <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.06] transition-all duration-300 hover:border-white/[0.1]">
+                    <div className="flex items-start justify-between gap-6">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                          <Link size={16} strokeWidth={1.5} className="text-violet-400/70" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13px] font-medium text-white/90">Tracking Domain</span>
+                            <InfoTip content="Required for VSL click tracking. Your leads see your brand, not Connector OS. Set up a CNAME pointing to our Cloudflare Worker." />
+                          </div>
+                          <p className="text-[12px] text-white/40 mt-0.5">Your brand, invisible infra</p>
+                        </div>
+                      </div>
+                      <div className="w-[280px]">
+                        <div className="space-y-1.5">
+                          <Input
+                            value={settings.customVslDomain}
+                            onChange={(v) => setSettings({ ...settings, customVslDomain: v })}
+                            placeholder="watch.yourbrand.com"
+                            width="w-full"
+                          />
+                          {settings.customVslDomain && (
+                            <p className="text-[11px] text-emerald-400/80">
+                              Links will send as: {settings.customVslDomain.replace(/^https?:\/\//, '')}/abc123
+                            </p>
+                          )}
+                          {!settings.customVslDomain && (
+                            <p className="text-[11px] text-amber-400/70">
+                              Required — VSL send is blocked until set
+                            </p>
+                          )}
+                        </div>
+                        <div className="mt-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                          <p className="text-[11px] text-white/40 font-mono leading-relaxed">
+                            Cloudflare DNS → Add record:<br />
+                            CNAME  watch  →  old-morning-ce46vsl-trackeros.saadb.workers.dev<br />
+                            Proxy: ON (orange cloud)
+                          </p>
+                          <a
+                            href="https://developers.cloudflare.com/workers/configuration/routing/custom-domains/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 mt-2 text-[11px] text-violet-400/70 hover:text-violet-400 transition-colors"
+                          >
+                            <ExternalLink size={10} />
+                            Cloudflare custom domain setup guide
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* VSL Follow-ups — only show if VSL URL is set */}
                 {settings.vslUrl && (

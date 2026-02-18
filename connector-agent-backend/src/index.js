@@ -2435,11 +2435,8 @@ app.post('/markets/search', async (req, res) => {
   if (locations && locations.include && locations.include.length > 0) search_filters.locations = locations; // { include: [{ place_id, label }] }
   if (technologies && technologies.length > 0) search_filters.technologies = technologies;
 
-  // User-provided title filter overrides auto pack rotation
+  // Detect user-provided title filter — titles are injected per-pack below, not into base search_filters
   const hasUserTitleFilter = title && title.include && title.include.length > 0;
-  if (hasUserTitleFilter) {
-    search_filters.title = title; // { include: [...], exclude: [] }
-  }
 
   // Query cache — identical query within 24h returns cached result
   const queryHash = hashQuery({ search_filters, showOneLeadPerCompany, hasUserTitleFilter });
@@ -2460,21 +2457,21 @@ app.post('/markets/search', async (req, res) => {
 
   try {
     const uniqueLeads = [];
-    const seen = new Set(); // dedupe key: fullName|companyName
+    const seen = new Set(); // dedupe key: companyName (one contact per company across all packs)
     let totalCount = 0;
     let redactedCount = 0;
 
-    // Determine packs: user-provided title = single call, else rotate all packs
+    // Determine packs: user-provided titles split into individual packs (1 title per call),
+    // else rotate all standard packs. This maximizes unique companies from the 50-per-call API cap.
     const packsToRun = hasUserTitleFilter
-      ? [{ name: 'user-filter', titles: title.include }]
+      ? title.include.map(t => ({ name: `user-${t}`, titles: [t] }))
       : TITLE_PACKS;
 
     for (const pack of packsToRun) {
       if (uniqueLeads.length >= TARGET_UNIQUE) break;
 
-      const packFilters = hasUserTitleFilter
-        ? { ...search_filters } // title already in search_filters
-        : { ...search_filters, title: { include: pack.titles, exclude: [] } };
+      // Every pack gets its own title filter — user-provided or standard
+      const packFilters = { ...search_filters, title: { include: pack.titles, exclude: [] } };
 
       const payload = {
         search_filters: packFilters,
@@ -2514,7 +2511,7 @@ app.post('/markets/search', async (req, res) => {
       // Dedup and collect
       let newCount = 0;
       for (const lead of packLeads) {
-        const key = (lead.fullName || '') + '|' + (lead.companyName || '');
+        const key = (lead.companyName || '').toLowerCase().trim();
         if (seen.has(key)) continue;
         seen.add(key);
         lead._pack = pack.name; // Tag for downstream attribution
@@ -2528,6 +2525,11 @@ app.post('/markets/search', async (req, res) => {
       db.prepare(
         'INSERT INTO markets_pack_log (query_hash, pack_name, leads_returned, unique_added) VALUES (?, ?, ?, ?)'
       ).run(queryHash, pack.name, packLeads.length, newCount);
+
+      // 200ms delay between calls to avoid burst/rate limits
+      if (packsToRun.indexOf(pack) < packsToRun.length - 1) {
+        await new Promise(r => setTimeout(r, 200));
+      }
     }
 
     const leads = uniqueLeads.slice(0, TARGET_UNIQUE);

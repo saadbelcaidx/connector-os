@@ -1,5 +1,7 @@
 # GIT SAFETY — READ FIRST (NON-NEGOTIABLE)
 
+**SCHEMA FIRST — Before writing any query against an existing table, run `SELECT column_name FROM information_schema.columns WHERE table_name = '...'` to verify actual column names. Never trust documentation or migration files over the live schema. The real DB is the source of truth.**
+
 You are **never** allowed to run git commands that modify history or working files without explicit confirmation.
 
 **Forbidden commands unless user explicitly approves:**
