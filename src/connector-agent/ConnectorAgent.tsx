@@ -2828,8 +2828,8 @@ function ConnectorAgentInner() {
                             </pre>
                             <p className="text-[10px] text-white/40 mt-2">
                               {integrateEndpoint === 'find'
-                                ? <>Returns <code className="text-white/60">null</code> if no email found</>
-                                : <>Returns <code className="text-white/60">status: "invalid"</code> if email is invalid</>}
+                                ? <><code className="text-white/60">200</code> Found · <code className="text-white/60">404</code> Not found · <code className="text-white/60">503</code> Service busy. Set HTTP node to "Continue on error".</>
+                                : <><code className="text-white/60">200</code> Valid · <code className="text-white/60">422</code> Invalid email · <code className="text-white/60">503</code> Service busy. Set HTTP node to "Continue on error".</>}
                             </p>
                           </div>
                         </div>
@@ -2934,8 +2934,8 @@ function ConnectorAgentInner() {
                             </pre>
                             <p className="text-[10px] text-white/40 mt-2">
                               {integrateEndpoint === 'find'
-                                ? <>Returns <code className="text-white/60">null</code> if no email found</>
-                                : <>Returns <code className="text-white/60">status: "invalid"</code> if email is invalid</>}
+                                ? <><code className="text-white/60">200</code> Found · <code className="text-white/60">404</code> Not found · <code className="text-white/60">503</code> Service busy. Set HTTP node to "Continue on error".</>
+                                : <><code className="text-white/60">200</code> Valid · <code className="text-white/60">422</code> Invalid email · <code className="text-white/60">503</code> Service busy. Set HTTP node to "Continue on error".</>}
                             </p>
                           </div>
                         </div>
@@ -3042,8 +3042,8 @@ function ConnectorAgentInner() {
                             </pre>
                             <p className="text-[10px] text-white/40 mt-2">
                               {integrateEndpoint === 'find'
-                                ? <>Returns <code className="text-white/60">null</code> if no email found</>
-                                : <>Returns <code className="text-white/60">status: "invalid"</code> if email is invalid</>}
+                                ? <><code className="text-white/60">200</code> Found · <code className="text-white/60">404</code> Not found · <code className="text-white/60">503</code> Service busy. Set HTTP node to "Continue on error".</>
+                                : <><code className="text-white/60">200</code> Valid · <code className="text-white/60">422</code> Invalid email · <code className="text-white/60">503</code> Service busy. Set HTTP node to "Continue on error".</>}
                             </p>
                           </div>
                         </div>
