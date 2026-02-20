@@ -280,6 +280,22 @@ export async function matchRecords(
   const elapsed = Math.round(performance.now() - startTime);
   console.log(`[matchRecords] EXIT: ${elapsed}ms, demandMatches=${demandMatches.length}, supplyAggregates=${supplyAggregates.length}`);
 
+  // ── Diagnostic: supply classification breakdown (dev observability) ──
+  const capCounts: Record<string, number> = {};
+  const dropReasons: Record<string, number> = {};
+  for (const s of supply) {
+    const cap = extractCapabilityFromSupply(s);
+    capCounts[cap.category] = (capCounts[cap.category] || 0) + 1;
+    if (cap.category === 'professional') {
+      const reason = cap.source === 'none' ? 'no keyword match' : `weak: ${cap.source}`;
+      dropReasons[reason] = (dropReasons[reason] || 0) + 1;
+    }
+  }
+  const professionalCount = capCounts['professional'] || 0;
+  const pctFallback = supply.length > 0 ? Math.round((professionalCount / supply.length) * 100) : 0;
+  const topDrops = Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([r, c]) => `${r} (${c})`);
+  console.log(`[matchRecords] DIAGNOSTIC: totalSupply=${supply.length}, classifications=${JSON.stringify(capCounts)}, professionalFallback=${pctFallback}%, topDropReasons=[${topDrops.join(', ')}]`);
+
   return {
     demandMatches,
     supplyAggregates,
@@ -731,8 +747,8 @@ function extractCapabilityFromSupply(supply: NormalizedRecord): CapabilityProfil
     };
   }
 
-  // Finance contact
-  if (/financ|banking|investment|capital/i.test(combined) && !/recruit/i.test(combined)) {
+  // Finance contact (includes wealth management, RIA, advisory)
+  if (/financ|banking|investment|capital|wealth|ria\b|registered investment|advisory|advisor|fiduciary|portfolio manag|asset manag|estate plan|financial plan|private equity|hedge fund|family office/i.test(combined) && !/recruit/i.test(combined)) {
     return {
       category: 'finance_contact',
       specifics: [],
