@@ -132,14 +132,18 @@ export interface ListOptions {
  */
 export async function createIntroduction(params: CreateIntroductionParams): Promise<string | null> {
   try {
+    // Fallback domain from company name when domain is null (Market records have no domain)
+    const demandDomain = params.demandDomain || (params.demandCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const supplyDomain = params.supplyDomain || (params.supplyCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
     const { data, error } = await supabase.from('introductions').insert({
       operator_id: params.operatorId,
-      demand_domain: params.demandDomain,
+      demand_domain: demandDomain,
       demand_company: params.demandCompany,
       demand_contact_email: params.demandContactEmail,
       demand_contact_name: params.demandContactName,
       demand_contact_title: params.demandContactTitle,
-      supply_domain: params.supplyDomain,
+      supply_domain: supplyDomain,
       supply_company: params.supplyCompany,
       supply_contact_email: params.supplyContactEmail,
       supply_contact_name: params.supplyContactName,
@@ -187,14 +191,17 @@ export async function createIntroductionsBatch(
   if (records.length === 0) return 0;
 
   try {
-    const rows = records.map(params => ({
+    const rows = records.map(params => {
+      const demandDomain = params.demandDomain || (params.demandCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const supplyDomain = params.supplyDomain || (params.supplyCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      return {
       operator_id: params.operatorId,
-      demand_domain: params.demandDomain,
+      demand_domain: demandDomain,
       demand_company: params.demandCompany,
       demand_contact_email: params.demandContactEmail,
       demand_contact_name: params.demandContactName,
       demand_contact_title: params.demandContactTitle,
-      supply_domain: params.supplyDomain,
+      supply_domain: supplyDomain,
       supply_company: params.supplyCompany,
       supply_contact_email: params.supplyContactEmail,
       supply_contact_name: params.supplyContactName,
@@ -215,7 +222,7 @@ export async function createIntroductionsBatch(
       demand_lead_id: params.demandLeadId,
       supply_lead_id: params.supplyLeadId,
       sent_at: new Date().toISOString(),
-    }));
+    };});
 
     const { error } = await supabase.from('introductions').insert(rows);
 

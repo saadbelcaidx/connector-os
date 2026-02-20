@@ -20,6 +20,7 @@ import { searchMarkets, enrichCompanies, normalizeToRecord, storeAsdemand, store
 import { getCsvData } from './services/SignalsClient';
 import type { NormalizedRecord } from './schemas';
 import Dock from './Dock';
+import { MARKETS, type Pack } from './constants/marketPresets';
 
 // =============================================================================
 // CONSTANTS — exact API values from Instantly SuperSearch
@@ -334,6 +335,42 @@ export default function PrebuiltMarkets() {
     return '';
   };
 
+  // --- Market Preset application ---
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
+
+  const applyPreset = (preset: Pack) => {
+    const f = preset.filters;
+    if (f.signals) setSelectedSignals(f.signals);
+    if (f.industries) setSelectedIndustries(f.industries);
+    if (f.fundingStage) setSelectedFunding(f.fundingStage);
+    if (f.employeeCount) setSelectedEmployeeCount(f.employeeCount);
+    if (f.revenue) setSelectedRevenue(f.revenue);
+    if (f.keywordsInclude !== undefined) setKeywordInclude(f.keywordsInclude);
+    if (f.keywordsExclude !== undefined) setKeywordExclude(f.keywordsExclude);
+    if (f.jobPostings !== undefined) setJobListingFilter(f.jobPostings);
+    if (f.titleInclude !== undefined) setTitleInclude(f.titleInclude);
+    if (f.titleExclude !== undefined) setTitleExclude(f.titleExclude);
+    if (f.locations !== undefined) setLocationInput(f.locations);
+    setActivePresetId(preset.id);
+  };
+
+  const clearPreset = () => {
+    setSelectedSignals([]);
+    setSelectedIndustries([]);
+    setExcludeIndustries([]);
+    setSelectedFunding([]);
+    setSelectedEmployeeCount([]);
+    setSelectedRevenue([]);
+    setKeywordInclude('');
+    setKeywordExclude('');
+    setJobListingFilter('');
+    setTitleInclude('');
+    setTitleExclude('');
+    setLocationInput('');
+    setTechnologiesInput('');
+    setActivePresetId(null);
+  };
+
   const toggleChip = (list: string[], value: string, setter: (v: string[]) => void) => {
     setter(list.includes(value) ? list.filter(v => v !== value) : [...list, value]);
   };
@@ -456,20 +493,34 @@ export default function PrebuiltMarkets() {
     }
   };
 
-  const handleAddAsDemand = () => {
-    const existing = getCsvData('demand') || [];
-    const combined = [...existing, ...enrichedRecords];
-    storeAsdemand(combined);
-    setDemandCount(combined.length);
-    setStep('config');
-    setEnrichedRecords([]);
-  };
+  // Ontology is derived from pack.side — operator never chooses manually
+  const handleAddToFlow = () => {
+    // Resolve side from the active pack (system-derived, not user choice)
+    const activePack = MARKETS.flatMap(m => m.packs).find(p => p.id === activePresetId);
+    const side = activePack?.side || 'demand'; // fallback demand if no pack active (manual search)
 
-  const handleAddAsSupply = () => {
-    const existing = getCsvData('supply') || [];
-    const combined = [...existing, ...enrichedRecords];
-    storeAsSupply(combined);
-    setSupplyCount(combined.length);
+    // Write-once ontology stamping: never overwrite existing values (constraint #7)
+    const stamped = enrichedRecords.map(r => ({
+      ...r,
+      side: r.side ?? side,
+      market: r.market ?? (activePack?.id.split('.')[0] || undefined),
+      packId: r.packId ?? (activePack?.id || undefined),
+      origin: r.origin ?? ('markets' as const),
+    }));
+
+    if (side === 'supply') {
+      const existing = getCsvData('supply') || [];
+      const combined = [...existing, ...stamped];
+      storeAsSupply(combined);
+      setSupplyCount(combined.length);
+    } else {
+      const existing = getCsvData('demand') || [];
+      const combined = [...existing, ...stamped];
+      storeAsdemand(combined);
+      setDemandCount(combined.length);
+    }
+
+    console.log(`[Markets] Added ${stamped.length} records as ${side} (from pack: ${activePack?.id || 'manual'})`);
     setStep('config');
     setEnrichedRecords([]);
   };
@@ -646,6 +697,83 @@ export default function PrebuiltMarkets() {
               <div className="px-4 py-3 rounded-lg bg-red-500/[0.06] border border-red-500/[0.10] text-[13px] text-red-400/90">
                 {error}
               </div>
+            )}
+
+            {/* StarterMarketHeader — mental model framing layer */}
+            {MARKETS.length > 0 && (
+              <section className="pb-2">
+                <h2 className="text-[11px] text-white/25 uppercase tracking-widest font-medium mb-6">Start from a market</h2>
+
+                {MARKETS.map(market => {
+                  const demandPacks = market.packs.filter(p => p.side === 'demand');
+                  const supplyPacks = market.packs.filter(p => p.side === 'supply');
+                  return (
+                    <div key={market.id} className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-5 mb-4">
+                      {/* Market title + description */}
+                      <div className="mb-4">
+                        <h3 className="text-[13px] text-white/80 font-medium uppercase tracking-wider mb-1">{market.name}</h3>
+                        <p className="text-[12px] text-white/30 leading-relaxed">{market.description}</p>
+                      </div>
+
+                      {/* Demand packs row */}
+                      {demandPacks.length > 0 && (
+                        <div className="mb-3">
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <span className="w-[6px] h-[6px] rounded-full bg-violet-500" />
+                            <span className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Demand</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {demandPacks.map(pack => {
+                              const isActive = activePresetId === pack.id;
+                              return (
+                                <button
+                                  key={pack.id}
+                                  onClick={() => isActive ? clearPreset() : applyPreset(pack)}
+                                  className={`h-7 px-3 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1.5
+                                    ${isActive
+                                      ? 'bg-white text-[#09090b] hover:bg-white/80'
+                                      : 'bg-white/[0.04] border border-white/[0.08] text-white/50 hover:text-white/70 hover:border-white/[0.15]'
+                                    }`}
+                                >
+                                  {pack.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Supply packs row */}
+                      {supplyPacks.length > 0 && (
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-2">
+                            <span className="w-[6px] h-[6px] rounded-full bg-blue-500" />
+                            <span className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Supply</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {supplyPacks.map(pack => {
+                              const isActive = activePresetId === pack.id;
+                              return (
+                                <button
+                                  key={pack.id}
+                                  onClick={() => isActive ? clearPreset() : applyPreset(pack)}
+                                  className={`h-7 px-3 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1.5
+                                    ${isActive
+                                      ? 'bg-white text-[#09090b] hover:bg-white/80'
+                                      : 'bg-white/[0.04] border border-white/[0.08] text-white/50 hover:text-white/70 hover:border-white/[0.15]'
+                                    }`}
+                                >
+                                  {pack.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </section>
             )}
 
             {/* Signals — grouped by category with icons */}
@@ -987,13 +1115,9 @@ export default function PrebuiltMarkets() {
                 Export CSV
               </button>
               <div className="w-px h-5 bg-white/[0.06]" />
-              <button onClick={handleAddAsDemand}
+              <button onClick={handleAddToFlow}
                 className="h-9 px-4 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[13px] text-white/70 hover:text-white transition-all font-medium">
-                + Demand ({enrichedRecords.length})
-              </button>
-              <button onClick={handleAddAsSupply}
-                className="h-9 px-4 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[13px] text-white/70 hover:text-white transition-all font-medium">
-                + Supply ({enrichedRecords.length})
+                Add to Flow ({enrichedRecords.length})
               </button>
               {(demandCount > 0 && supplyCount > 0) && (
                 <button onClick={() => navigate('/flow')}

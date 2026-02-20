@@ -75,7 +75,9 @@ function cleanCompanyName(name: string): string {
 function extractFirstName(fullName: string): string {
   const trimmed = (fullName || '').trim();
   if (!trimmed) return 'there';
-  return trimmed.split(/\s+/)[0] || trimmed;
+  // Strip honorific prefixes: Dr., Mr., Mrs., Ms., Prof.
+  const stripped = trimmed.replace(/^(Dr\.?|Mr\.?|Mrs\.?|Ms\.?|Prof\.?)\s+/i, '');
+  return stripped.split(/\s+/)[0] || trimmed;
 }
 
 /** "a" or "an" based on first character of the next word */
@@ -94,6 +96,15 @@ function stripLeadingArticle(s: string): string {
   return s.replace(/^(a |an |the )/i, '').trim();
 }
 
+/**
+ * Strip leading gerund from painTheySolve.
+ * Template: "looking for [painTheySolve]" — if AI returns "finding X",
+ * result is "looking for finding X" (double gerund). Strip it.
+ */
+function stripLeadingGerund(s: string): string {
+  return s.replace(/^(finding|getting|hiring|scaling|building|growing|filling|sourcing|securing|seeking|staffing|recruiting|identifying|locating|acquiring|obtaining|managing)\s+/i, '').trim();
+}
+
 function parseJSON(raw: string): any {
   const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
   return JSON.parse(cleaned);
@@ -105,6 +116,7 @@ function parseJSON(raw: string): any {
 
 function buildSupplyVarsPrompt(
   demand: DemandRecord,
+  supply: SupplyRecord,
   edge: Edge,
 ): string {
   const desc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 400);
@@ -113,6 +125,10 @@ function buildSupplyVarsPrompt(
     : '';
 
   return `Fill variables for a cold email. JSON only.
+
+CONTEXT: You are writing TO a SUPPLY company (service provider).
+The demand company is the buyer with the signal.
+SUPPLY (who receives this email): ${supply.capability || 'service provider'}
 
 TEMPLATE: "I got a couple [dreamICP] who are looking for [painTheySolve]"
 
@@ -123,7 +139,9 @@ DATA:
 ${funding ? `- Funding: ${funding}\n` : ''}
 RULES:
 - [dreamICP]: plural noun phrase describing the demand company type + vertical. 3-6 words. No "decision-makers"/"stakeholders"/"organizations".
-- [painTheySolve]: what they need, from the signal data. Human language. 3-8 words. No "optimize"/"leverage"/"streamline"/"solutions".
+- [painTheySolve]: what demand companies need FROM this supply provider. Frame around the supply's capability — not a generic assumption. 3-8 words. No "optimize"/"leverage"/"streamline"/"solutions".
+- DO NOT infer what the supply company does from description. Use ONLY the provided supply capability field above.
+- If signal mentions facilities/new location/expansion, interpret as "team scaling" unless supply capability is explicitly facilities/real estate.
 - Both must sound like how you'd talk at a bar, not a boardroom.
 
 {"dreamICP": "...", "painTheySolve": "..."}`;
@@ -155,7 +173,7 @@ SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
 
-[signalEvent]: what happened (present tense). 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X". Examples: "is hiring engineers", "just raised Series B", "opened a new office".
+[signalEvent]: what happened (present tense). 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X". If signal mentions expanding/facilities/new location, interpret as business growth unless supply capability is explicitly facilities/real estate. Examples: "is hiring engineers", "just raised Series B", "opened a new office".
 
 [whoTheyAre]:
 Describe what the supplier ENABLES companies with this SIGNAL to achieve faster or better.
@@ -346,14 +364,18 @@ export async function generateIntrosAI(
   // Two AI calls in parallel — they're independent
   console.log('[IntroAI] Filling template variables (2 parallel calls)...');
   const [supplyVarsRaw, demandVarsRaw] = await Promise.all([
-    callAI(config, buildSupplyVarsPrompt(demand, edge)),
+    callAI(config, buildSupplyVarsPrompt(demand, supply, edge)),
     callAI(config, buildDemandVarsPrompt(demand, supply, edge)),
   ]);
 
   // Parse supply variables
   let supplyVars: { dreamICP: string; painTheySolve: string };
   try {
-    supplyVars = parseJSON(supplyVarsRaw);
+    const parsed = parseJSON(supplyVarsRaw);
+    supplyVars = {
+      dreamICP: parsed.dreamICP || '',
+      painTheySolve: stripLeadingGerund(parsed.painTheySolve || ''),
+    };
   } catch {
     console.error('[IntroAI] Supply vars parse error:', supplyVarsRaw.slice(0, 200));
     supplyVars = {

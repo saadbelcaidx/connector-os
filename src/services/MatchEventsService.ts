@@ -74,13 +74,17 @@ export interface ReplyEventData {
  */
 export async function logMatchSent(data: MatchEventData): Promise<string | null> {
   try {
+    // Fallback domain from company name when domain is null (Market records have no domain)
+    const demandDomain = data.demandDomain || (data.demandCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const supplyDomain = data.supplyDomain || (data.supplyCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
     // Generate thread_id for linking replies
-    const threadId = `${data.demandDomain}::${data.supplyDomain}::${Date.now()}`;
+    const threadId = `${demandDomain}::${supplyDomain}::${Date.now()}`;
 
     const { error } = await supabase.from('match_events').upsert({
       operator_id: data.operatorId,
-      demand_domain: data.demandDomain,
-      supply_domain: data.supplyDomain,
+      demand_domain: demandDomain,
+      supply_domain: supplyDomain,
       demand_company: data.demandCompany,
       supply_company: data.supplyCompany,
 
@@ -110,7 +114,7 @@ export async function logMatchSent(data: MatchEventData): Promise<string | null>
       return null;
     }
 
-    console.log(`[MatchEvents] Logged sent: ${data.demandDomain} → ${data.supplyDomain} (${data.tier})`);
+    console.log(`[MatchEvents] Logged sent: ${demandDomain} → ${supplyDomain} (${data.tier})`);
     return threadId;
 
   } catch (err) {
@@ -220,13 +224,15 @@ export async function logMatchesSentBatch(
 
   try {
     const rows = events.map(data => {
-      const threadId = `${data.demandDomain}::${data.supplyDomain}::${Date.now()}`;
-      threadIds.set(data.demandDomain, threadId);
+      const demandDomain = data.demandDomain || (data.demandCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const supplyDomain = data.supplyDomain || (data.supplyCompany || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const threadId = `${demandDomain}::${supplyDomain}::${Date.now()}`;
+      threadIds.set(demandDomain, threadId);
 
       return {
         operator_id: data.operatorId,
-        demand_domain: data.demandDomain,
-        supply_domain: data.supplyDomain,
+        demand_domain: demandDomain,
+        supply_domain: supplyDomain,
         demand_company: data.demandCompany,
         supply_company: data.supplyCompany,
         score: data.score,

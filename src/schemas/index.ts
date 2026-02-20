@@ -227,6 +227,12 @@ export interface NormalizedRecord {
   // Meta
   schemaId: string;
   raw: any;
+
+  // === ONTOLOGY (system-derived from pack, never user-assigned) ===
+  readonly side?: 'demand' | 'supply';
+  readonly market?: string;
+  readonly packId?: string;
+  readonly origin?: 'markets' | 'csv';
 }
 
 // =============================================================================

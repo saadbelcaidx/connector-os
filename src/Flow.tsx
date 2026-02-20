@@ -1061,8 +1061,19 @@ export default function Flow() {
 
   // Persist state to IndexedDB (Task 4: expanded dependencies for incremental persist)
   useEffect(() => {
-    // Don't persist upload or complete steps
-    if (state.step === 'upload' || state.step === 'complete') return;
+    // When flow completes, mark it in IndexedDB so restore doesn't pick it up next visit
+    if (state.step === 'complete' && flowIdRef.current) {
+      loadFlowAsync(flowIdRef.current).then(existingFlow => {
+        if (existingFlow) {
+          existingFlow.stages.matching.status = 'complete';
+          persistFlow(existingFlow);
+          console.log('[Flow] Marked flow as complete in IndexedDB:', flowIdRef.current);
+        }
+      });
+      return;
+    }
+    // Don't persist upload step
+    if (state.step === 'upload') return;
     // Don't persist if no data loaded yet
     if (state.demandRecords.length === 0 && state.supplyRecords.length === 0) return;
 
@@ -1509,6 +1520,19 @@ export default function Flow() {
 
       console.log('[Flow] Data preview:', dataPreview);
 
+      // Ontology diagnostics — constraint #8: fail loud if missing
+      const demandMissingSide = demandRecords.filter(r => !r.side).length;
+      const supplyMissingSide = supplyRecords.filter(r => !r.side).length;
+      console.log('[Flow] Ontology:', {
+        demandWithSide: demandRecords.filter(r => r.side === 'demand').length,
+        supplyWithSide: supplyRecords.filter(r => r.side === 'supply').length,
+        demandMissingSide,
+        supplyMissingSide,
+      });
+      if (demandMissingSide > 0 || supplyMissingSide > 0) {
+        console.warn('[ONTOLOGY_WARNING] Records missing side — legacy or ingestion bug');
+      }
+
       setState(prev => ({
         ...prev,
         step: 'preview',
@@ -1866,16 +1890,24 @@ export default function Flow() {
             progress: { current: done, total: allDemandRecords.length, message: `Step 1/2 — demand ${done}/${allDemandRecords.length}` },
           }));
         },
-        `${runId}-demand`
+        `${runId}-demand`,
+        // Progressive enrichedDemand update — UI reflects each result immediately
+        (key, result) => {
+          enrichedDemand.set(key, result);
+          setState(prev => ({
+            ...prev,
+            enrichedDemand: new Map(enrichedDemand),
+          }));
+        },
       );
 
-      // Merge new results
+      // Merge any remaining (safety — onResult already handled these)
       for (const [k, v] of newDemandResults) {
         enrichedDemand.set(k, v);
       }
     }
 
-    // Task 2: Persist demand results immediately (incremental persist)
+    // Final persist for demand
     setState(prev => ({
       ...prev,
       enrichedDemand: new Map(enrichedDemand),
@@ -1902,10 +1934,6 @@ export default function Flow() {
     const totalSupplyCount = new Set(matching.demandMatches.map(m => recordKey(m.supply))).size;
     console.log(`[Flow] Enriching ${supplyToEnrich.length} supplies (${totalSupplyCount - supplyToEnrich.length} skipped from cache)`);
 
-    // Task 2: Batch counter for incremental state updates
-    let batchCounter = 0;
-    const BATCH_SIZE = 5; // Update state every 5 enrichments
-
     let supplyIdx = 0;
     for (const agg of supplyToEnrich) {
       if (abortRef.current) break;
@@ -1927,6 +1955,7 @@ export default function Flow() {
         try {
           const result = await enrichRecord(record, supplySchema, config, undefined, correlationId);
           enrichedSupply.set(key, result);
+          setState(prev => ({ ...prev, enrichedSupply: new Map(enrichedSupply) }));
         } catch (err) {
           console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain} error=${err instanceof Error ? err.message : String(err)}`);
           // Construct error result with new format
@@ -1953,27 +1982,16 @@ export default function Flow() {
             },
             durationMs: 0,
           });
-        }
-
-        // Task 2: Incremental state update every BATCH_SIZE
-        batchCounter++;
-        if (batchCounter >= BATCH_SIZE) {
-          setState(prev => ({
-            ...prev,
-            enrichedSupply: new Map(enrichedSupply),
-          }));
-          batchCounter = 0;
+          setState(prev => ({ ...prev, enrichedSupply: new Map(enrichedSupply) }));
         }
       }
     }
 
-    // Task 2: Final state update for any remaining
-    if (batchCounter > 0) {
-      setState(prev => ({
-        ...prev,
-        enrichedSupply: new Map(enrichedSupply),
-      }));
-    }
+    // Final persist for supply
+    setState(prev => ({
+      ...prev,
+      enrichedSupply: new Map(enrichedSupply),
+    }));
 
     // Summary
     const demandSuccessCount = Array.from(enrichedDemand.values()).filter(r => isSuccessfulEnrichment(r) && r.email).length;
@@ -2176,6 +2194,24 @@ export default function Flow() {
     for (const match of matching.demandMatches) {
       if (abortRef.current) break;
 
+      // Seatbelt: skip pairs with inverted ontology (demand stamped as supply or vice versa)
+      const dSide = match.demand.side;
+      const sSide = match.supply.side;
+      if ((dSide && dSide !== 'demand') || (sSide && sSide !== 'supply')) {
+        console.error('[Flow] SIDE_MISMATCH: demand.side=', dSide, 'supply.side=', sSide, '— skipping pair');
+        dropped++;
+        continue;
+      }
+
+      // Market invariant: if both records carry a market and they differ, skip
+      const dMarket = match.demand.market;
+      const sMarket = match.supply.market;
+      if (dMarket && sMarket && dMarket !== sMarket) {
+        console.error('[Flow] MARKET_MISMATCH: demand.market=', dMarket, 'supply.market=', sMarket, '— skipping pair');
+        dropped++;
+        continue;
+      }
+
       const demandKey = recordKey(match.demand);
       const supplyKey = recordKey(match.supply);
 
@@ -2278,6 +2314,10 @@ export default function Flow() {
           revenueRange: demandRaw.revenue_range || null,
           openRolesCount: demandRaw.open_roles_count || null,
           openRolesDays: demandRaw.days_open || null,
+          // Ontology passthrough
+          side: match.demand.side,
+          market: match.demand.market,
+          packId: match.demand.packId,
         },
       };
 
@@ -2306,6 +2346,10 @@ export default function Flow() {
         metadata: {
           companyDescription: effectiveSupply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
           description: effectiveSupply.companyDescription || supplyRaw.company_description || supplyRaw['Service Description'] || supplyRaw.description || '',
+          // Ontology passthrough
+          side: effectiveSupply.side,
+          market: effectiveSupply.market,
+          packId: effectiveSupply.packId,
         },
       };
 
@@ -3141,7 +3185,7 @@ export default function Flow() {
       <div className="flex-1 flex items-center justify-center pb-24 transition-all duration-300">
         <div className="w-full max-w-[520px] px-6">
 
-          <AnimatePresence>
+          <AnimatePresence mode="wait">
 
           {/* UPLOAD / START */}
           {state.step === 'upload' && (
@@ -3150,7 +3194,7 @@ export default function Flow() {
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1], exit: { duration: 0 } }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1], exit: { duration: 0.15 } }}
               className="text-center"
             >
               <div className="w-12 h-12 mx-auto mb-6 rounded-xl bg-gradient-to-b from-white/[0.08] to-white/[0.02] border border-white/[0.08] flex items-center justify-center">
@@ -4179,6 +4223,7 @@ export default function Flow() {
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1], exit: { duration: 0.15 } }}
               className="text-center"
             >
               {(() => {
@@ -5059,6 +5104,8 @@ export default function Flow() {
               key="complete"
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1], exit: { duration: 0.15 } }}
               className="text-center"
             >
               {/* Animated checkmark */}

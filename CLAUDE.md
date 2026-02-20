@@ -1,3 +1,17 @@
+# COMPACT INSTRUCTIONS — SURVIVE COMPACTION
+
+When context compacts, ALWAYS preserve:
+- Git safety doctrine (no history rewrites, ask before checkout/restore)
+- Pre-deploy invariant (check untracked files, verify imports, build last)
+- CLAUDE CONTRACT (ask before build/deploy/dev server)
+- Ontology architecture (readonly side/market/packId/origin on NormalizedRecord)
+- Flow guardrails (SIDE_MISMATCH, MARKET_MISMATCH skip pairs)
+- Prompt doctrine (AI must not infer supply capability from description)
+- List of files modified in current session
+- Architecture snapshot: `docs/ARCHITECTURE_SNAPSHOT_2026_02_20.md`
+
+---
+
 # GIT SAFETY — READ FIRST (NON-NEGOTIABLE)
 
 **SCHEMA FIRST — Before writing any query against an existing table, run `SELECT column_name FROM information_schema.columns WHERE table_name = '...'` to verify actual column names. Never trust documentation or migration files over the live schema. The real DB is the source of truth.**

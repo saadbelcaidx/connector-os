@@ -271,7 +271,8 @@ export async function enrichBatch(
   schema: Schema,
   config: EnrichmentConfig,
   onProgress?: (current: number, total: number) => void,
-  runId?: string
+  runId?: string,
+  onResult?: (key: string, result: EnrichmentResult) => void,
 ): Promise<Map<string, EnrichmentResult>> {
   const batchStart = performance.now();
   const results = new Map<string, EnrichmentResult>();
@@ -323,6 +324,7 @@ export async function enrichBatch(
       });
       enrichedCount++;
       completed++;
+      onResult?.(key, results.get(key)!);
       onProgress?.(completed, records.length);
       continue;
     }
@@ -362,6 +364,7 @@ export async function enrichBatch(
       results.set(key, result);
       if (result.outcome === 'ENRICHED') enrichedCount++;
       if (result.outcome === 'VERIFIED') verifiedCount++;
+      onResult?.(key, result);
     }
 
     completed++;
