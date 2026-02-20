@@ -3138,7 +3138,7 @@ export default function Flow() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex items-center justify-center pb-24">
+      <div className="flex-1 flex items-center justify-center pb-24 transition-all duration-300">
         <div className="w-full max-w-[520px] px-6">
 
           <AnimatePresence>
@@ -3374,7 +3374,7 @@ export default function Flow() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="w-full max-w-lg mx-auto"
+              className="w-full max-w-[520px] mx-auto"
             >
               {/* Header */}
               <div className="text-center mb-8">
@@ -3482,7 +3482,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, exit: { duration: 0 } }}
+              transition={{ duration: 0.3, exit: { duration: 0.15 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-2">Finding matches</p>
@@ -3511,8 +3511,8 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, exit: { duration: 0 } }}
-              className="w-full max-w-2xl mx-auto"
+              transition={{ duration: 0.3, exit: { duration: 0.15 } }}
+              className="w-full max-w-[520px] mx-auto"
             >
               {(() => {
                 const matches = state.matchingResult?.demandMatches || [];
@@ -4150,7 +4150,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, exit: { duration: 0 } }}
+              transition={{ duration: 0.3, exit: { duration: 0.15 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-2">Finding decision-makers…</p>
@@ -4732,7 +4732,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, exit: { duration: 0 } }}
+              transition={{ duration: 0.3, exit: { duration: 0.15 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-4">Writing intros</p>
@@ -4759,7 +4759,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, exit: { duration: 0 } }}
+              transition={{ duration: 0.3, exit: { duration: 0.15 } }}
               className="w-full max-w-5xl mx-auto px-4"
             >
               {(() => {
@@ -5033,7 +5033,7 @@ export default function Flow() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.3, exit: { duration: 0 } }}
+              transition={{ duration: 0.3, exit: { duration: 0.15 } }}
               className="text-center"
             >
               <p className="text-[14px] text-white/50 font-medium mb-4">Sending</p>
