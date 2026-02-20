@@ -4409,6 +4409,97 @@ export default function Flow() {
                   error: outcomeCounts['ERROR'] || 0,
                 };
 
+                // =============================================================
+                // ENRICHMENT EXPLANATION — Render-time reason derivation
+                // Deterministic: derived from EnrichmentResult data, no heuristics
+                // No side effects, no state mutations, no API calls
+                // =============================================================
+                type EnrichmentReason =
+                  | 'NO_PERSON_INPUT'
+                  | 'PROVIDER_LIMITATION'
+                  | 'FREE_PLAN_LIMIT'
+                  | 'DOMAIN_ONLY_DATASET'
+                  | 'NO_PROVIDER_CONFIGURED'
+                  | 'PROVIDER_RETURNED_EMPTY';
+
+                const deriveEnrichmentExplanation = (): { reason: EnrichmentReason; lines: string[] } | null => {
+                  if (!enrichmentFailed) return null;
+                  const results = Array.from(state.enrichedDemand.values());
+                  if (results.length === 0) return null;
+
+                  // Rule 1: No person identifiers (person_name and email both absent)
+                  const noPersonCount = results.filter(r =>
+                    !r.inputsPresent.person_name && !r.inputsPresent.email
+                  ).length;
+                  if (noPersonCount === results.length) {
+                    const lines = ['Your dataset contains companies but no individual contacts'];
+                    if (statusCounts.creditsExhausted > 0) {
+                      lines.push('Provider credits exhausted — free plans cannot discover people via API');
+                    } else {
+                      lines.push('Email providers require person-level data (name or LinkedIn)');
+                    }
+                    lines.push('Add contact names or enable people search');
+                    return { reason: 'NO_PERSON_INPUT', lines };
+                  }
+
+                  // Rule 2: No providers configured
+                  if (statusCounts.noProviders > results.length * 0.7) {
+                    return {
+                      reason: 'NO_PROVIDER_CONFIGURED',
+                      lines: [
+                        'No email providers configured',
+                        'Connect Apollo or Anymail in Settings',
+                      ],
+                    };
+                  }
+
+                  // Rule 3: Credits exhausted (deterministic proxy for FREE_PLAN_LIMIT)
+                  if (statusCounts.creditsExhausted > results.length * 0.5) {
+                    return {
+                      reason: 'FREE_PLAN_LIMIT',
+                      lines: [
+                        'Provider credits exhausted',
+                        'Free plans have limited API lookups',
+                        'Upgrade provider plan or add a backup provider',
+                      ],
+                    };
+                  }
+
+                  // Rule 4: Domain-only dataset (domain present, no person name, no email)
+                  const domainOnlyCount = results.filter(r =>
+                    r.inputsPresent.domain && !r.inputsPresent.person_name && !r.inputsPresent.email
+                  ).length;
+                  if (domainOnlyCount > results.length * 0.7) {
+                    return {
+                      reason: 'DOMAIN_ONLY_DATASET',
+                      lines: [
+                        'Dataset has domains but no contact names',
+                        'Providers could not identify decision makers',
+                        'Add person names to improve email discovery',
+                      ],
+                    };
+                  }
+
+                  // Rule 5: Provider returned empty (valid attempts, no results)
+                  if (statusCounts.notFound > results.length * 0.5) {
+                    return {
+                      reason: 'PROVIDER_RETURNED_EMPTY',
+                      lines: [
+                        'Providers searched but found no public emails',
+                        'These contacts may not have discoverable addresses',
+                      ],
+                    };
+                  }
+
+                  // Default: provider attempted, returned nothing
+                  return {
+                    reason: 'PROVIDER_RETURNED_EMPTY',
+                    lines: ['Providers returned no results for this batch'],
+                  };
+                };
+
+                const enrichmentExplanation = deriveEnrichmentExplanation();
+
                 return (
                   <div className="flex flex-col items-center">
                     {/* Checkmark — subtle purple, Linear style */}
@@ -4586,7 +4677,7 @@ export default function Flow() {
                       </motion.div>
                     )}
 
-                    {/* No emails found — action buttons so user isn't stuck */}
+                    {/* No emails found — explanation + action buttons */}
                     {enrichmentFailed && introPairCount === 0 && (
                       <motion.div
                         initial={{ opacity: 0, y: 10 }}
@@ -4594,7 +4685,21 @@ export default function Flow() {
                         transition={{ delay: 0.3 }}
                         className="flex flex-col items-center gap-3 mt-2"
                       >
-                        <p className="text-[12px] text-white/40">No emails found for this batch.</p>
+                        {enrichmentExplanation ? (
+                          <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] max-w-sm">
+                            <p className="text-[10px] text-white/30 uppercase tracking-wider mb-2 text-center">Why?</p>
+                            <div className="space-y-1.5">
+                              {enrichmentExplanation.lines.map((line, i) => (
+                                <div key={i} className="flex items-start gap-2 text-[11px]">
+                                  <span className="text-white/20 mt-0.5 shrink-0">·</span>
+                                  <span className="text-white/50">{line}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[12px] text-white/40">No emails found for this batch.</p>
+                        )}
                         <button
                           onClick={() => {
                             setState(prev => ({

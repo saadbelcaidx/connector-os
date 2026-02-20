@@ -436,20 +436,15 @@ function isServiceProvider(record: NormalizedRecord): boolean {
 }
 
 /**
- * Store records as supply — only keeps companies with provider capability.
- * Returns the number of records that passed the filter.
+ * Store records as supply — neutral admission, no niche-biased filtering.
+ * Flow matching handles relevance scoring downstream.
+ * Returns the number of records stored.
  */
 export function storeAsSupply(records: NormalizedRecord[]): number {
   if (records.length === 0) return 0;
 
-  const qualified = records.filter(isServiceProvider);
-  const dropped = records.length - qualified.length;
-
-  if (qualified.length > 0) {
-    storeCsvData('supply', qualified);
-  }
-
-  localStorage.setItem('supply_gate_stats', JSON.stringify({ kept: qualified.length, filtered: dropped, total: records.length }));
-  console.log(`[Markets] Supply gate: ${qualified.length} providers kept, ${dropped} non-providers filtered out of ${records.length}`);
-  return qualified.length;
+  console.log(`[Markets] Supply admission: ${records.length} records received`);
+  storeCsvData('supply', records);
+  console.log(`[Markets] Supply admission: ${records.length} records stored (neutral — Flow handles relevance)`);
+  return records.length;
 }
