@@ -13,7 +13,7 @@ import { LearnMore, LearnMoreCard, LearnMoreList } from './components/LearnMore'
 import type { AIConfig } from './services/AIService';
 import CsvUpload from './components/CsvUpload';
 import { RecentFlows } from './components/RecentFlows';
-import PrebuiltIntelligence from './components/PrebuiltIntelligence';
+
 
 // =============================================================================
 // TYPES
@@ -716,18 +716,6 @@ export default function Settings() {
 
               {/* Recent Flows — Resume saved sessions */}
               <RecentFlows className="rounded-xl bg-gradient-to-b from-white/[0.02] to-transparent border border-white/[0.06]" />
-
-              {/* Pre-built Intelligence — Free data sources with demand + supply */}
-              <div className="p-5 rounded-xl bg-gradient-to-b from-white/[0.02] to-transparent border border-white/[0.06]">
-                <PrebuiltIntelligence
-                  onDataLoaded={(demand, supply) => {
-                    // Update counts when pre-built data is loaded
-                    setDemandCsvCount(demand.length);
-                    setSupplyCsvCount(supply.length);
-                    console.log('[Settings] Pre-built data loaded:', demand.length, 'demand,', supply.length, 'supply');
-                  }}
-                />
-              </div>
 
               {/* CSV Upload — Manual Data Source */}
               <div>
