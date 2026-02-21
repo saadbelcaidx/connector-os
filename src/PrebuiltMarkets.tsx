@@ -20,7 +20,7 @@ import { searchMarkets, enrichCompanies, normalizeToRecord, storeAsdemand, store
 import { getCsvData } from './services/SignalsClient';
 import type { NormalizedRecord } from './schemas';
 import Dock from './Dock';
-import { MARKETS, type Pack } from './constants/marketPresets';
+import { MARKETS, INDUSTRY_FOCUSES, type Pack, type IndustryFocus } from './constants/marketPresets';
 
 // =============================================================================
 // CONSTANTS — exact API values from Instantly SuperSearch
@@ -297,6 +297,10 @@ export default function PrebuiltMarkets() {
   // UI state
   const [showIndustries, setShowIndustries] = useState(false);
   const [showFunding, setShowFunding] = useState(false);
+  const [activeMarketId, setActiveMarketId] = useState<string | null>(null);
+  const [activeSide, setActiveSide] = useState<'demand' | 'supply' | null>(null);
+  const [uiMode, setUiMode] = useState<'market' | 'custom'>('market');
+  const [activeIndustryFocus, setActiveIndustryFocus] = useState<string | null>(null);
 
   useEffect(() => {
     const d = getCsvData('demand');
@@ -338,20 +342,77 @@ export default function PrebuiltMarkets() {
   // --- Market Preset application ---
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
-  const applyPreset = (preset: Pack) => {
+  const applyPreset = (preset: Pack, industryFocusId?: string | null) => {
     const f = preset.filters;
+
+    // Tripwire: forbidden filter fields must never appear in packs
+    const FORBIDDEN = ['employeeCount', 'revenue', 'fundingStage', 'jobPostings'] as const;
+    for (const field of FORBIDDEN) {
+      if ((f as Record<string, unknown>)[field]) {
+        console.error(`[PACK_INVALID] ${preset.id} sets forbidden field: ${field}`);
+      }
+    }
+
     if (f.signals) setSelectedSignals(f.signals);
-    if (f.industries) setSelectedIndustries(f.industries);
     if (f.fundingStage) setSelectedFunding(f.fundingStage);
     if (f.employeeCount) setSelectedEmployeeCount(f.employeeCount);
     if (f.revenue) setSelectedRevenue(f.revenue);
-    if (f.keywordsInclude !== undefined) setKeywordInclude(f.keywordsInclude);
     if (f.keywordsExclude !== undefined) setKeywordExclude(f.keywordsExclude);
     if (f.jobPostings !== undefined) setJobListingFilter(f.jobPostings);
-    if (f.titleInclude !== undefined) setTitleInclude(f.titleInclude);
     if (f.titleExclude !== undefined) setTitleExclude(f.titleExclude);
     if (f.locations !== undefined) setLocationInput(f.locations);
+
+    // Industry focus overlay — merges with pack filters, never replaces
+    const focus = INDUSTRY_FOCUSES.find(fo => fo.id === (industryFocusId ?? activeIndustryFocus));
+    if (focus) {
+      // Industries: pack industries + focus industries (dedupe)
+      const packIndustries = f.industries || [];
+      setSelectedIndustries([...new Set([...packIndustries, ...focus.industries])]);
+      // Keywords: pack + focus
+      const baseKw = f.keywordsInclude || '';
+      setKeywordInclude(baseKw ? `${baseKw}, ${focus.keywordsInclude}` : focus.keywordsInclude);
+      // Titles: pack + focus bias
+      const baseTitles = f.titleInclude || '';
+      setTitleInclude(baseTitles ? `${baseTitles}, ${focus.titleBias}` : focus.titleBias);
+    } else {
+      if (f.industries) setSelectedIndustries(f.industries);
+      if (f.keywordsInclude !== undefined) setKeywordInclude(f.keywordsInclude);
+      if (f.titleInclude !== undefined) setTitleInclude(f.titleInclude);
+    }
+
     setActivePresetId(preset.id);
+
+    // Diagnostic: log pack change with focus + filter count
+    const filterCount = [
+      f.signals?.length ? 'signals' : '',
+      f.industries?.length ? 'industries' : '',
+      f.keywordsInclude ? 'keywords' : '',
+      f.titleInclude ? 'titles' : '',
+      f.fundingStage?.length ? 'funding' : '',
+      f.employeeCount?.length ? 'employees' : '',
+      f.revenue?.length ? 'revenue' : '',
+      f.jobPostings ? 'jobPostings' : '',
+    ].filter(Boolean).length;
+    const focusId = industryFocusId ?? activeIndustryFocus;
+    console.log(`[PACK_CHANGE] ${preset.id} | focus: ${focusId || 'none'} | filters: ${filterCount}`);
+  };
+
+  // Apply or remove industry focus — re-applies current pack with overlay
+  const toggleIndustryFocus = (focusId: string) => {
+    const nextFocus = activeIndustryFocus === focusId ? null : focusId;
+    setActiveIndustryFocus(nextFocus);
+    // Re-apply current pack with new focus
+    if (activePresetId) {
+      const pack = MARKETS.flatMap(m => m.packs).find(p => p.id === activePresetId);
+      if (pack) {
+        applyPreset(pack, nextFocus);
+        if (nextFocus) {
+          console.log(`[FOCUS_OVERLAY] ${pack.id} + ${nextFocus}`);
+        } else {
+          console.log(`[FOCUS_OVERLAY] ${pack.id} (focus cleared)`);
+        }
+      }
+    }
   };
 
   const clearPreset = () => {
@@ -369,6 +430,7 @@ export default function PrebuiltMarkets() {
     setLocationInput('');
     setTechnologiesInput('');
     setActivePresetId(null);
+    setActiveIndustryFocus(null);
   };
 
   const toggleChip = (list: string[], value: string, setter: (v: string[]) => void) => {
@@ -699,59 +761,109 @@ export default function PrebuiltMarkets() {
               </div>
             )}
 
-            {/* StarterMarketHeader — mental model framing layer */}
-            {MARKETS.length > 0 && (
+            {/* Mode segmented control */}
+            <div className="flex items-center gap-1 p-1 rounded-lg bg-white/[0.03] border border-white/[0.06] w-fit">
+              <button
+                onClick={() => setUiMode('market')}
+                className={`h-8 px-4 rounded-md text-[12px] font-medium transition-all duration-150 ${
+                  uiMode === 'market'
+                    ? 'bg-white/[0.10] text-white/90 shadow-sm'
+                    : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                Start from a market
+              </button>
+              <button
+                onClick={() => setUiMode('custom')}
+                className={`h-8 px-4 rounded-md text-[12px] font-medium transition-all duration-150 ${
+                  uiMode === 'custom'
+                    ? 'bg-white/[0.10] text-white/90 shadow-sm'
+                    : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                Custom search
+              </button>
+            </div>
+
+            {/* Market cards — accordion, one expanded at a time */}
+            {uiMode === 'market' && MARKETS.length > 0 && (
               <section className="pb-2">
-                <h2 className="text-[11px] text-white/25 uppercase tracking-widest font-medium mb-6">Start from a market</h2>
 
                 {MARKETS.map(market => {
+                  const isExpanded = activeMarketId === market.id;
                   const demandPacks = market.packs.filter(p => p.side === 'demand');
                   const supplyPacks = market.packs.filter(p => p.side === 'supply');
+                  const currentSide = isExpanded ? activeSide : null;
+
+                  const handleSideClick = (side: 'demand' | 'supply') => {
+                    if (activeMarketId === market.id && activeSide === side) {
+                      // Collapse — full reset
+                      setActiveMarketId(null);
+                      setActiveSide(null);
+                      clearPreset();
+                    } else if (activeMarketId === market.id) {
+                      // Switching sides within SAME market — preserve industry focus
+                      const savedFocus = activeIndustryFocus;
+                      setActiveSide(side);
+                      clearPreset();
+                      if (savedFocus) {
+                        // Restore focus if it belongs to this market
+                        const focusBelongs = INDUSTRY_FOCUSES.some(f => f.id === savedFocus && f.market === market.id);
+                        if (focusBelongs) setActiveIndustryFocus(savedFocus);
+                      }
+                    } else {
+                      // Switching to different market — full reset
+                      setActiveMarketId(market.id);
+                      setActiveSide(side);
+                      clearPreset();
+                    }
+                  };
+
                   return (
-                    <div key={market.id} className="rounded-lg border border-white/[0.06] bg-white/[0.01] p-5 mb-4">
+                    <div key={market.id} className="rounded-lg border border-white/[0.06] bg-white/[0.01] mb-4 overflow-hidden">
                       {/* Market title + description */}
-                      <div className="mb-4">
+                      <div className="p-5 pb-4">
                         <h3 className="text-[13px] text-white/80 font-medium uppercase tracking-wider mb-1">{market.name}</h3>
                         <p className="text-[12px] text-white/30 leading-relaxed">{market.description}</p>
                       </div>
 
-                      {/* Demand packs row */}
-                      {demandPacks.length > 0 && (
-                        <div className="mb-3">
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <span className="w-[6px] h-[6px] rounded-full bg-violet-500" />
-                            <span className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Demand</span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {demandPacks.map(pack => {
-                              const isActive = activePresetId === pack.id;
-                              return (
-                                <button
-                                  key={pack.id}
-                                  onClick={() => isActive ? clearPreset() : applyPreset(pack)}
-                                  className={`h-7 px-3 rounded-md text-[11px] font-medium transition-all duration-150 flex items-center gap-1.5
-                                    ${isActive
-                                      ? 'bg-white text-[#09090b] hover:bg-white/80'
-                                      : 'bg-white/[0.04] border border-white/[0.08] text-white/50 hover:text-white/70 hover:border-white/[0.15]'
-                                    }`}
-                                >
-                                  {pack.name}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
+                      {/* Side toggle buttons */}
+                      <div className="px-5 pb-4 flex items-center gap-2">
+                        <button
+                          onClick={() => handleSideClick('demand')}
+                          className={`h-8 px-4 rounded-md text-[12px] font-medium transition-all duration-200 flex items-center gap-2 ${
+                            currentSide === 'demand'
+                              ? 'bg-white/[0.10] text-white/90 border border-white/[0.15] shadow-[0_0_16px_rgba(255,255,255,0.03)]'
+                              : 'bg-white/[0.03] text-white/40 border border-white/[0.06] hover:bg-white/[0.06] hover:text-white/60 hover:border-white/[0.10]'
+                          }`}
+                        >
+                          <span className="w-[6px] h-[6px] rounded-full bg-violet-500" />
+                          Demand
+                        </button>
+                        <button
+                          onClick={() => handleSideClick('supply')}
+                          className={`h-8 px-4 rounded-md text-[12px] font-medium transition-all duration-200 flex items-center gap-2 ${
+                            currentSide === 'supply'
+                              ? 'bg-white/[0.10] text-white/90 border border-white/[0.15] shadow-[0_0_16px_rgba(255,255,255,0.03)]'
+                              : 'bg-white/[0.03] text-white/40 border border-white/[0.06] hover:bg-white/[0.06] hover:text-white/60 hover:border-white/[0.10]'
+                          }`}
+                        >
+                          <span className="w-[6px] h-[6px] rounded-full bg-blue-500" />
+                          Supply
+                        </button>
+                      </div>
 
-                      {/* Supply packs row */}
-                      {supplyPacks.length > 0 && (
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <span className="w-[6px] h-[6px] rounded-full bg-blue-500" />
-                            <span className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Supply</span>
-                          </div>
+                      {/* Expanded packs — animated height + opacity */}
+                      <div
+                        className="transition-all duration-200 ease-out overflow-hidden"
+                        style={{
+                          maxHeight: currentSide ? '300px' : '0px',
+                          opacity: currentSide ? 1 : 0,
+                        }}
+                      >
+                        <div className="px-5 pb-5">
                           <div className="flex flex-wrap gap-2">
-                            {supplyPacks.map(pack => {
+                            {(currentSide === 'demand' ? demandPacks : currentSide === 'supply' ? supplyPacks : []).map(pack => {
                               const isActive = activePresetId === pack.id;
                               return (
                                 <button
@@ -768,13 +880,62 @@ export default function PrebuiltMarkets() {
                               );
                             })}
                           </div>
+
+                          {/* Industry focus — markets that have focuses */}
+                          {INDUSTRY_FOCUSES.some(f => f.market === market.id) && activePresetId && (
+                            <div className="mt-3 pt-3 border-t border-white/[0.04]">
+                              <div className="text-[10px] text-white/25 uppercase tracking-wider mb-2">Industry focus</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {INDUSTRY_FOCUSES.filter(f => f.market === market.id).map(focus => {
+                                  const isActive = activeIndustryFocus === focus.id;
+                                  return (
+                                    <button
+                                      key={focus.id}
+                                      onClick={() => toggleIndustryFocus(focus.id)}
+                                      className={`h-6 px-2.5 rounded text-[11px] transition-all duration-150 active:scale-[0.97] ${
+                                        isActive
+                                          ? 'bg-white/[0.15] text-white/90 border border-white/[0.20] font-medium'
+                                          : 'bg-white/[0.03] text-white/35 border border-white/[0.06] hover:text-white/55 hover:border-white/[0.12]'
+                                      }`}
+                                    >
+                                      {focus.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <p className="mt-2 text-[10px] text-white/15 leading-relaxed">Focus persists when switching Demand / Supply. Switching markets clears it.</p>
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
               </section>
             )}
+
+            {/* Custom search — "Back to markets" link */}
+            {uiMode === 'custom' && (
+              <button
+                onClick={() => setUiMode('market')}
+                className="text-[12px] text-white/30 hover:text-white/60 transition-colors"
+              >
+                &larr; Back to markets
+              </button>
+            )}
+
+            {/* Fine-tune filters link — shown in market mode when a pack is selected */}
+            {uiMode === 'market' && activePresetId && (
+              <button
+                onClick={() => setUiMode('custom')}
+                className="text-[12px] text-white/30 hover:text-white/60 transition-colors underline underline-offset-2 decoration-white/10 hover:decoration-white/30"
+              >
+                Fine-tune filters
+              </button>
+            )}
+
+            {/* === FILTER SECTIONS — visible in Custom search mode only === */}
+            {uiMode === 'custom' && (<>
 
             {/* Signals — grouped by category with icons */}
             <section>
@@ -1037,6 +1198,8 @@ export default function PrebuiltMarkets() {
                 </div>
               )}
             </section>
+
+            </>)}
           </div>
         )}
 
@@ -1138,6 +1301,18 @@ export default function PrebuiltMarkets() {
               {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount !== 1 ? 's' : ''} active` : 'No filters selected'}
             </span>
             <div className="flex items-center gap-3">
+              {/* Industry focus overlay badge */}
+              {activeIndustryFocus && (
+                <span className="h-7 px-2.5 rounded-md bg-white/[0.06] border border-white/[0.08] text-[11px] text-white/50 flex items-center gap-1.5">
+                  Overlay: {INDUSTRY_FOCUSES.find(f => f.id === activeIndustryFocus)?.name}
+                  <button
+                    onClick={() => toggleIndustryFocus(activeIndustryFocus)}
+                    className="text-white/25 hover:text-white/60 transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
               <div className="flex items-center gap-2 px-3 h-9 rounded-lg bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.12] transition-colors">
                 <span className="text-[11px] text-white/40 uppercase tracking-wide">Target</span>
                 <input type="number" value={targetCount} min={50} max={1000} step={50}

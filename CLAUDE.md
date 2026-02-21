@@ -3402,6 +3402,38 @@ keywords: { linkedIn_Data, bright_data, website_Data }
 - Page: `src/PrebuiltMarkets.tsx`
 - Settings modal: `src/components/PrebuiltIntelligence.tsx` (MarketsModal — unchanged)
 
+### Market Presets — Canonical Template
+
+**Reference implementation: Wealth Management** (`src/constants/marketPresets.ts`)
+
+All future markets must follow this structure:
+
+| Element | Pattern |
+|---------|---------|
+| **Positioning** | "When [trigger] — [supply players] get paid, you sit in the middle." |
+| **Demand packs (3)** | One economic trigger each. Event-driven, not industry-driven. |
+| **Supply packs (3)** | One monetization role each. Role-driven, industry-scoped. |
+
+**Demand pack anatomy:**
+- Name = economic event (Liquidity Events, Founder Transition, Growth Windfall)
+- Signals = exact API IDs mapping to the trigger
+- Titles = decision-makers only (CEO, Founder, CFO, Owner)
+- No industry filter — events cross industries
+
+**Supply pack anatomy:**
+- Name = who gets paid (RIAs, Family Offices, M&A Advisors)
+- Signals = activity signals (signs_new_client, partners_with, hires)
+- Industries = scoped to supply's vertical
+- Titles = senior operators (Managing Partner, Principal, MD)
+
+**Rules:**
+1. Packs contain only essential filters — no noise, no padding
+2. Ontology (side, market, packId, origin) stamped at ingestion, write-once
+3. Signals are interpreted, never rewritten
+4. Supply capability drives intro framing — AI must NOT infer from description
+5. keywordsExclude always filters noise actors
+6. titleExclude always filters junior titles
+
 ### Rules
 
 1. **Never search the web for Instantly API docs.** Everything is reverse-engineered and documented here.
