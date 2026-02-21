@@ -23,6 +23,21 @@ import Dock from './Dock';
 import { MARKETS, INDUSTRY_FOCUSES, type Pack, type IndustryFocus } from './constants/marketPresets';
 
 // =============================================================================
+// BOOT VALIDATOR — tripwire for forbidden filters in market packs
+// Runs once at module load. No UI, no blocking, just console.error.
+// =============================================================================
+const FORBIDDEN_PACK_FIELDS = ['employeeCount', 'revenue', 'fundingStage', 'jobPostings', 'technologies'] as const;
+for (const market of MARKETS) {
+  for (const pack of market.packs) {
+    for (const field of FORBIDDEN_PACK_FIELDS) {
+      if ((pack.filters as Record<string, unknown>)[field]) {
+        console.error(`[PACK_INVALID] ${pack.id} sets forbidden field: ${field}`);
+      }
+    }
+  }
+}
+
+// =============================================================================
 // CONSTANTS — exact API values from Instantly SuperSearch
 // =============================================================================
 
@@ -1227,6 +1242,11 @@ export default function PrebuiltMarkets() {
                 {exhausted && enrichedRecords.length < targetCount && (
                   <span className="text-amber-400/70 text-[11px]">
                     Filters yielded {enrichedRecords.length} companies. Broaden titles or signals to increase pool.
+                  </span>
+                )}
+                {enrichedRecords.length > 0 && enrichedRecords.length < 25 && (
+                  <span className="text-amber-400/50 text-[11px]">
+                    Pool too small — broaden signals/keywords or clear filters.
                   </span>
                 )}
               </div>
