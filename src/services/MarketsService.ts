@@ -298,6 +298,16 @@ export function normalizeToRecord(
     raw.num_employees_enum = String(company.employee_count);
   }
 
+  // Extract domain ONLY from hard evidence — no inference, no guessing
+  let derivedDomain: string | null = null;
+  if (lead.companyLogo) {
+    const logoMatch = lead.companyLogo.match(/logo\.clearbit\.com\/([^/?]+)/i);
+    if (logoMatch && logoMatch[1].includes('.')) {
+      derivedDomain = logoMatch[1].toLowerCase();
+      console.log(`[Markets] Domain from logo: ${derivedDomain} (${companyName})`);
+    }
+  }
+
   return {
     recordKey,
 
@@ -315,10 +325,10 @@ export function normalizeToRecord(
     headline,
     seniorityLevel: null,
 
-    // Company — domain is null; Flow enriches by company name
+    // Company — write-once: explicit domain > logo domain > null
     company: companyName,
-    domain: null,
-    domainSource: 'none',
+    domain: (lead as any).domain ?? derivedDomain ?? null,
+    domainSource: (lead as any).domain ? 'explicit' : derivedDomain ? 'logo' : 'none',
     industry,
     size: company?.employee_count ? String(company.employee_count) : null,
     companyDescription: descriptionTrimmed,

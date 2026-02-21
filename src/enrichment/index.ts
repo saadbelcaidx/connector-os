@@ -273,6 +273,7 @@ export async function enrichBatch(
   onProgress?: (current: number, total: number) => void,
   runId?: string,
   onResult?: (key: string, result: EnrichmentResult) => void,
+  cancelled?: () => boolean,
 ): Promise<Map<string, EnrichmentResult>> {
   const batchStart = performance.now();
   const results = new Map<string, EnrichmentResult>();
@@ -293,6 +294,12 @@ export async function enrichBatch(
   let verifiedCount = 0;
 
   for (const record of records) {
+    // Cancellation check — stop processing when run is stale
+    if (cancelled?.()) {
+      console.log(`[EnrichBatch] Cancelled at record ${completed}/${records.length}`);
+      break;
+    }
+
     // Use recordKey for stable identification (works for domainless records)
     const key = recordKey(record);
 

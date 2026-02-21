@@ -844,7 +844,7 @@ function IntroBadge({ source }: { source?: 'template' | 'ai' | 'ai-fallback' }) 
 }
 
 interface FlowState {
-  step: 'upload' | 'validating' | 'preview' | 'matching' | 'matches_found' | 'no_matches' | 'enriching' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
+  step: 'upload' | 'validating' | 'preview' | 'matching' | 'matches_found' | 'no_matches' | 'enriching' | 'enrichment_paused' | 'route_context' | 'generating' | 'ready' | 'sending' | 'complete';
 
   // Data Preview — Stripe-style transparency
   dataPreview: DataPreview | null;
@@ -895,6 +895,9 @@ interface FlowState {
   auditData: RunAuditData | null;
   copyValidationFailures: CopyValidationResult[];
 
+  // Enrichment skipped/cancelled — show amber banner in route_context
+  enrichmentSkipped: boolean;
+
   // INVARIANT C: No data loss on resume
   // If results exceed storage limits, preserve summaries
   resultsDropped: boolean;
@@ -917,6 +920,14 @@ interface Settings {
   aiConfig: AIConfig | null;
   // LAYER 3: OpenAI key as fallback when Azure content filter blocks
   openaiApiKeyFallback?: string;
+}
+
+// Safe size helper — works on Map (live), object (post-deserialize), and array
+function getSize(x: unknown): number {
+  if (x instanceof Map) return x.size;
+  if (Array.isArray(x)) return x.length;
+  if (x && typeof x === 'object') return Object.keys(x).length;
+  return 0;
 }
 
 // =============================================================================
@@ -944,6 +955,7 @@ export default function Flow() {
     error: null,
     flowBlock: null,
     auditData: null,
+    enrichmentSkipped: false,
     resultsDropped: false,
     droppedCounts: null,
     copyValidationFailures: [],
@@ -969,6 +981,7 @@ export default function Flow() {
   const [supplyAwareFilter, setSupplyAwareFilter] = useState<FilterResult | null>(null);
 
   const abortRef = useRef(false);
+  const currentRunIdRef = useRef<string | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
@@ -982,8 +995,8 @@ export default function Flow() {
   // VALID_STEPS — used for restore validation (user.txt Task 1)
   const VALID_STEPS = [
     'upload', 'validating', 'preview', 'matching', 'matches_found',
-    'no_matches', 'enriching', 'route_context', 'generating',
-    'ready', 'sending', 'complete'
+    'no_matches', 'enriching', 'enrichment_paused', 'route_context',
+    'generating', 'ready', 'sending', 'complete'
   ] as const;
 
   // Serialize Maps to objects for IndexedDB storage
@@ -1002,6 +1015,7 @@ export default function Flow() {
     progress: s.progress,
     sentDemand: s.sentDemand,
     sentSupply: s.sentSupply,
+    enrichmentSkipped: s.enrichmentSkipped,
   }), []);
 
   // Deserialize objects back to Maps (with restore guard - user.txt Task 1)
@@ -1017,7 +1031,7 @@ export default function Flow() {
     }
 
     // Task 1: Restore guard — if step requires prerequisites, validate them
-    const requiresSchemas = ['enriching', 'route_context', 'generating', 'ready', 'sending'].includes(step);
+    const requiresSchemas = ['enriching', 'enrichment_paused', 'route_context', 'generating', 'ready', 'sending'].includes(step);
     const hasSchemas = data.demandSchema != null;
     const hasMatchingResult = data.matchingResult != null;
 
@@ -1030,6 +1044,12 @@ export default function Flow() {
         console.warn(`[Flow] Step "${step}" requires matchingResult but missing, downgrading to upload`);
         step = 'upload';
       }
+      downgraded = true;
+    }
+
+    // Restore downgrade: enriching → enrichment_paused (execution died, preserve data)
+    if (step === 'enriching') {
+      step = 'enrichment_paused';
       downgraded = true;
     }
 
@@ -1055,6 +1075,7 @@ export default function Flow() {
       progress: data.progress || { current: 0, total: 0, message: '' },
       sentDemand: data.sentDemand || 0,
       sentSupply: data.sentSupply || 0,
+      enrichmentSkipped: data.enrichmentSkipped || false,
       _downgraded: downgraded,  // Signal for UX toast
     };
   }, []);
@@ -1155,9 +1176,7 @@ export default function Flow() {
         const enrichedCount = (restored.enrichedDemand?.size || 0) + (restored.enrichedSupply?.size || 0);
         const introsCount = (restored.demandIntros?.size || 0) + (restored.supplyIntros?.size || 0);
 
-        if (restored.step === 'enriching' && enrichedCount > 0 && !restored._downgraded) {
-          setRestoreMessage(`resume enrichment — ${enrichedCount} contacts already saved`);
-        } else if (restored.step === 'generating' && introsCount > 0 && !restored._downgraded) {
+        if (restored.step === 'generating' && introsCount > 0 && !restored._downgraded) {
           setRestoreMessage(`resume intro generation — ${introsCount} intros already saved`);
         }
 
@@ -1828,13 +1847,55 @@ export default function Flow() {
     console.log('[ENRICH] User clicked "Find the right people" - proceeding to enrichment');
     console.log('[ENRICH] This will use credits for', state.matchingResult.demandMatches.length, 'records');
 
+    // Capability preflight — fail loud for ConnectorAgent-only users with domainless data
+    const demandRecs = state.matchingResult.demandMatches.map(m => m.demand);
+    const supplyRecs = state.matchingResult.demandMatches.map(m => m.supply);
+    const allRecs = [...demandRecs, ...supplyRecs];
+
+    const plan = buildEnrichmentPlan(
+      allRecs.map(r => ({
+        domain: r.domain,
+        company: r.company,
+        email: r.email,
+      })),
+      {
+        apolloApiKey: settings?.apolloApiKey,
+        anymailApiKey: settings?.anymailApiKey,
+        connectorAgentApiKey: settings?.connectorAgentApiKey,
+      }
+    );
+
+    const { summary } = plan;
+    const onlyConnectorAgent = summary.enabledProviders.length === 1
+      && summary.enabledProviders[0] === 'connectorAgent';
+
+    if (onlyConnectorAgent && summary.recordsMissingDomain > 0) {
+      const total = summary.totalRecords - summary.recordsWithEmail;
+      setState(prev => ({
+        ...prev,
+        flowBlock: {
+          code: 'ENRICHMENT_CAPABILITY_MISMATCH',
+          title: 'Limited enrichment',
+          detail: `${summary.recordsMissingDomain} of ${total} records have no website. Connector Agent requires a domain to find emails. Add Apollo or Anymail API keys in Settings, or skip enrichment.`,
+          next_step: 'Go to Settings',
+          severity: 'warning',
+        },
+      }));
+      return;
+    }
+
+    // Generate unique run identity — stale callbacks cannot mutate state
+    const runId = crypto.randomUUID();
+    currentRunIdRef.current = runId;
+
     setState(prev => ({
       ...prev,
       step: 'enriching',
+      enrichmentSkipped: false,
       progress: { current: 0, total: state.matchingResult?.demandMatches.length || 0, message: 'Finding decision-makers…' },
     }));
 
-    await runEnrichment(state.matchingResult, state.demandSchema, state.supplySchema);
+    await runEnrichment(state.matchingResult, state.demandSchema, state.supplySchema, runId);
   };
 
   // =============================================================================
@@ -1844,16 +1905,14 @@ export default function Flow() {
   const runEnrichment = async (
     matching: MatchingResult,
     demandSchema: Schema,
-    supplySchema: Schema | null
+    supplySchema: Schema | null,
+    runId: string
   ) => {
     const config: EnrichmentConfig = {
       apolloApiKey: settings?.apolloApiKey,
       anymailApiKey: settings?.anymailApiKey,
       connectorAgentApiKey: settings?.connectorAgentApiKey,
     };
-
-    // Run ID for this batch
-    const runId = `flow-${Date.now()}`;
 
     console.log('[Flow] Enrichment config:', {
       hasApollo: !!config.apolloApiKey,
@@ -1884,6 +1943,7 @@ export default function Flow() {
         demandSchema,
         config,
         (current, total) => {
+          if (runId !== currentRunIdRef.current) return;
           const done = existingDemand.size + current;
           setState(prev => ({
             ...prev,
@@ -1893,12 +1953,15 @@ export default function Flow() {
         `${runId}-demand`,
         // Progressive enrichedDemand update — UI reflects each result immediately
         (key, result) => {
+          if (runId !== currentRunIdRef.current) return;
           enrichedDemand.set(key, result);
           setState(prev => ({
             ...prev,
             enrichedDemand: new Map(enrichedDemand),
           }));
         },
+        // Cancellation predicate — stop processing when run is stale
+        () => runId !== currentRunIdRef.current,
       );
 
       // Merge any remaining (safety — onResult already handled these)
@@ -1908,6 +1971,7 @@ export default function Flow() {
     }
 
     // Final persist for demand
+    if (runId !== currentRunIdRef.current) return;
     setState(prev => ({
       ...prev,
       enrichedDemand: new Map(enrichedDemand),
@@ -1936,10 +2000,11 @@ export default function Flow() {
 
     let supplyIdx = 0;
     for (const agg of supplyToEnrich) {
-      if (abortRef.current) break;
+      if (runId !== currentRunIdRef.current) break;
       supplyIdx++;
 
       // Update progress for supply side
+      if (runId !== currentRunIdRef.current) break;
       setState(prev => ({
         ...prev,
         progress: { current: supplyIdx, total: supplyToEnrich.length, message: `Step 2/2 — supply ${supplyIdx}/${supplyToEnrich.length}` },
@@ -1955,6 +2020,7 @@ export default function Flow() {
         try {
           const result = await enrichRecord(record, supplySchema, config, undefined, correlationId);
           enrichedSupply.set(key, result);
+          if (runId !== currentRunIdRef.current) break;
           setState(prev => ({ ...prev, enrichedSupply: new Map(enrichedSupply) }));
         } catch (err) {
           console.log(`[Enrichment] cid=${correlationId} UNCAUGHT domain=${record.domain} error=${err instanceof Error ? err.message : String(err)}`);
@@ -1982,12 +2048,14 @@ export default function Flow() {
             },
             durationMs: 0,
           });
+          if (runId !== currentRunIdRef.current) break;
           setState(prev => ({ ...prev, enrichedSupply: new Map(enrichedSupply) }));
         }
       }
     }
 
-    // Final persist for supply
+    // Final persist for supply — guard stale run
+    if (runId !== currentRunIdRef.current) return;
     setState(prev => ({
       ...prev,
       enrichedSupply: new Map(enrichedSupply),
@@ -2023,6 +2091,7 @@ export default function Flow() {
 
     // ATOMIC STATE UPDATE: Set enrichment results AND step change together
     // This prevents race conditions where route_context renders before enrichment data is available
+    if (runId !== currentRunIdRef.current) return;
     setState(prev => ({
       ...prev,
       enrichedDemand,
@@ -3224,7 +3293,7 @@ export default function Flow() {
                         {state.flowBlock.detail}
                       </p>
 
-                      {/* Single CTA */}
+                      {/* Primary CTA */}
                       <button
                         onClick={() => {
                           navigate('/settings');
@@ -3234,6 +3303,18 @@ export default function Flow() {
                       >
                         {state.flowBlock.next_step}
                       </button>
+
+                      {/* Secondary action — skip enrichment for capability mismatch */}
+                      {state.flowBlock.code === 'ENRICHMENT_CAPABILITY_MISMATCH' && (
+                        <button
+                          onClick={() => {
+                            setState(prev => ({ ...prev, step: 'route_context', enrichmentSkipped: true, flowBlock: null }));
+                          }}
+                          className="w-full mt-2 py-2 text-[11px] text-white/30 hover:text-white/50 transition-colors"
+                        >
+                          Skip enrichment
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -4213,6 +4294,53 @@ export default function Flow() {
                 </div>
               </div>
               <p className="mt-8 text-[11px] text-white/20">Safe to leave</p>
+              <button
+                onClick={() => {
+                  currentRunIdRef.current = null;
+                  setState(prev => ({
+                    ...prev,
+                    step: 'route_context',
+                    enrichmentSkipped: true,
+                  }));
+                }}
+                className="mt-4 text-[11px] text-white/30 hover:text-white/50 transition-colors"
+              >
+                Cancel enrichment
+              </button>
+            </motion.div>
+          )}
+
+          {/* ENRICHMENT PAUSED — Tab died or user navigated away */}
+          {state.step === 'enrichment_paused' && (
+            <motion.div key="enrichment_paused" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center">
+              <p className="text-[14px] text-white/50 font-medium mb-2">Enrichment paused</p>
+              <p className="text-[11px] text-white/30 mb-6">
+                {getSize(state.enrichedDemand) + getSize(state.enrichedSupply)} contacts already saved.
+              </p>
+
+              <button onClick={() => proceedToEnrichment()}
+                className="block mx-auto mb-3 px-5 py-2 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] text-white/70 text-[13px] transition-colors">
+                Resume enrichment
+              </button>
+
+              <button onClick={() => setState(prev => ({ ...prev, step: 'route_context', enrichmentSkipped: true, flowBlock: null }))}
+                className="block mx-auto mb-3 px-5 py-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-white/40 text-[13px] transition-colors">
+                Skip enrichment
+              </button>
+
+              <button onClick={() => setState(prev => ({
+                ...prev,
+                step: 'matches_found',
+                enrichedDemand: new Map(),
+                enrichedSupply: new Map(),
+                demandIntros: new Map(),
+                supplyIntros: new Map(),
+                progress: { current: 0, total: 0, message: '' },
+                enrichmentSkipped: false,
+              }))}
+                className="block mx-auto px-5 py-2 rounded-lg text-white/20 hover:text-white/40 text-[11px] transition-colors">
+                Restart from matching
+              </button>
             </motion.div>
           )}
 
@@ -4226,6 +4354,11 @@ export default function Flow() {
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1], exit: { duration: 0.15 } }}
               className="text-center"
             >
+              {state.enrichmentSkipped && (
+                <p className="text-[11px] text-amber-400/50 mb-4">
+                  Enrichment cancelled — proceeding with pre-existing emails only.
+                </p>
+              )}
               {(() => {
                 // INVARIANT: Match count persists independently of enrichment
                 const demandMatches = state.matchingResult?.demandMatches || [];
