@@ -113,6 +113,8 @@ export interface Pack {
     asNeed: string;    // fits "looking for [X]" (painTheySolve slot)
     asEntity: string;  // fits "connected to [X]" (whoTheyAre slot)
   };
+  /** Decision area noun phrase — fits "start thinking about [X]" in Block 2 */
+  decisionCategory?: string;
   filters: PackFilters;
 }
 
@@ -157,6 +159,27 @@ export function getPackIntroPhrase(packId: string | undefined | null): { asNeed:
     }
   }
   return _introPhraseLookup[packId] || null;
+}
+
+// =============================================================================
+// DECISION CATEGORY LOOKUP — O(1) packId → decisionCategory resolution
+// =============================================================================
+
+const _decisionCategoryLookup: Record<string, string> = {};
+
+/** Resolve packId → curated decision category. Returns null if no pack or no category. */
+export function getPackDecisionCategory(packId: string | undefined | null): string | null {
+  if (!packId) return null;
+  if (Object.keys(_decisionCategoryLookup).length === 0) {
+    for (const market of MARKETS) {
+      for (const pack of market.packs) {
+        if (pack.decisionCategory) {
+          _decisionCategoryLookup[pack.id] = pack.decisionCategory;
+        }
+      }
+    }
+  }
+  return _decisionCategoryLookup[packId] || null;
 }
 
 export interface Market {
@@ -243,6 +266,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to fill scientist and R&D leadership roles',
           asEntity: 'life sciences recruiting firm that places scientists and R&D leaders',
         },
+        decisionCategory: 'specialized life science recruiting',
         filters: {
           signals: ['signs_new_client', 'hires', 'partners_with'],
           industries: ['Staffing and Recruiting', 'Human Resources', 'Biotechnology'],
@@ -262,6 +286,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to run clinical trials and regulatory submissions',
           asEntity: 'CRO that runs clinical trials and regulatory submissions',
         },
+        decisionCategory: 'clinical trial operations',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'receives_financing'],
           industries: ['Biotechnology', 'Research', 'Hospital & Health Care', 'Pharmaceuticals'],
@@ -281,6 +306,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to close licensing and tech transfer deals',
           asEntity: 'licensing advisory firm that brokers IP and tech transfer deals',
         },
+        decisionCategory: 'licensing and tech transfer strategy',
         filters: {
           signals: ['partners_with', 'signs_new_client', 'acquires'],
           industries: ['Management Consulting', 'Investment Banking', 'Venture Capital & Private Equity', 'Biotechnology'],
@@ -351,6 +377,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to manage wealth and investment portfolios',
           asEntity: 'wealth advisory practice that manages portfolios for high-net-worth individuals',
         },
+        decisionCategory: 'wealth advisory support',
         filters: {
           signals: ['signs_new_client', 'hires', 'partners_with'],
           industries: ['Investment Management', 'Financial Services', 'Capital Markets'],
@@ -369,6 +396,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to structure direct investments and multi-gen wealth',
           asEntity: 'family office that does direct investments and structures multi-generational wealth',
         },
+        decisionCategory: 'direct investments and wealth structuring',
         filters: {
           signals: ['signs_new_client', 'invests_into', 'partners_with'],
           industries: ['Investment Management', 'Financial Services', 'Venture Capital & Private Equity'],
@@ -387,6 +415,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to navigate M&A and exit transactions',
           asEntity: 'M&A advisory group that handles acquisitions and exit transactions',
         },
+        decisionCategory: 'exit planning and M&A advisory',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'acquires'],
           industries: ['Investment Banking', 'Management Consulting', 'Financial Services', 'Venture Capital & Private Equity'],
@@ -456,6 +485,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to fill VP and C-level positions',
           asEntity: 'executive search firm that places C-suite and senior leaders',
         },
+        decisionCategory: 'senior leadership hiring support',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Staffing and Recruiting', 'Human Resources', 'Management Consulting'],
@@ -474,6 +504,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to fill specialized and technical roles',
           asEntity: 'recruiting firm that fills specialized and technical roles',
         },
+        decisionCategory: 'specialized technical recruiting',
         filters: {
           signals: ['signs_new_client', 'hires', 'partners_with'],
           industries: ['Staffing and Recruiting', 'Human Resources'],
@@ -492,6 +523,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to bring on contract and staff augmentation',
           asEntity: 'staffing firm that provides contract and staff augmentation workforce',
         },
+        decisionCategory: 'contract staffing and workforce augmentation',
         filters: {
           signals: ['signs_new_client', 'hires', 'expands_offices_to'],
           industries: ['Staffing and Recruiting', 'Human Resources', 'Outsourcing/Offshoring'],
@@ -561,6 +593,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to run demand gen and growth campaigns',
           asEntity: 'growth marketing agency that runs demand gen and lifecycle campaigns',
         },
+        decisionCategory: 'demand generation and growth marketing',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Marketing and Advertising', 'Online Media', 'Internet'],
@@ -579,6 +612,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to manage paid media and PPC campaigns',
           asEntity: 'performance marketing agency that manages paid media and PPC campaigns',
         },
+        decisionCategory: 'paid media and performance advertising',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Marketing and Advertising', 'Online Media'],
@@ -597,6 +631,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to build brand identity and creative strategy',
           asEntity: 'creative and branding agency that builds brand identity and visual strategy',
         },
+        decisionCategory: 'brand identity and creative direction',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'launches'],
           industries: ['Marketing and Advertising', 'Design', 'Graphic Design', 'Online Media'],
@@ -666,6 +701,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to place commercial insurance and manage risk',
           asEntity: 'commercial insurance brokerage that places coverage and manages risk',
         },
+        decisionCategory: 'commercial insurance and risk coverage',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'expands_offices_to'],
           industries: ['Insurance'],
@@ -684,6 +720,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to set up employee benefits and group health plans',
           asEntity: 'benefits and PEO firm that administers group health and employee plans',
         },
+        decisionCategory: 'employee benefits and group health coverage',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Insurance', 'Human Resources'],
@@ -702,6 +739,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to underwrite cyber, D&O, and specialty liability',
           asEntity: 'specialty underwriter that handles cyber, D&O, and liability coverage',
         },
+        decisionCategory: 'cyber liability and specialty coverage',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Insurance'],
@@ -774,6 +812,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to deploy and onboard enterprise SaaS platforms',
           asEntity: 'SaaS implementation partner that deploys and onboards enterprise platforms',
         },
+        decisionCategory: 'implementation and onboarding support',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Information Technology and Services', 'Management Consulting', 'Computer Software'],
@@ -792,6 +831,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to distribute and resell software to end customers',
           asEntity: 'channel partner that distributes and resells software products',
         },
+        decisionCategory: 'software distribution and channel strategy',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Computer Software', 'Information Technology and Services'],
@@ -810,6 +850,7 @@ export const MARKETS: Market[] = [
           asNeed: 'to drive customer acquisition and outbound campaigns',
           asEntity: 'growth agency that drives customer acquisition through outbound and paid media',
         },
+        decisionCategory: 'customer acquisition and go-to-market',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Marketing and Advertising', 'Management Consulting'],

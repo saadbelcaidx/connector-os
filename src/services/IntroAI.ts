@@ -1,21 +1,19 @@
 /**
- * INTRO AI — Variable-Fill Template Generation
+ * INTRO AI — 3-Block Invariant Template Generation
  *
- * AI fills 2-3 tight variables. Code assembles the email. No free-form writing.
- * Based on proven operator template: 8 meetings/week, $2M/yr.
+ * AI fills 1 variable (signalObservation). Code assembles the email from 3 blocks.
+ * No free-form writing. Template IS the guardrail.
  *
- * SUPPLY: "Not sure how many people are on your waiting list, but I got a couple
- *          [dreamICP] who are looking for [painTheySolve]"
+ * DEMAND: Block 1 (observation) + Block 2 (relevance frame) + Block 3 (connection)
+ * SUPPLY: Block 1 (observation) + Block 2 (relevance frame) + Block 3 (action)
  *
- * DEMAND: "Saw {{company}} [signalEvent]. Know someone who might help—[whoTheyAre]"
- *
- * AI calls: 2 (parallel). No retries. No banned word lists. Template IS the guardrail.
+ * Block-2 uses deterministic hash rotation (4 variants) to avoid fingerprinting at volume.
  */
 
 import type { DemandRecord } from '../schemas/DemandRecord';
 import type { SupplyRecord } from '../schemas/SupplyRecord';
 import type { Edge } from '../schemas/Edge';
-import { getPackIntroPhrase } from '../constants/marketPresets';
+import { getPackIntroPhrase, getPackDecisionCategory } from '../constants/marketPresets';
 
 // =============================================================================
 // TYPES
@@ -97,14 +95,6 @@ function stripLeadingArticle(s: string): string {
   return s.replace(/^(a |an |the )/i, '').trim();
 }
 
-/**
- * Strip leading gerund from painTheySolve.
- * Template: "looking for [painTheySolve]" — if AI returns "finding X",
- * result is "looking for finding X" (double gerund). Strip it.
- */
-function stripLeadingGerund(s: string): string {
-  return s.replace(/^(finding|getting|hiring|scaling|building|growing|filling|sourcing|securing|seeking|staffing|recruiting|identifying|locating|acquiring|obtaining|managing)\s+/i, '').trim();
-}
 
 function parseJSON(raw: string): any {
   const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -112,101 +102,74 @@ function parseJSON(raw: string): any {
 }
 
 // =============================================================================
-// SUPPLY VARIABLE PROMPT
+// BLOCK-2 ROTATION — Deterministic hash, no randomness
 // =============================================================================
 
-function buildSupplyVarsPrompt(
-  demand: DemandRecord,
-  supply: SupplyRecord,
-  edge: Edge,
-  curatedAsNeed?: string,
-): string {
-  const desc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 400);
-  const funding = demand.metadata.fundingUsd
-    ? `$${(demand.metadata.fundingUsd / 1000000).toFixed(0)}M raised`
-    : '';
+const BLOCK2_VARIANTS = [
+  (x: string) => `Sometimes teams doing this start thinking about ${x}.`,
+  (x: string) => `Teams in a similar spot often start exploring ${x}.`,
+  (x: string) => `This usually opens up a conversation around ${x}.`,
+  (x: string) => `That kind of move tends to bring up ${x}.`,
+];
 
-  // If we have a curated asNeed, only ask AI for dreamICP (simpler prompt, less room to genericize)
-  if (curatedAsNeed) {
-    return `Fill 1 variable for a cold email. JSON only.
-
-CONTEXT: You are writing TO a SUPPLY company (service provider).
-The demand company is the buyer with the signal.
-
-TEMPLATE: "I got a couple [dreamICP] who are looking for ${curatedAsNeed}"
-
-DATA:
-- Signal: ${edge.evidence || 'active in market'}
-- Industry: ${demand.industry || 'general'}
-- Description: ${desc}
-${funding ? `- Funding: ${funding}\n` : ''}
-RULES:
-- [dreamICP]: plural noun phrase describing the demand company type + vertical. 3-6 words. No "decision-makers"/"stakeholders"/"organizations".
-- If signal mentions facilities/new location/expansion, interpret as "team scaling" unless context says otherwise.
-- Sound like how you'd talk at a bar, not a boardroom.
-
-{"dreamICP": "..."}`;
+/** djb2 string hash — deterministic, fast, good distribution */
+function djb2Hash(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
   }
+  return hash;
+}
 
-  return `Fill variables for a cold email. JSON only.
-
-CONTEXT: You are writing TO a SUPPLY company (service provider).
-The demand company is the buyer with the signal.
-SUPPLY (who receives this email): ${supply.capability || 'service provider'}
-
-TEMPLATE: "I got a couple [dreamICP] who are looking for [painTheySolve]"
-
-DATA:
-- Signal: ${edge.evidence || 'active in market'}
-- Industry: ${demand.industry || 'general'}
-- Description: ${desc}
-${funding ? `- Funding: ${funding}\n` : ''}
-RULES:
-- [dreamICP]: plural noun phrase describing the demand company type + vertical. 3-6 words. No "decision-makers"/"stakeholders"/"organizations".
-- [painTheySolve]: what demand companies need FROM this supply provider. Frame around the supply's capability — not a generic assumption. 3-8 words. No "optimize"/"leverage"/"streamline"/"solutions".
-- DO NOT infer what the supply company does from description. Use ONLY the provided supply capability field above.
-- If signal mentions facilities/new location/expansion, interpret as "team scaling" unless supply capability is explicitly facilities/real estate.
-- Both must sound like how you'd talk at a bar, not a boardroom.
-
-{"dreamICP": "...", "painTheySolve": "..."}`;
+/** Select Block-2 variant via deterministic hash. Same company+pack = same phrasing always. */
+function selectBlock2(decisionCategory: string, companyDomain: string, packId: string): string {
+  const idx = Math.abs(djb2Hash(companyDomain + '|' + packId)) % BLOCK2_VARIANTS.length;
+  return BLOCK2_VARIANTS[idx](decisionCategory);
 }
 
 // =============================================================================
-// DEMAND VARIABLE PROMPT
+// SIGNAL OBSERVATION PROMPT — shared by both demand + supply
 // =============================================================================
 
-function buildDemandVarsPrompt(
+function buildSignalObservationPrompt(
   demand: DemandRecord,
-  supply: SupplyRecord,
   edge: Edge,
-  curatedAsEntity?: string,
 ): string {
   const demandIndustry = demand.industry || 'unknown';
   const demandDesc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 200) || 'n/a';
 
-  // If we have a curated asEntity, only ask AI for signalEvent
-  if (curatedAsEntity) {
-    return `Fill 1 variable. JSON only.
+  return `Fill 1 variable. JSON only.
 
-TEMPLATE: "Saw [COMPANY] [signalEvent]. Know someone who might help—${aOrAn(curatedAsEntity)} ${curatedAsEntity}"
+TEMPLATE: "saw you're [signalObservation]"
 
-DEMAND CONTEXT:
+CONTEXT:
 Industry: ${demandIndustry}
 Description: ${demandDesc}
 
 SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
-[signalEvent]: what happened (present tense). 3-8 words. No word "role". NEVER say "hiring new employees" — too generic. Use the industry/description to make it specific: "is scaling their consulting team", "is building out their leadership bench", "is growing the team". If signal mentions expanding/facilities/new location, interpret as business growth. Examples: "is scaling their engineering team", "just raised Series B", "is building out their sales org".
+[signalObservation]: what the company is doing (present continuous). 3-8 words. No word "role". NEVER say "hiring new employees" — too generic. Use the industry/description to make it specific: "scaling the consulting team", "building out the engineering org", "expanding operations". Must read naturally after "saw you're". Examples: "scaling the engineering team", "building out the sales org", "expanding into new markets", "growing the clinical team".
 
-{"signalEvent": "..."}`;
-  }
+{"signalObservation": "..."}`;
+}
 
+// =============================================================================
+// DEMAND VARIABLE PROMPT — LEGACY FALLBACK (non-pack records only)
+// =============================================================================
+
+function buildDemandVarsPromptLegacy(
+  demand: DemandRecord,
+  supply: SupplyRecord,
+  edge: Edge,
+): string {
+  const demandIndustry = demand.industry || 'unknown';
+  const demandDesc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 200) || 'n/a';
   const supplyDesc = (supply.metadata?.companyDescription || supply.metadata?.description || '').slice(0, 400);
 
   return `Fill 2 variables. JSON only.
 
-TEMPLATE: "Saw [COMPANY] [signalEvent]. I'm connected to [whoTheyAre] — want an intro?"
+TEMPLATE: "Saw [COMPANY] [signalObservation]. I'm connected to [whoTheyAre] — want an intro?"
 
 DEMAND CONTEXT:
 Industry: ${demandIndustry}
@@ -217,53 +180,79 @@ SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
 
-[signalEvent]: what happened (present tense). 3–8 words. No word "role". NEVER say "hiring new employees" — too generic. Use the industry/description to make it specific: "is scaling their consulting team", "is building out their leadership bench", "is growing the team". If signal mentions expanding/facilities/new location, interpret as business growth unless supply capability is explicitly facilities/real estate. Examples: "is scaling their engineering team", "just raised Series B", "is building out their sales org".
+[signalObservation]: what the company is doing (present continuous). 3-8 words. No word "role". NEVER say "hiring new employees" — too generic. Examples: "scaling the engineering team", "building out the sales org".
 
 [whoTheyAre]:
 Describe what the supplier ENABLES companies with this SIGNAL to achieve faster or better.
-Do NOT describe what the supplier is. Describe what they help the company accomplish.
 MUST be a team/firm/group of people (not product/software).
-Tie capability to the SIGNAL pressure — focus on speed, capacity, or execution improvement.
-Prefer the more specific industry term if available in DEMAND CONTEXT.
 No "a/an". No "solutions/optimize/leverage/software/platform/tool".
-No generic restatement of SUPPLY.
-No temporal padding: "during growth", "during hiring surges", "as companies scale".
-No consultant language: "scaling", "digital transformation", "optimization".
 
-Good: "recruiting team that helps fintech companies fill engineering roles faster"
-Good: "engineering partner teams use when product demand outpaces hiring"
-Good: "team companies use when internal recruiting can't keep up"
-Bad: "technology firm specializing in digital automation"
-Bad: "staffing company for growing businesses"
-
-{"signalEvent": "...", "whoTheyAre": "..."}`;
+{"signalObservation": "...", "whoTheyAre": "..."}`;
 }
 
 // =============================================================================
 // ASSEMBLE FINAL EMAILS (deterministic — AI never touches these)
 // =============================================================================
 
+/**
+ * 3-Block Demand Intro:
+ *   Block 1: "Hey {name} — saw you're {signalObservation}."
+ *   Block 2: "{relevance frame with decisionCategory}" (hash-rotated)
+ *   Block 3: "I know someone at {supplyCompany} who works in that area.\n\nHappy to connect if useful."
+ */
+function assembleDemandIntro(
+  firstName: string,
+  signalObservation: string,
+  block2: string,
+): string {
+  const name = (!firstName || firstName === 'there' || firstName === 'Decision')
+    ? 'there' : firstName;
+
+  return `Hey ${name} — saw you're ${signalObservation}.\n\n${block2}\n\nI know someone at a firm that works in that area.\n\nHappy to connect if useful.`;
+}
+
+/**
+ * 3-Block Supply Intro:
+ *   Block 1: "Hey {name} —\n\nI'm seeing {plurality} {signalObservation} right now."
+ *   Block 2: "{relevance frame with decisionCategory}" (hash-rotated)
+ *   Block 3: "Want me to connect you?"
+ */
 function assembleSupplyIntro(
+  firstName: string,
+  signalObservation: string,
+  block2: string,
+  matchCount: number,
+): string {
+  const name = (!firstName || firstName === 'there' || firstName === 'Contact')
+    ? 'there' : firstName;
+  const plurality = matchCount > 1 ? 'a few companies' : 'a company';
+
+  return `Hey ${name} —\n\nI'm seeing ${plurality} ${signalObservation} right now.\n\n${block2}\n\nWant me to connect you if helpful?`;
+}
+
+/**
+ * Legacy assembly for non-pack records (no decisionCategory available).
+ * Falls back to old 2-variable template.
+ */
+function assembleDemandIntroLegacy(
+  firstName: string,
+  companyName: string,
+  vars: { signalObservation: string; whoTheyAre: string },
+): string {
+  const name = (!firstName || firstName === 'there' || firstName === 'Decision')
+    ? 'there' : firstName;
+  const company = cleanCompanyName(companyName);
+  const article = aOrAn(vars.whoTheyAre);
+  return `Hey ${name} —\n\nSaw ${company} ${vars.signalObservation}. I'm connected to ${article} ${vars.whoTheyAre}.\n\nWorth a chat?`;
+}
+
+function assembleSupplyIntroLegacy(
   firstName: string,
   vars: { dreamICP: string; painTheySolve: string },
 ): string {
   const name = (!firstName || firstName === 'there' || firstName === 'Contact')
     ? 'there' : firstName;
-
-  return `Hey ${name}—\n\nNot sure how many people are on your waiting list, but I got a couple ${vars.dreamICP} who need ${vars.painTheySolve}\n\nLet me know`;
-}
-
-function assembleDemandIntro(
-  firstName: string,
-  companyName: string,
-  vars: { signalEvent: string; whoTheyAre: string },
-): string {
-  const name = (!firstName || firstName === 'there' || firstName === 'Decision')
-    ? 'there' : firstName;
-  const company = cleanCompanyName(companyName);
-
-  const article = aOrAn(vars.whoTheyAre);
-  return `Hey ${name}—\n\nSaw ${company} ${vars.signalEvent}. Know someone who might help—${article} ${vars.whoTheyAre}\n\nWorth a chat?`;
+  return `Hey ${name} —\n\nNot sure how many people are on your waiting list, but I got a couple ${vars.dreamICP} who need ${vars.painTheySolve}\n\nLet me know`;
 }
 
 // =============================================================================
@@ -389,101 +378,123 @@ export async function callAI(config: IntroAIConfig, prompt: string): Promise<str
 // =============================================================================
 
 /**
- * Generate intros by filling template variables (2 parallel AI calls).
+ * Generate intros using 3-block invariant templates.
  *
- * Supply template: proven 8-meeting/week operator template.
- * Demand template: mirror — anonymous supplier, signal-driven.
- *
- * AI fills tight variables. Code assembles the email. No free-form writing.
+ * Pack records: 1 AI call (signalObservation only). Everything else curated.
+ * Non-pack records: 2 AI calls (legacy path).
  */
 export async function generateIntrosAI(
   config: IntroAIConfig,
   demand: DemandRecord,
   supply: SupplyRecord,
-  edge: Edge
+  edge: Edge,
+  matchCount?: number,
 ): Promise<GeneratedIntros> {
   const demandFirstName = extractFirstName(demand.contact);
   const supplyFirstName = extractFirstName(supply.contact);
-
-  // Resolve curated intro phrases — bypass AI for curated slots
   const packId = (supply.metadata as any)?.packId || null;
-  const introPhrase = getPackIntroPhrase(packId);
+  const decisionCategory = getPackDecisionCategory(packId);
 
-  console.log('[IntroAI] introPhrase resolve:', {
-    packId,
-    hasCurated: !!introPhrase,
-    asNeed: introPhrase?.asNeed?.slice(0, 60),
-    asEntity: introPhrase?.asEntity?.slice(0, 60),
-  });
+  // ── 3-BLOCK PATH (pack records with decisionCategory) ──
+  if (decisionCategory) {
+    console.log('[IntroAI] 3-block path:', { packId, decisionCategory });
 
-  // Build prompts — curated phrases reduce what AI needs to fill
-  const supplyPrompt = buildSupplyVarsPrompt(demand, supply, edge, introPhrase?.asNeed);
-  const demandPrompt = buildDemandVarsPrompt(demand, supply, edge, introPhrase?.asEntity);
+    // Single AI call — only need signalObservation
+    const prompt = buildSignalObservationPrompt(demand, edge);
+    const raw = await callAI(config, prompt);
 
-  console.log('[IntroAI] Filling template variables (2 parallel calls)...');
-  const [supplyVarsRaw, demandVarsRaw] = await Promise.all([
-    callAI(config, supplyPrompt),
-    callAI(config, demandPrompt),
-  ]);
+    let signalObservation: string;
+    try {
+      const parsed = parseJSON(raw);
+      signalObservation = parsed.signalObservation || 'making moves';
+    } catch {
+      console.error('[IntroAI] signalObservation parse error:', raw.slice(0, 200));
+      signalObservation = 'making moves';
+    }
 
-  // Parse supply variables
-  let supplyVars: { dreamICP: string; painTheySolve: string };
-  try {
-    const parsed = parseJSON(supplyVarsRaw);
-    supplyVars = {
-      dreamICP: parsed.dreamICP || '',
-      // Use curated asNeed directly — AI never touches this slot for pack records
-      painTheySolve: introPhrase?.asNeed || stripLeadingGerund(parsed.painTheySolve || ''),
-    };
-    console.log('[SUPPLY_VARS_OUT]', {
-      dreamICP: supplyVars.dreamICP,
-      painTheySolve: supplyVars.painTheySolve,
-      source: introPhrase ? 'curated' : 'ai',
+    // Block 2 — deterministic hash rotation
+    const companyDomain = demand.domain || demand.company || '';
+    const block2 = selectBlock2(decisionCategory, companyDomain, packId);
+
+    console.log('[IntroAI] 3-block vars:', {
+      signalObservation,
+      decisionCategory,
+      block2Variant: Math.abs(djb2Hash(companyDomain + '|' + packId)) % 4,
+      supplyCompany: supply.company,
     });
-  } catch {
-    console.error('[IntroAI] Supply vars parse error:', supplyVarsRaw.slice(0, 200));
-    supplyVars = {
-      dreamICP: `${demand.industry || 'companies'} in your space`.toLowerCase(),
-      painTheySolve: introPhrase?.asNeed || edge.evidence || 'what they need right now',
+
+    // Assemble — deterministic, no AI
+    const demandIntro = assembleDemandIntro(
+      demandFirstName,
+      signalObservation,
+      block2,
+    );
+    const supplyIntro = assembleSupplyIntro(
+      supplyFirstName,
+      signalObservation,
+      block2,
+      matchCount ?? 2,
+    );
+
+    return {
+      demandIntro,
+      supplyIntro,
+      valueProps: {
+        demandValueProp: `${signalObservation} → ${decisionCategory}`,
+        supplyValueProp: `${decisionCategory} (3-block)`,
+      },
     };
-    console.log('[SUPPLY_VARS_OUT]', {
-      dreamICP: supplyVars.dreamICP,
-      painTheySolve: supplyVars.painTheySolve,
-      source: introPhrase ? 'curated_fallback' : 'fallback',
-    });
   }
 
-  // Parse demand variables
-  let demandVars: { signalEvent: string; whoTheyAre: string };
+  // ── LEGACY PATH (non-pack records, no decisionCategory) ──
+  console.log('[IntroAI] Legacy path (no pack)');
+  const introPhrase = getPackIntroPhrase(packId);
+
+  const observationPrompt = buildSignalObservationPrompt(demand, edge);
+  const legacyPrompt = buildDemandVarsPromptLegacy(demand, supply, edge);
+
+  const [observationRaw, legacyRaw] = await Promise.all([
+    callAI(config, observationPrompt),
+    callAI(config, legacyPrompt),
+  ]);
+
+  // Parse signalObservation for supply
+  let signalObs: string;
   try {
-    const parsed = parseJSON(demandVarsRaw);
+    signalObs = parseJSON(observationRaw).signalObservation || 'making moves';
+  } catch {
+    signalObs = 'making moves';
+  }
+
+  // Parse legacy demand vars
+  let demandVars: { signalObservation: string; whoTheyAre: string };
+  try {
+    const parsed = parseJSON(legacyRaw);
     demandVars = {
-      signalEvent: parsed.signalEvent || 'is making moves',
-      // Use curated asEntity directly — AI never touches this slot for pack records
+      signalObservation: parsed.signalObservation || signalObs,
       whoTheyAre: introPhrase?.asEntity || stripLeadingArticle(parsed.whoTheyAre || ''),
     };
   } catch {
-    console.error('[IntroAI] Demand vars parse error:', demandVarsRaw.slice(0, 200));
     demandVars = {
-      signalEvent: 'is making moves',
+      signalObservation: signalObs,
       whoTheyAre: introPhrase?.asEntity || `${supply.capability || 'services'} firm`,
     };
   }
-  console.log('[DEMAND_VARS_OUT]', {
-    signalEvent: demandVars.signalEvent,
-    whoTheyAre: demandVars.whoTheyAre,
-    source: introPhrase ? 'curated' : 'ai',
-  });
 
-  // Assemble emails — deterministic, no AI
-  const supplyIntro = assembleSupplyIntro(supplyFirstName, supplyVars);
-  const demandIntro = assembleDemandIntro(demandFirstName, demand.company, demandVars);
+  // Supply legacy vars — use signalObservation + curated or AI
+  const supplyVars = {
+    dreamICP: `${demand.industry || 'companies'} in your space`.toLowerCase(),
+    painTheySolve: introPhrase?.asNeed || edge.evidence || 'what they need right now',
+  };
+
+  const demandIntro = assembleDemandIntroLegacy(demandFirstName, demand.company, demandVars);
+  const supplyIntro = assembleSupplyIntroLegacy(supplyFirstName, supplyVars);
 
   return {
     demandIntro,
     supplyIntro,
     valueProps: {
-      demandValueProp: `${demandVars.signalEvent} → ${demandVars.whoTheyAre}`,
+      demandValueProp: `${demandVars.signalObservation} → ${demandVars.whoTheyAre}`,
       supplyValueProp: `${supplyVars.dreamICP} looking for ${supplyVars.painTheySolve}`,
     },
   };
