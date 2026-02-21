@@ -15,6 +15,7 @@
 import type { DemandRecord } from '../schemas/DemandRecord';
 import type { SupplyRecord } from '../schemas/SupplyRecord';
 import type { Edge } from '../schemas/Edge';
+import { getPackIntroPhrase } from '../constants/marketPresets';
 
 // =============================================================================
 // TYPES
@@ -118,11 +119,34 @@ function buildSupplyVarsPrompt(
   demand: DemandRecord,
   supply: SupplyRecord,
   edge: Edge,
+  curatedAsNeed?: string,
 ): string {
   const desc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 400);
   const funding = demand.metadata.fundingUsd
     ? `$${(demand.metadata.fundingUsd / 1000000).toFixed(0)}M raised`
     : '';
+
+  // If we have a curated asNeed, only ask AI for dreamICP (simpler prompt, less room to genericize)
+  if (curatedAsNeed) {
+    return `Fill 1 variable for a cold email. JSON only.
+
+CONTEXT: You are writing TO a SUPPLY company (service provider).
+The demand company is the buyer with the signal.
+
+TEMPLATE: "I got a couple [dreamICP] who are looking for ${curatedAsNeed}"
+
+DATA:
+- Signal: ${edge.evidence || 'active in market'}
+- Industry: ${demand.industry || 'general'}
+- Description: ${desc}
+${funding ? `- Funding: ${funding}\n` : ''}
+RULES:
+- [dreamICP]: plural noun phrase describing the demand company type + vertical. 3-6 words. No "decision-makers"/"stakeholders"/"organizations".
+- If signal mentions facilities/new location/expansion, interpret as "team scaling" unless context says otherwise.
+- Sound like how you'd talk at a bar, not a boardroom.
+
+{"dreamICP": "..."}`;
+  }
 
   return `Fill variables for a cold email. JSON only.
 
@@ -155,10 +179,30 @@ function buildDemandVarsPrompt(
   demand: DemandRecord,
   supply: SupplyRecord,
   edge: Edge,
+  curatedAsEntity?: string,
 ): string {
-  const supplyDesc = (supply.metadata?.companyDescription || supply.metadata?.description || '').slice(0, 400);
   const demandIndustry = demand.industry || 'unknown';
   const demandDesc = (demand.metadata.companyDescription || demand.metadata.description || '').slice(0, 200) || 'n/a';
+
+  // If we have a curated asEntity, only ask AI for signalEvent
+  if (curatedAsEntity) {
+    return `Fill 1 variable. JSON only.
+
+TEMPLATE: "Saw [COMPANY] [signalEvent]. I'm connected to ${aOrAn(curatedAsEntity)} ${curatedAsEntity}"
+
+DEMAND CONTEXT:
+Industry: ${demandIndustry}
+Description: ${demandDesc}
+
+SIGNAL: ${edge.evidence || 'active in market'}
+
+RULES:
+[signalEvent]: what happened (present tense). 3-8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X". If signal mentions expanding/facilities/new location, interpret as business growth. Examples: "is hiring engineers", "just raised Series B", "opened a new office".
+
+{"signalEvent": "..."}`;
+  }
+
+  const supplyDesc = (supply.metadata?.companyDescription || supply.metadata?.description || '').slice(0, 400);
 
   return `Fill 2 variables. JSON only.
 
@@ -206,7 +250,7 @@ function assembleSupplyIntro(
   const name = (!firstName || firstName === 'there' || firstName === 'Contact')
     ? 'there' : firstName;
 
-  return `Hey ${name}\n\nNot sure how many people are on your waiting list, but I got a couple ${vars.dreamICP} who are looking for ${vars.painTheySolve}\n\nWorth an intro?`;
+  return `Hey ${name}—\n\nNot sure how many people are on your waiting list, but I got a couple ${vars.dreamICP} who need ${vars.painTheySolve}\n\nLet me know`;
 }
 
 function assembleDemandIntro(
@@ -217,9 +261,8 @@ function assembleDemandIntro(
   const name = (!firstName || firstName === 'there' || firstName === 'Decision')
     ? 'there' : firstName;
   const company = cleanCompanyName(companyName);
-  const article = aOrAn(vars.whoTheyAre);
 
-  return `Hey ${name}\n\nSaw ${company} ${vars.signalEvent}. I'm connected to ${article} ${vars.whoTheyAre}\n\nWant an intro?`;
+  return `Hey ${name}—\n\nSaw ${company} ${vars.signalEvent}. Know someone who might help—${vars.whoTheyAre}\n\nWorth a chat?`;
 }
 
 // =============================================================================
@@ -361,19 +404,20 @@ export async function generateIntrosAI(
   const demandFirstName = extractFirstName(demand.contact);
   const supplyFirstName = extractFirstName(supply.contact);
 
-  // Two AI calls in parallel — they're independent
-  const supplyPrompt = buildSupplyVarsPrompt(demand, supply, edge);
-  const demandPrompt = buildDemandVarsPrompt(demand, supply, edge);
+  // Resolve curated intro phrases — bypass AI for curated slots
+  const packId = (supply.metadata as any)?.packId || null;
+  const introPhrase = getPackIntroPhrase(packId);
 
-  console.log('[SUPPLY_PROMPT_STRING]', supplyPrompt);
-  console.log('[SUPPLY_PROMPT_CONTEXT]', {
-    supplyCapability: supply.capability?.slice(0, 80),
-    demandIndustry: demand.industry,
-    demandCompany: demand.company,
-    edgeEvidence: edge.evidence?.slice(0, 80),
-    market: (supply.metadata as any)?.market || 'none',
-    packId: (supply.metadata as any)?.packId || 'none',
+  console.log('[IntroAI] introPhrase resolve:', {
+    packId,
+    hasCurated: !!introPhrase,
+    asNeed: introPhrase?.asNeed?.slice(0, 60),
+    asEntity: introPhrase?.asEntity?.slice(0, 60),
   });
+
+  // Build prompts — curated phrases reduce what AI needs to fill
+  const supplyPrompt = buildSupplyVarsPrompt(demand, supply, edge, introPhrase?.asNeed);
+  const demandPrompt = buildDemandVarsPrompt(demand, supply, edge, introPhrase?.asEntity);
 
   console.log('[IntroAI] Filling template variables (2 parallel calls)...');
   const [supplyVarsRaw, demandVarsRaw] = await Promise.all([
@@ -383,44 +427,52 @@ export async function generateIntrosAI(
 
   // Parse supply variables
   let supplyVars: { dreamICP: string; painTheySolve: string };
-  let supplyFallbackUsed = false;
   try {
     const parsed = parseJSON(supplyVarsRaw);
     supplyVars = {
       dreamICP: parsed.dreamICP || '',
-      painTheySolve: stripLeadingGerund(parsed.painTheySolve || ''),
+      // Use curated asNeed directly — AI never touches this slot for pack records
+      painTheySolve: introPhrase?.asNeed || stripLeadingGerund(parsed.painTheySolve || ''),
     };
-    console.log('[SUPPLY_VARS_OUT]', { dreamICP: supplyVars.dreamICP, painTheySolve: supplyVars.painTheySolve });
-    console.log('[SUPPLY_FALLBACK_USED]', { used: false });
+    console.log('[SUPPLY_VARS_OUT]', {
+      dreamICP: supplyVars.dreamICP,
+      painTheySolve: supplyVars.painTheySolve,
+      source: introPhrase ? 'curated' : 'ai',
+    });
   } catch {
-    supplyFallbackUsed = true;
     console.error('[IntroAI] Supply vars parse error:', supplyVarsRaw.slice(0, 200));
     supplyVars = {
       dreamICP: `${demand.industry || 'companies'} in your space`.toLowerCase(),
-      painTheySolve: edge.evidence || 'what they need right now',
+      painTheySolve: introPhrase?.asNeed || edge.evidence || 'what they need right now',
     };
-    console.log('[SUPPLY_VARS_OUT]', { dreamICP: supplyVars.dreamICP, painTheySolve: supplyVars.painTheySolve });
-    console.log('[SUPPLY_FALLBACK_USED]', { used: true, reason: 'JSON parse error' });
+    console.log('[SUPPLY_VARS_OUT]', {
+      dreamICP: supplyVars.dreamICP,
+      painTheySolve: supplyVars.painTheySolve,
+      source: introPhrase ? 'curated_fallback' : 'fallback',
+    });
   }
 
   // Parse demand variables
   let demandVars: { signalEvent: string; whoTheyAre: string };
-  let demandFallbackUsed = false;
   try {
     const parsed = parseJSON(demandVarsRaw);
     demandVars = {
       signalEvent: parsed.signalEvent || 'is making moves',
-      whoTheyAre: stripLeadingArticle(parsed.whoTheyAre || ''),
+      // Use curated asEntity directly — AI never touches this slot for pack records
+      whoTheyAre: introPhrase?.asEntity || stripLeadingArticle(parsed.whoTheyAre || ''),
     };
   } catch {
-    demandFallbackUsed = true;
     console.error('[IntroAI] Demand vars parse error:', demandVarsRaw.slice(0, 200));
     demandVars = {
       signalEvent: 'is making moves',
-      whoTheyAre: `${supply.capability || 'services'} firm`,
+      whoTheyAre: introPhrase?.asEntity || `${supply.capability || 'services'} firm`,
     };
   }
-  console.log('[DEMAND_VARS_OUT]', { signalEvent: demandVars.signalEvent, whoTheyAre: demandVars.whoTheyAre, fallbackUsed: demandFallbackUsed });
+  console.log('[DEMAND_VARS_OUT]', {
+    signalEvent: demandVars.signalEvent,
+    whoTheyAre: demandVars.whoTheyAre,
+    source: introPhrase ? 'curated' : 'ai',
+  });
 
   // Assemble emails — deterministic, no AI
   const supplyIntro = assembleSupplyIntro(supplyFirstName, supplyVars);
