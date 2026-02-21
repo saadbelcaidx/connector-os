@@ -2485,66 +2485,73 @@ app.post('/markets/search', async (req, res) => {
       }
     }
 
+    let succeededPacks = 0;
+    let failedPacks = 0;
+
     console.log(`[Markets] ${packsToRun.length} packs to run (${signalsList.length} signals × ${titlePacks.length} title groups)`);
 
     for (const pack of packsToRun) {
       if (uniqueLeads.length >= effectiveTarget) break;
 
-      // Each pack gets its own signal + title filter — everything else from base
-      const packFilters = { ...search_filters, news: [pack.signal], title: { include: pack.titles, exclude: [] } };
+      try {
+        // Each pack gets its own signal + title filter — everything else from base
+        const packFilters = { ...search_filters, news: [pack.signal], title: { include: pack.titles, exclude: [] } };
 
-      const payload = {
-        search_filters: packFilters,
-        skip_owned_leads: false,
-        show_one_lead_per_company: showOneLeadPerCompany !== undefined ? showOneLeadPerCompany : true,
-      };
+        const payload = {
+          search_filters: packFilters,
+          skip_owned_leads: false,
+          show_one_lead_per_company: showOneLeadPerCompany !== undefined ? showOneLeadPerCompany : true,
+        };
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch(SEARCH_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
+        const response = await fetch(SEARCH_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        console.log(`[Markets] Pack "${pack.name}" failed: HTTP ${response.status} ${errText.slice(0, 200)}`);
-        // First pack failure = hard fail. Later packs = skip and return what we have.
-        if (uniqueLeads.length === 0) {
-          return res.status(response.status).json({ error: 'Search failed', detail: errText.slice(0, 200) });
+        if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          console.warn(`[Markets] Pack "${pack.name}" failed: HTTP ${response.status} ${errText.slice(0, 200)}`);
+          failedPacks++;
+          continue;
         }
+
+        const data = await response.json();
+        const packLeads = data.leads || [];
+        totalCount = Math.max(totalCount, data.number_of_leads || 0);
+        redactedCount = Math.max(redactedCount, data.number_of_redacted_results || 0);
+        succeededPacks++;
+
+        // Dedup and collect
+        let newCount = 0;
+        for (const lead of packLeads) {
+          const key = (lead.companyName || '').toLowerCase().trim();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          lead._pack = pack.name; // Tag for downstream attribution
+          uniqueLeads.push(lead);
+          newCount++;
+        }
+
+        console.log(`[Markets] Pack "${pack.name}": ${packLeads.length} returned, ${newCount} new → ${uniqueLeads.length} total`);
+
+        // Log pack performance
+        db.prepare(
+          'INSERT INTO markets_pack_log (query_hash, pack_name, leads_returned, unique_added) VALUES (?, ?, ?, ?)'
+        ).run(queryHash, pack.name, packLeads.length, newCount);
+      } catch (packErr) {
+        console.warn(`[Markets] Pack "${pack.name}" threw: ${packErr.message}`);
+        failedPacks++;
         continue;
       }
-
-      const data = await response.json();
-      const packLeads = data.leads || [];
-      totalCount = Math.max(totalCount, data.number_of_leads || 0);
-      redactedCount = Math.max(redactedCount, data.number_of_redacted_results || 0);
-
-      // Dedup and collect
-      let newCount = 0;
-      for (const lead of packLeads) {
-        const key = (lead.companyName || '').toLowerCase().trim();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        lead._pack = pack.name; // Tag for downstream attribution
-        uniqueLeads.push(lead);
-        newCount++;
-      }
-
-      console.log(`[Markets] Pack "${pack.name}": ${packLeads.length} returned, ${newCount} new → ${uniqueLeads.length} total`);
-
-      // Log pack performance
-      db.prepare(
-        'INSERT INTO markets_pack_log (query_hash, pack_name, leads_returned, unique_added) VALUES (?, ?, ?, ?)'
-      ).run(queryHash, pack.name, packLeads.length, newCount);
 
       // 200ms delay between calls to avoid burst/rate limits
       if (packsToRun.indexOf(pack) < packsToRun.length - 1) {
@@ -2552,9 +2559,15 @@ app.post('/markets/search', async (req, res) => {
       }
     }
 
+    // All packs failed, zero leads — this IS a search failure
+    if (succeededPacks === 0 && failedPacks > 0) {
+      console.error(`[Markets] ALL ${failedPacks} packs failed — no results`);
+      return res.status(502).json({ error: 'All search packs failed. Check API key or try different filters.', totalPacks: packsToRun.length, succeededPacks: 0, failedPacks });
+    }
+
     const leads = uniqueLeads.slice(0, effectiveTarget);
     const leadsReturned = leads.length;
-    console.log(`[Markets] Search complete: ${leadsReturned} unique leads from ${signalsList.length} signals × ${titlePacks.length} title groups (${packsToRun.length} packs, stopped at ${uniqueLeads.length})`);
+    console.log(`[Markets] Search complete: ${leadsReturned} unique leads (${succeededPacks} succeeded, ${failedPacks} failed, ${packsToRun.length} total packs)`);
 
     // Increment daily usage
     db.prepare(`INSERT INTO markets_usage (api_key, search_date, leads_fetched)
@@ -2575,7 +2588,11 @@ app.post('/markets/search', async (req, res) => {
       target: effectiveTarget,
       returned: leadsReturned,
       exhausted: packsExhausted,
-      packs_attempted: packsToRun.length,
+      // Pack execution diagnostics
+      totalPacks: packsToRun.length,
+      succeededPacks,
+      failedPacks,
+      leadsCollected: leadsReturned,
     };
 
     // Cache the response
