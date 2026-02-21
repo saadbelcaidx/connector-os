@@ -7,7 +7,7 @@
  * SUPPLY: "Not sure how many people are on your waiting list, but I got a couple
  *          [dreamICP] who are looking for [painTheySolve]"
  *
- * DEMAND: "Saw {{company}} [signalEvent]. I'm connected to [whoTheyAre]"
+ * DEMAND: "Saw {{company}} [signalEvent]. Know someone who might help—[whoTheyAre]"
  *
  * AI calls: 2 (parallel). No retries. No banned word lists. Template IS the guardrail.
  */
@@ -188,7 +188,7 @@ function buildDemandVarsPrompt(
   if (curatedAsEntity) {
     return `Fill 1 variable. JSON only.
 
-TEMPLATE: "Saw [COMPANY] [signalEvent]. I'm connected to ${aOrAn(curatedAsEntity)} ${curatedAsEntity}"
+TEMPLATE: "Saw [COMPANY] [signalEvent]. Know someone who might help—${aOrAn(curatedAsEntity)} ${curatedAsEntity}"
 
 DEMAND CONTEXT:
 Industry: ${demandIndustry}
@@ -197,7 +197,7 @@ Description: ${demandDesc}
 SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
-[signalEvent]: what happened (present tense). 3-8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X". If signal mentions expanding/facilities/new location, interpret as business growth. Examples: "is hiring engineers", "just raised Series B", "opened a new office".
+[signalEvent]: what happened (present tense). 3-8 words. No word "role". NEVER say "hiring new employees" — too generic. Use the industry/description to make it specific: "is scaling their consulting team", "is building out their leadership bench", "is growing the team". If signal mentions expanding/facilities/new location, interpret as business growth. Examples: "is scaling their engineering team", "just raised Series B", "is building out their sales org".
 
 {"signalEvent": "..."}`;
   }
@@ -217,7 +217,7 @@ SIGNAL: ${edge.evidence || 'active in market'}
 
 RULES:
 
-[signalEvent]: what happened (present tense). 3–8 words. No word "role". If signal says "hiring X", say "is hiring X" or "just posted for X". If signal mentions expanding/facilities/new location, interpret as business growth unless supply capability is explicitly facilities/real estate. Examples: "is hiring engineers", "just raised Series B", "opened a new office".
+[signalEvent]: what happened (present tense). 3–8 words. No word "role". NEVER say "hiring new employees" — too generic. Use the industry/description to make it specific: "is scaling their consulting team", "is building out their leadership bench", "is growing the team". If signal mentions expanding/facilities/new location, interpret as business growth unless supply capability is explicitly facilities/real estate. Examples: "is scaling their engineering team", "just raised Series B", "is building out their sales org".
 
 [whoTheyAre]:
 Describe what the supplier ENABLES companies with this SIGNAL to achieve faster or better.
@@ -262,7 +262,8 @@ function assembleDemandIntro(
     ? 'there' : firstName;
   const company = cleanCompanyName(companyName);
 
-  return `Hey ${name}—\n\nSaw ${company} ${vars.signalEvent}. Know someone who might help—${vars.whoTheyAre}\n\nWorth a chat?`;
+  const article = aOrAn(vars.whoTheyAre);
+  return `Hey ${name}—\n\nSaw ${company} ${vars.signalEvent}. Know someone who might help—${article} ${vars.whoTheyAre}\n\nWorth a chat?`;
 }
 
 // =============================================================================
