@@ -116,6 +116,9 @@ import {
   type ValidationFailure,
 } from './components/RunAuditPanel';
 
+// Pack economicRole resolution — curated market truth overrides AI extraction
+import { getPackEconomicRole } from './constants/marketPresets';
+
 // Premium UX Components (Education + Explainability)
 import { AlertPanel, AlertFromExplanation } from './components/AlertPanel';
 import { TooltipHint, LabelWithHint } from './components/TooltipHint';
@@ -902,6 +905,9 @@ interface FlowState {
   // If results exceed storage limits, preserve summaries
   resultsDropped: boolean;
   droppedCounts: { demand: number; supply: number; intros: number; errorReason?: string } | null;
+
+  // Supply exhaustion — deterministic cap hit during compose
+  supplyExhaustedCount: number;
 }
 
 interface Settings {
@@ -921,6 +927,9 @@ interface Settings {
   // LAYER 3: OpenAI key as fallback when Azure content filter blocks
   openaiApiKeyFallback?: string;
 }
+
+// Supply exhaustion — deterministic cap per supply company per run
+const MAX_SUPPLY_USAGE = 5;
 
 // Safe size helper — works on Map (live), object (post-deserialize), and array
 function getSize(x: unknown): number {
@@ -958,6 +967,7 @@ export default function Flow() {
     enrichmentSkipped: false,
     resultsDropped: false,
     droppedCounts: null,
+    supplyExhaustedCount: 0,
     copyValidationFailures: [],
   });
 
@@ -2258,6 +2268,18 @@ export default function Flow() {
 
     const aiWorkItems: IntroWorkItem[] = [];
 
+    // Supply exhaustion guard — usage tracking for this run
+    const supplyUsageCount = new Map<string, number>();
+    let supplyExhaustedCount = 0;
+
+    function isSupplyExhausted(companyKey: string): boolean {
+      return (supplyUsageCount.get(companyKey) || 0) >= MAX_SUPPLY_USAGE;
+    }
+
+    function claimSupplySlot(companyKey: string): void {
+      supplyUsageCount.set(companyKey, (supplyUsageCount.get(companyKey) || 0) + 1);
+    }
+
     console.log('[COMPOSE] Phase 1: Collecting work items...');
 
     for (const match of matching.demandMatches) {
@@ -2325,14 +2347,23 @@ export default function Flow() {
       let effectiveSupplyEnriched = supplyEnriched;
       let effectiveSupplyKey = supplyKey;
 
-      // If matched supply has no email, find ANY supply with email
+      // Supply exhaustion check on primary match
+      const primarySupplyId = match.supply.company.toLowerCase();
+      if (supplyEmail && isSupplyExhausted(primarySupplyId)) {
+        // Primary supply at cap — try fallback instead
+        supplyEmail = null;
+        console.log(`[COMPOSE] EXHAUSTED: ${match.supply.company} (${supplyUsageCount.get(primarySupplyId)}/${MAX_SUPPLY_USAGE}) — trying fallback for ${match.demand.company}`);
+      }
+
+      // If matched supply has no email OR is exhausted, find supply with email + capacity
       if (!supplyEmail && matching.supplyAggregates) {
         for (const agg of matching.supplyAggregates) {
           const aggKey = recordKey(agg.supply);
+          const aggId = agg.supply.company.toLowerCase();
           const aggEnriched = enrichedSupply.get(aggKey);
           const aggEmail = agg.supply.email || (aggEnriched && isSuccessfulEnrichment(aggEnriched) ? aggEnriched.email : null);
-          if (aggEmail) {
-            console.log(`[COMPOSE] FALLBACK: ${match.demand.company} - using ${agg.supply.company} (has email) instead of ${match.supply.company}`);
+          if (aggEmail && !isSupplyExhausted(aggId)) {
+            console.log(`[COMPOSE] FALLBACK: ${match.demand.company} - using ${agg.supply.company} (has email, ${supplyUsageCount.get(aggId) || 0}/${MAX_SUPPLY_USAGE}) instead of ${match.supply.company}`);
             supplyEmail = aggEmail;
             effectiveSupply = agg.supply;
             effectiveSupplyEnriched = aggEnriched;
@@ -2343,10 +2374,26 @@ export default function Flow() {
       }
 
       if (!supplyEmail) {
-        console.log(`[COMPOSE] DROP: ${match.demand.company} - no supply with email found`);
+        // Check if this is due to exhaustion (all supplies at cap) vs no email
+        const allExhausted = matching.supplyAggregates?.every(agg => {
+          const aggEmail = agg.supply.email || (enrichedSupply.get(recordKey(agg.supply)) && isSuccessfulEnrichment(enrichedSupply.get(recordKey(agg.supply))!) ? enrichedSupply.get(recordKey(agg.supply))!.email : null);
+          return !aggEmail || isSupplyExhausted(agg.supply.company.toLowerCase());
+        });
+        if (allExhausted && matching.supplyAggregates?.some(agg => {
+          const aggEmail = agg.supply.email || (enrichedSupply.get(recordKey(agg.supply)) && isSuccessfulEnrichment(enrichedSupply.get(recordKey(agg.supply))!) ? enrichedSupply.get(recordKey(agg.supply))!.email : null);
+          return !!aggEmail;
+        })) {
+          console.log(`[COMPOSE] SUPPLY_EXHAUSTED: ${match.demand.company} — all supply contacts at capacity (${MAX_SUPPLY_USAGE}/run). Expand supply filters.`);
+          supplyExhaustedCount++;
+        } else {
+          console.log(`[COMPOSE] DROP: ${match.demand.company} - no supply with email found`);
+        }
         dropped++;
         continue;
       }
+
+      // Claim supply slot AFTER successful selection
+      claimSupplySlot(effectiveSupply.company.toLowerCase());
 
       // Build DemandRecord with FULL metadata (user.txt contract: feed ALL data)
       const demandRaw = match.demand.raw || {};
@@ -2396,13 +2443,32 @@ export default function Flow() {
       // Step 0 extracted intel for supply — clean capability from AI extraction
       const supplyIntel = getCachedIntel(effectiveSupplyKey);
 
-      // Priority: AI-extracted capability → raw fields → internal category label → fallback
+      // Priority: pack economicRole → AI-extracted capability → raw fields → fallback
+      const packRole = getPackEconomicRole(effectiveSupply.packId);
+      const supplyCapabilitySource =
+        packRole ? 'pack_economicRole' :
+        supplyIntel?.capability ? 'ai_extracted' :
+        supplyRaw.capability ? 'raw_capability' :
+        supplyRaw.services ? 'raw_services' :
+        effectiveSupply.companyDescription ? 'companyDescription' : 'terminal_fallback';
+
       const supplyCapability =
+        packRole ||
         supplyIntel?.capability ||
         supplyRaw.capability ||
         supplyRaw.services ||
         effectiveSupply.companyDescription?.slice(0, 100) ||
         'business services';
+
+      console.log('[SUPPLY_CAPABILITY_CHAIN]', {
+        company: effectiveSupply.company,
+        side: effectiveSupply.side,
+        market: effectiveSupply.market,
+        packId: effectiveSupply.packId,
+        source: supplyCapabilitySource,
+        capability: supplyCapability.slice(0, 80),
+        descLen: (effectiveSupply.companyDescription || '').length,
+      });
 
       const supplyRecord: SupplyRecord = {
         domain: effectiveSupply.domain,
@@ -2478,6 +2544,9 @@ export default function Flow() {
     }
 
     console.log(`[COMPOSE] Phase 1 complete: ${aiWorkItems.length} items`);
+    if (supplyExhaustedCount > 0) {
+      console.log(`[COMPOSE] SUPPLY_EXHAUSTION_SUMMARY: ${supplyExhaustedCount} demand records dropped (all supply at ${MAX_SUPPLY_USAGE}/run cap). Supply usage:`, Object.fromEntries(supplyUsageCount));
+    }
 
     // ==========================================================================
     // PHASE 2: PARALLEL AI GENERATION (CONCURRENCY = 5)
@@ -2599,6 +2668,7 @@ export default function Flow() {
       supplyIntros,
       resultsDropped,
       droppedCounts,
+      supplyExhaustedCount,
     }));
   };
 
@@ -5031,6 +5101,20 @@ export default function Flow() {
                             {state.droppedCounts.demand} matches ready · {state.droppedCounts.intros} skipped (supply email not found)
                           </p>
                         )}
+                      </motion.div>
+                    )}
+
+                    {/* Supply Exhaustion Warning */}
+                    {state.supplyExhaustedCount > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.15 }}
+                        className="max-w-md mx-auto mb-4 p-3 rounded-xl border bg-amber-500/[0.06] border-amber-500/[0.12]"
+                      >
+                        <p className="text-[11px] text-amber-400/80 text-center">
+                          {state.supplyExhaustedCount} record{state.supplyExhaustedCount > 1 ? 's' : ''} dropped — supply capacity reached (max {MAX_SUPPLY_USAGE}/run). Expand supply filters.
+                        </p>
                       </motion.div>
                     )}
 

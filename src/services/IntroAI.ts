@@ -362,30 +362,50 @@ export async function generateIntrosAI(
   const supplyFirstName = extractFirstName(supply.contact);
 
   // Two AI calls in parallel — they're independent
+  const supplyPrompt = buildSupplyVarsPrompt(demand, supply, edge);
+  const demandPrompt = buildDemandVarsPrompt(demand, supply, edge);
+
+  console.log('[SUPPLY_PROMPT_STRING]', supplyPrompt);
+  console.log('[SUPPLY_PROMPT_CONTEXT]', {
+    supplyCapability: supply.capability?.slice(0, 80),
+    demandIndustry: demand.industry,
+    demandCompany: demand.company,
+    edgeEvidence: edge.evidence?.slice(0, 80),
+    market: (supply.metadata as any)?.market || 'none',
+    packId: (supply.metadata as any)?.packId || 'none',
+  });
+
   console.log('[IntroAI] Filling template variables (2 parallel calls)...');
   const [supplyVarsRaw, demandVarsRaw] = await Promise.all([
-    callAI(config, buildSupplyVarsPrompt(demand, supply, edge)),
-    callAI(config, buildDemandVarsPrompt(demand, supply, edge)),
+    callAI(config, supplyPrompt),
+    callAI(config, demandPrompt),
   ]);
 
   // Parse supply variables
   let supplyVars: { dreamICP: string; painTheySolve: string };
+  let supplyFallbackUsed = false;
   try {
     const parsed = parseJSON(supplyVarsRaw);
     supplyVars = {
       dreamICP: parsed.dreamICP || '',
       painTheySolve: stripLeadingGerund(parsed.painTheySolve || ''),
     };
+    console.log('[SUPPLY_VARS_OUT]', { dreamICP: supplyVars.dreamICP, painTheySolve: supplyVars.painTheySolve });
+    console.log('[SUPPLY_FALLBACK_USED]', { used: false });
   } catch {
+    supplyFallbackUsed = true;
     console.error('[IntroAI] Supply vars parse error:', supplyVarsRaw.slice(0, 200));
     supplyVars = {
       dreamICP: `${demand.industry || 'companies'} in your space`.toLowerCase(),
       painTheySolve: edge.evidence || 'what they need right now',
     };
+    console.log('[SUPPLY_VARS_OUT]', { dreamICP: supplyVars.dreamICP, painTheySolve: supplyVars.painTheySolve });
+    console.log('[SUPPLY_FALLBACK_USED]', { used: true, reason: 'JSON parse error' });
   }
 
   // Parse demand variables
   let demandVars: { signalEvent: string; whoTheyAre: string };
+  let demandFallbackUsed = false;
   try {
     const parsed = parseJSON(demandVarsRaw);
     demandVars = {
@@ -393,17 +413,14 @@ export async function generateIntrosAI(
       whoTheyAre: stripLeadingArticle(parsed.whoTheyAre || ''),
     };
   } catch {
+    demandFallbackUsed = true;
     console.error('[IntroAI] Demand vars parse error:', demandVarsRaw.slice(0, 200));
     demandVars = {
       signalEvent: 'is making moves',
       whoTheyAre: `${supply.capability || 'services'} firm`,
     };
   }
-
-  console.log('[IntroAI] Variables filled:', {
-    supply: supplyVars,
-    demand: demandVars,
-  });
+  console.log('[DEMAND_VARS_OUT]', { signalEvent: demandVars.signalEvent, whoTheyAre: demandVars.whoTheyAre, fallbackUsed: demandFallbackUsed });
 
   // Assemble emails — deterministic, no AI
   const supplyIntro = assembleSupplyIntro(supplyFirstName, supplyVars);

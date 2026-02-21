@@ -107,7 +107,30 @@ export interface Pack {
   id: string;
   name: string;
   side: 'demand' | 'supply';
+  economicRole?: string;
   filters: PackFilters;
+}
+
+// =============================================================================
+// ECONOMIC ROLE LOOKUP — O(1) packId → economicRole resolution
+// =============================================================================
+
+const _economicRoleLookup: Record<string, string> = {};
+
+/** Resolve packId → curated economicRole. Returns null if no pack or no role. */
+export function getPackEconomicRole(packId: string | undefined | null): string | null {
+  if (!packId) return null;
+  // Lazy-build on first call
+  if (Object.keys(_economicRoleLookup).length === 0) {
+    for (const market of MARKETS) {
+      for (const pack of market.packs) {
+        if (pack.economicRole) {
+          _economicRoleLookup[pack.id] = pack.economicRole;
+        }
+      }
+    }
+  }
+  return _economicRoleLookup[packId] || null;
 }
 
 export interface Market {
@@ -189,6 +212,7 @@ export const MARKETS: Market[] = [
         id: 'biotech.supply.life_science_recruiters',
         name: 'Life Science Recruiters',
         side: 'supply',
+        economicRole: 'recruiting scientists, clinical staff, and R&D leaders for biotech companies',
         filters: {
           signals: ['signs_new_client', 'hires', 'partners_with'],
           industries: ['Staffing and Recruiting', 'Human Resources', 'Biotechnology'],
@@ -203,6 +227,7 @@ export const MARKETS: Market[] = [
         id: 'biotech.supply.cro_clinical_ops',
         name: 'CRO / Clinical Ops',
         side: 'supply',
+        economicRole: 'running clinical trials and regulatory operations for pharma and biotech',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'receives_financing'],
           industries: ['Biotechnology', 'Research', 'Hospital & Health Care', 'Pharmaceuticals'],
@@ -217,6 +242,7 @@ export const MARKETS: Market[] = [
         id: 'biotech.supply.licensing_advisors',
         name: 'Licensing Advisors',
         side: 'supply',
+        economicRole: 'brokering licensing deals and technology transfer for life science companies',
         filters: {
           signals: ['partners_with', 'signs_new_client', 'acquires'],
           industries: ['Management Consulting', 'Investment Banking', 'Venture Capital & Private Equity', 'Biotechnology'],
@@ -282,6 +308,7 @@ export const MARKETS: Market[] = [
         id: 'wealth.supply.ria_wealth_advisors',
         name: 'RIAs / Wealth Advisors',
         side: 'supply',
+        economicRole: 'managing wealth and investment portfolios for high-net-worth individuals',
         filters: {
           signals: ['signs_new_client', 'hires', 'partners_with'],
           industries: ['Investment Management', 'Financial Services', 'Capital Markets'],
@@ -295,6 +322,7 @@ export const MARKETS: Market[] = [
         id: 'wealth.supply.family_offices',
         name: 'Family Offices',
         side: 'supply',
+        economicRole: 'making direct investments and structuring multi-generational wealth',
         filters: {
           signals: ['signs_new_client', 'invests_into', 'partners_with'],
           industries: ['Investment Management', 'Financial Services', 'Venture Capital & Private Equity'],
@@ -308,6 +336,7 @@ export const MARKETS: Market[] = [
         id: 'wealth.supply.ma_exit_advisors',
         name: 'M&A / Exit Advisors',
         side: 'supply',
+        economicRole: 'advising on mergers, acquisitions, and exit transactions',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'acquires'],
           industries: ['Investment Banking', 'Management Consulting', 'Financial Services', 'Venture Capital & Private Equity'],
@@ -372,6 +401,7 @@ export const MARKETS: Market[] = [
         id: 'recruitment.supply.executive_search',
         name: 'Executive Search Firms',
         side: 'supply',
+        economicRole: 'placing senior executives and C-suite leaders for companies',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Staffing and Recruiting', 'Human Resources', 'Management Consulting'],
@@ -385,6 +415,7 @@ export const MARKETS: Market[] = [
         id: 'recruitment.supply.specialized_recruiters',
         name: 'Specialized Recruiters',
         side: 'supply',
+        economicRole: 'filling specialized and technical roles through domain-specific recruiting',
         filters: {
           signals: ['signs_new_client', 'hires', 'partners_with'],
           industries: ['Staffing and Recruiting', 'Human Resources'],
@@ -398,6 +429,7 @@ export const MARKETS: Market[] = [
         id: 'recruitment.supply.staffing_agencies',
         name: 'Staffing Agencies',
         side: 'supply',
+        economicRole: 'providing contract, temporary, and staff augmentation workforce',
         filters: {
           signals: ['signs_new_client', 'hires', 'expands_offices_to'],
           industries: ['Staffing and Recruiting', 'Human Resources', 'Outsourcing/Offshoring'],
@@ -462,6 +494,7 @@ export const MARKETS: Market[] = [
         id: 'marketing.supply.growth_agencies',
         name: 'Growth Marketing Agencies',
         side: 'supply',
+        economicRole: 'running demand generation, lifecycle marketing, and growth campaigns',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Marketing and Advertising', 'Online Media', 'Internet'],
@@ -475,6 +508,7 @@ export const MARKETS: Market[] = [
         id: 'marketing.supply.performance_agencies',
         name: 'Performance / Paid Media Agencies',
         side: 'supply',
+        economicRole: 'managing paid media, PPC, and performance advertising for brands',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Marketing and Advertising', 'Online Media'],
@@ -488,6 +522,7 @@ export const MARKETS: Market[] = [
         id: 'marketing.supply.creative_branding',
         name: 'Creative & Branding Agencies',
         side: 'supply',
+        economicRole: 'building brand identity, creative strategy, and visual design',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'launches'],
           industries: ['Marketing and Advertising', 'Design', 'Graphic Design', 'Online Media'],
@@ -552,6 +587,7 @@ export const MARKETS: Market[] = [
         id: 'insurance.supply.commercial_brokers',
         name: 'Commercial Brokers',
         side: 'supply',
+        economicRole: 'placing commercial insurance and managing risk for businesses',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'expands_offices_to'],
           industries: ['Insurance'],
@@ -565,6 +601,7 @@ export const MARKETS: Market[] = [
         id: 'insurance.supply.benefits_peo',
         name: 'Benefits / PEO',
         side: 'supply',
+        economicRole: 'administering employee benefits, group health plans, and PEO services',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Insurance', 'Human Resources'],
@@ -578,6 +615,7 @@ export const MARKETS: Market[] = [
         id: 'insurance.supply.specialty_lines',
         name: 'Specialty (Cyber / D&O / E&O)',
         side: 'supply',
+        economicRole: 'underwriting cyber, D&O, and specialty liability coverage',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Insurance'],
@@ -645,6 +683,7 @@ export const MARKETS: Market[] = [
         id: 'saas_partnerships.supply.implementation',
         name: 'Implementation Partners',
         side: 'supply',
+        economicRole: 'deploying, configuring, and onboarding SaaS platforms for enterprise clients',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Information Technology and Services', 'Management Consulting', 'Computer Software'],
@@ -658,6 +697,7 @@ export const MARKETS: Market[] = [
         id: 'saas_partnerships.supply.channel_resellers',
         name: 'Channel Partners / Resellers',
         side: 'supply',
+        economicRole: 'reselling and distributing software products to end customers',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Computer Software', 'Information Technology and Services'],
@@ -671,6 +711,7 @@ export const MARKETS: Market[] = [
         id: 'saas_partnerships.supply.growth_agencies',
         name: 'Agencies for Growth',
         side: 'supply',
+        economicRole: 'driving customer acquisition through outbound, paid media, and growth marketing',
         filters: {
           signals: ['signs_new_client', 'partners_with', 'hires'],
           industries: ['Marketing and Advertising', 'Management Consulting'],

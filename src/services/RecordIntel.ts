@@ -107,6 +107,16 @@ export async function extractRecordIntel(
       signalQuality: ['high', 'low', 'noise'].includes(parsed.signalQuality) ? parsed.signalQuality : 'low',
     };
 
+    const descSlice = (record.companyDescription || '').slice(0, 100);
+    const capabilityMatchesDesc = intel.capability === descSlice || intel.capability === (record.companyDescription || '').slice(0, 150);
+    console.log('[RECORD_INTEL_OUT]', {
+      company: record.company,
+      capability: intel.capability.slice(0, 80),
+      capabilitySource: 'ai_extracted',
+      capabilityMatchesDesc,
+      descLen: (record.companyDescription || '').length,
+      signalQuality: intel.signalQuality,
+    });
     cache.set(cacheKey, intel);
     return intel;
   } catch (err: any) {
@@ -117,6 +127,14 @@ export async function extractRecordIntel(
       signalSummary: record.signal || 'active in market',
       signalQuality: 'low',
     };
+    console.log('[RECORD_INTEL_OUT]', {
+      company: record.company,
+      capability: fallback.capability.slice(0, 80),
+      capabilitySource: 'fallback_description',
+      capabilityMatchesDesc: true,
+      descLen: (record.companyDescription || '').length,
+      signalQuality: 'low',
+    });
     cache.set(cacheKey, fallback);
     return fallback;
   }
