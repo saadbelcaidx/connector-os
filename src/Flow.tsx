@@ -3441,7 +3441,8 @@ export default function Flow() {
               })()}
 
               {/* PRE-FLIGHT GATE: Check requirements BEFORE matching (CSV-ONLY) */}
-              {(() => {
+              {/* Gate on settings loaded — prevents false "Add enrichment" flash during async load */}
+              {settings !== null && (() => {
                 const hasDataset = !!getCsvData('demand');
                 const hasEnrichmentKeys = !!(
                   settings?.apolloApiKey ||
