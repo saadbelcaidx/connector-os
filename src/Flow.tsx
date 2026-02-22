@@ -4167,8 +4167,9 @@ export default function Flow() {
 
                     {/* ============================================= */}
                     {/* CTA SECTION — Anchored under cards */}
+                    {/* Gate on settings loaded — prevents "Connect an email tool" flash during async load */}
                     {/* ============================================= */}
-                    {(() => {
+                    {settings !== null && (() => {
                       // PHILEMON: Build enrichment plan to show provider status
                       const enrichmentPlan = buildEnrichmentPlan(
                         matches.map(m => ({
