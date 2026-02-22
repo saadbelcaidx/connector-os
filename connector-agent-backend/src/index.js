@@ -211,7 +211,6 @@ app.use(cors({
     'https://www.connector-os.com',
     'https://connector-os.com',
     'http://localhost:5173',
-    'http://localhost:5174',
     'http://localhost:4173',
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
