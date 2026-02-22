@@ -198,17 +198,22 @@ No "a/an". No "solutions/optimize/leverage/software/platform/tool".
  * 3-Block Demand Intro:
  *   Block 1: "Hey {name} — saw you're {signalObservation}."
  *   Block 2: "{relevance frame with decisionCategory}" (hash-rotated)
- *   Block 3: "I know someone at {supplyCompany} who works in that area.\n\nHappy to connect if useful."
+ *   Block 3: anonymous connection ask — wealth demand gets elevated framing
  */
 function assembleDemandIntro(
   firstName: string,
   signalObservation: string,
   block2: string,
+  demandPackId?: string,
 ): string {
   const name = (!firstName || firstName === 'there' || firstName === 'Decision')
     ? 'there' : firstName;
 
-  return `Hey ${name} — saw you're ${signalObservation}.\n\n${block2}\n\nI know someone at a firm that works in that area.\n\nHappy to connect if useful.`;
+  const block3 = demandPackId?.startsWith('wealth.demand.')
+    ? `I'm connected to firms specializing in exactly this — they work with high-net-worth founders managing wealth transitions.\n\nWorth an intro?`
+    : `I know someone at a firm that works in that area.\n\nHappy to connect if useful.`;
+
+  return `Hey ${name} — saw you're ${signalObservation}.\n\n${block2}\n\n${block3}`;
 }
 
 /**
@@ -216,16 +221,20 @@ function assembleDemandIntro(
  *   Block 1: "Hey {name} —\n\nI'm seeing {plurality} {signalObservation} right now."
  *   Block 2: "{relevance frame with decisionCategory}" (hash-rotated)
  *   Block 3: "Want me to connect you?"
+ *   demandPackId: wealth.demand.* → "founder(s)" framing instead of "company/companies"
  */
 function assembleSupplyIntro(
   firstName: string,
   signalObservation: string,
   block2: string,
   matchCount: number,
+  demandPackId?: string,
 ): string {
   const name = (!firstName || firstName === 'there' || firstName === 'Contact')
     ? 'there' : firstName;
-  const plurality = matchCount > 1 ? 'a few companies' : 'a company';
+  const plurality = demandPackId?.startsWith('wealth.demand.')
+    ? matchCount > 1 ? 'a few high-net-worth founders' : 'a high-net-worth founder'
+    : matchCount > 1 ? 'a few companies' : 'a company';
 
   return `Hey ${name} —\n\nI'm seeing ${plurality} ${signalObservation} right now.\n\n${block2}\n\nWant me to connect you if helpful?`;
 }
@@ -393,6 +402,7 @@ export async function generateIntrosAI(
   const demandFirstName = extractFirstName(demand.contact);
   const supplyFirstName = extractFirstName(supply.contact);
   const packId = (supply.metadata as any)?.packId || null;
+  const demandPackId = (demand.metadata as any)?.packId || null;
   const decisionCategory = getPackDecisionCategory(packId);
 
   // ── 3-BLOCK PATH (pack records with decisionCategory) ──
@@ -428,12 +438,14 @@ export async function generateIntrosAI(
       demandFirstName,
       signalObservation,
       block2,
+      demandPackId,
     );
     const supplyIntro = assembleSupplyIntro(
       supplyFirstName,
       signalObservation,
       block2,
       matchCount ?? 2,
+      demandPackId,
     );
 
     return {
