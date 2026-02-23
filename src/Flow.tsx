@@ -929,7 +929,7 @@ interface Settings {
 }
 
 // Supply exhaustion — deterministic cap per supply company per run
-const MAX_SUPPLY_USAGE = 5;
+const MAX_SUPPLY_USAGE = 10;
 
 // Safe size helper — works on Map (live), object (post-deserialize), and array
 function getSize(x: unknown): number {
