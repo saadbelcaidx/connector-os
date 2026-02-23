@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Check, X, RefreshCw, Users, Clock, CheckCircle, XCircle, Mail, Key, MoreHorizontal, Plus, ShieldCheck, Eye, EyeOff, LogOut, Zap, Activity } from 'lucide-react';
+import { ArrowLeft, Loader2, Check, X, RefreshCw, Users, Clock, CheckCircle, XCircle, Mail, Key, MoreHorizontal, Plus, ShieldCheck, Eye, EyeOff, LogOut, Zap, Activity, Coins } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 
 interface SSMAccessRow {
@@ -205,6 +205,66 @@ function SSMAccessDashboard() {
   const [mailtesterKey, setMailtesterKey] = useState('');
   const [updatingKey, setUpdatingKey] = useState(false);
   const [keyUpdateResult, setKeyUpdateResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Token adjustment state
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [tokenEmail, setTokenEmail] = useState('');
+  const [tokenQuota, setTokenQuota] = useState<{ used: number; limit: number; remaining: number } | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [newLimit, setNewLimit] = useState('');
+  const [adjustingTokens, setAdjustingTokens] = useState(false);
+
+  const openTokenModal = async (email: string) => {
+    setTokenEmail(email);
+    setShowTokenModal(true);
+    setTokenQuota(null);
+    setNewLimit('');
+    setTokenLoading(true);
+    try {
+      const res = await fetch(`${CONNECTOR_AGENT_URL}/admin/tokens/quota?email=${encodeURIComponent(email)}`, {
+        headers: { 'x-admin-secret': CONNECTOR_AGENT_SECRET },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTokenQuota({ used: data.used, limit: data.limit, remaining: data.remaining });
+        setNewLimit(String(data.limit));
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to fetch quota' }));
+        setToast({ message: err.error || 'Failed to fetch quota', type: 'error' });
+        setShowTokenModal(false);
+      }
+    } catch {
+      setToast({ message: 'Connector Agent unreachable', type: 'error' });
+      setShowTokenModal(false);
+    } finally {
+      setTokenLoading(false);
+    }
+  };
+
+  const handleSetLimit = async () => {
+    const limit = parseInt(newLimit, 10);
+    if (isNaN(limit) || limit < 0) return;
+    setAdjustingTokens(true);
+    try {
+      const res = await fetch(`${CONNECTOR_AGENT_URL}/admin/tokens/set-limit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-secret': CONNECTOR_AGENT_SECRET },
+        body: JSON.stringify({ email: tokenEmail, monthly_limit: limit }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setToast({ message: `Limit updated: ${data.previous_limit.toLocaleString()} → ${data.new_limit.toLocaleString()}`, type: 'success' });
+        setShowTokenModal(false);
+      } else {
+        const err = await res.json().catch(() => ({ error: 'Failed to set limit' }));
+        setToast({ message: err.error || 'Failed to set limit', type: 'error' });
+      }
+    } catch {
+      setToast({ message: 'Connector Agent unreachable', type: 'error' });
+    } finally {
+      setAdjustingTokens(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -609,6 +669,13 @@ function SSMAccessDashboard() {
                               <Key size={14} />
                               Reset password
                             </button>
+                            <button
+                              onClick={() => { setOpenMenu(null); openTokenModal(row.email); }}
+                              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-white/70 hover:text-white hover:bg-white/[0.06] transition-all text-left"
+                            >
+                              <Coins size={14} />
+                              Adjust tokens
+                            </button>
                             <div className="h-px bg-white/[0.06]" />
                             {row.status === 'approved' && (
                               <button
@@ -874,6 +941,77 @@ function SSMAccessDashboard() {
                 >
                   {addingMember && <Loader2 size={14} className="animate-spin" />}
                   Add member
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {/* Token Adjustment Modal - Portal to body */}
+      {showTokenModal && createPortal(
+        <>
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998]"
+            onClick={() => setShowTokenModal(false)}
+          />
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center pointer-events-none">
+            <div className="bg-[#141414] border border-white/[0.08] rounded-2xl w-[400px] overflow-hidden shadow-2xl pointer-events-auto">
+              <div className="px-6 py-5 border-b border-white/[0.06]">
+                <h2 className="text-[17px] font-semibold text-white/90">Adjust tokens</h2>
+                <p className="text-[13px] text-white/40 mt-0.5">{tokenEmail}</p>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                {tokenLoading ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 size={20} className="animate-spin text-white/40" />
+                  </div>
+                ) : tokenQuota ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+                        <div className="text-[11px] text-white/40 mb-1">Used</div>
+                        <div className="text-[17px] font-semibold text-white/90">{tokenQuota.used.toLocaleString()}</div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+                        <div className="text-[11px] text-white/40 mb-1">Limit</div>
+                        <div className="text-[17px] font-semibold text-white/90">{tokenQuota.limit.toLocaleString()}</div>
+                      </div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+                        <div className="text-[11px] text-white/40 mb-1">Remaining</div>
+                        <div className="text-[17px] font-semibold text-emerald-400/90">{tokenQuota.remaining.toLocaleString()}</div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[12px] text-white/40 mb-1.5">New monthly limit</label>
+                      <input
+                        type="number"
+                        value={newLimit}
+                        onChange={(e) => setNewLimit(e.target.value)}
+                        min={0}
+                        step={1000}
+                        placeholder="20000"
+                        className="w-full h-10 px-3 rounded-lg bg-white/[0.06] border border-white/[0.08] text-[14px] text-white placeholder-white/30 focus:outline-none focus:border-white/20"
+                      />
+                    </div>
+                  </>
+                ) : null}
+              </div>
+              <div className="px-6 py-4 bg-white/[0.02] border-t border-white/[0.06] flex justify-end gap-3">
+                <button
+                  onClick={() => setShowTokenModal(false)}
+                  className="px-4 py-2 text-[13px] font-medium text-white/50 hover:text-white/70 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSetLimit}
+                  disabled={!newLimit || adjustingTokens || tokenLoading}
+                  className="flex items-center gap-2 px-4 py-2 text-[13px] font-medium rounded-lg bg-white text-black hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  {adjustingTokens && <Loader2 size={14} className="animate-spin" />}
+                  Set limit
                 </button>
               </div>
             </div>

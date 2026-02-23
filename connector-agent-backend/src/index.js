@@ -111,6 +111,13 @@ db.exec(`
     wins INTEGER DEFAULT 1,
     last_seen TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Per-user monthly limit overrides (default is 10000)
+  CREATE TABLE IF NOT EXISTS user_overrides (
+    user_id TEXT PRIMARY KEY,
+    monthly_limit INTEGER NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // ============================================================
@@ -290,12 +297,20 @@ function getOrCreateUsage(userId, apiKeyId) {
 }
 
 /**
+ * Get monthly token limit for a user (checks overrides, falls back to 10000)
+ */
+function getMonthlyLimit(userId) {
+  const override = db.prepare('SELECT monthly_limit FROM user_overrides WHERE user_id = ?').get(userId);
+  return override ? override.monthly_limit : 10000;
+}
+
+/**
  * Deduct tokens from quota
  * SUCCESS-ONLY PRICING: Only charge if we found a SAFE email
  */
 function deductTokens(userId, apiKeyId, tokens) {
   const usage = getOrCreateUsage(userId, apiKeyId);
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(userId);
 
   if (usage.tokens_used + tokens > MONTHLY_LIMIT) {
     return { success: false, error: 'Quota exceeded' };
@@ -317,7 +332,7 @@ function deductTokens(userId, apiKeyId, tokens) {
  */
 function checkQuota(userId, tokens) {
   const usage = getOrCreateUsage(userId, '');
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(userId);
   return usage.tokens_used + tokens <= MONTHLY_LIMIT;
 }
 
@@ -1489,7 +1504,7 @@ app.get('/api/email/v2/quota', (req, res) => {
 
   const effectiveUserId = apiKey ? apiKey.user_id : userId;
   const usage = getOrCreateUsage(effectiveUserId, apiKey?.id || '');
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(effectiveUserId);
 
   res.json({
     success: true,
@@ -1593,7 +1608,7 @@ app.post('/api/email/v2/find', async (req, res) => {
 
   // Check if user has enough quota
   const usage = getOrCreateUsage(effectiveUserId, effectiveKeyId);
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(effectiveUserId);
   if (usage.tokens_used >= MONTHLY_LIMIT) {
     return res.status(429).json({ email: null });
   }
@@ -1889,7 +1904,7 @@ app.post('/api/email/v2/verify', async (req, res) => {
 
   // Check quota first (don't deduct yet)
   const usage = getOrCreateUsage(effectiveUserId, effectiveKeyId);
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(effectiveUserId);
   if (usage.tokens_used >= MONTHLY_LIMIT) {
     return res.status(429).json({ email: null });
   }
@@ -2015,7 +2030,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
 
   // Check quota BEFORE processing (worst case: 1 token per item)
   const usage = getOrCreateUsage(userId, keyId);
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(userId);
   if (usage.tokens_used + items.length > MONTHLY_LIMIT) {
     return res.status(429).json({ success: false, error: 'Quota exceeded' });
   }
@@ -2204,7 +2219,7 @@ app.post('/api/email/v2/verify-bulk', async (req, res) => {
   // Check quota (1 token per email)
   const tokensNeeded = emails.length;
   const usage = getOrCreateUsage(userId, keyId);
-  const MONTHLY_LIMIT = 10000;
+  const MONTHLY_LIMIT = getMonthlyLimit(userId);
 
   if (usage.tokens_used + tokensNeeded > MONTHLY_LIMIT) {
     return res.status(429).json({ email: null });
@@ -2925,6 +2940,94 @@ app.delete('/admin/circuit-breaker/:domain?', (req, res) => {
   clearCircuitBreaker();
   console.log(`[Admin] Circuit breaker cleared for all domains`);
   res.json({ success: true, cleared: 'all' });
+});
+
+/**
+ * GET /admin/tokens/quota
+ * Lookup token usage by email
+ */
+app.get('/admin/tokens/quota', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+  if (secret !== ADMIN_SECRET) {
+    return res.status(401).json({ success: false, error: 'Invalid admin secret' });
+  }
+
+  const email = req.query.email;
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'email query param required' });
+  }
+
+  // Look up user_id from api_keys by email
+  const keyRow = db.prepare('SELECT user_id FROM api_keys WHERE LOWER(user_email) = LOWER(?) AND status = ?').get(email, 'active');
+  if (!keyRow) {
+    return res.status(404).json({ success: false, error: 'No active API key found for this email' });
+  }
+
+  const userId = keyRow.user_id;
+  const period = getCurrentPeriod();
+  const usage = getOrCreateUsage(userId, '');
+  const limit = getMonthlyLimit(userId);
+
+  res.json({
+    success: true,
+    email,
+    user_id: userId,
+    used: usage.tokens_used,
+    limit,
+    remaining: Math.max(0, limit - usage.tokens_used),
+    period_start: period.start,
+    period_end: period.end,
+  });
+});
+
+/**
+ * POST /admin/tokens/set-limit
+ * Set custom monthly token limit for a user
+ */
+app.post('/admin/tokens/set-limit', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+  if (secret !== ADMIN_SECRET) {
+    return res.status(401).json({ success: false, error: 'Invalid admin secret' });
+  }
+
+  const { email, monthly_limit } = req.body;
+  if (!email || monthly_limit === undefined) {
+    return res.status(400).json({ success: false, error: 'email and monthly_limit required' });
+  }
+
+  const limit = parseInt(monthly_limit, 10);
+  if (isNaN(limit) || limit < 0) {
+    return res.status(400).json({ success: false, error: 'monthly_limit must be a non-negative integer' });
+  }
+
+  // Look up user_id from api_keys by email
+  const keyRow = db.prepare('SELECT user_id FROM api_keys WHERE LOWER(user_email) = LOWER(?) AND status = ?').get(email, 'active');
+  if (!keyRow) {
+    return res.status(404).json({ success: false, error: 'No active API key found for this email' });
+  }
+
+  const userId = keyRow.user_id;
+  const previousLimit = getMonthlyLimit(userId);
+
+  // Upsert into user_overrides
+  db.prepare(`
+    INSERT INTO user_overrides (user_id, monthly_limit, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET monthly_limit = excluded.monthly_limit, updated_at = excluded.updated_at
+  `).run(userId, limit, new Date().toISOString());
+
+  // Audit log
+  db.prepare(`INSERT INTO admin_log (id, action, details, timestamp) VALUES (?, ?, ?, ?)`)
+    .run(uuidv4(), 'set_token_limit', JSON.stringify({ email, user_id: userId, previous_limit: previousLimit, new_limit: limit }), new Date().toISOString());
+
+  console.log(`[Admin] Token limit changed for ${email}: ${previousLimit} → ${limit}`);
+
+  res.json({
+    success: true,
+    email,
+    previous_limit: previousLimit,
+    new_limit: limit,
+  });
 });
 
 // ============================================================
