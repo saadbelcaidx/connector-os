@@ -18,7 +18,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Connector Agent Backend
-const CONNECTOR_AGENT_URL = 'http://localhost:8000';
+const CONNECTOR_AGENT_URL = window.location.hostname === 'localhost' ? 'http://localhost:8000' : 'https://api.connector-os.com';
 const CONNECTOR_AGENT_SECRET = 'connector-admin-2024';
 
 interface ConnectorAgentStatus {
