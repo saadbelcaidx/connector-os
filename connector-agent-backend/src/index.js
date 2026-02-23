@@ -221,7 +221,7 @@ app.use(cors({
     'http://localhost:4173',
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-email'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-email', 'x-admin-secret'],
   credentials: false,
 }));
 
