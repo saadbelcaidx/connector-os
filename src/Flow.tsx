@@ -1674,9 +1674,10 @@ export default function Flow() {
         return role ? `is hiring ${role}` : 'is actively hiring';
       }
 
-      // GROWTH: Non-hiring signal — use label as-is
+      // GROWTH: Non-hiring signal — prefix label to guarantee multi-word evidence
       if (demand.signalMeta?.kind === 'GROWTH') {
-        return demand.signalMeta.label || 'is showing activity';
+        const label = demand.signalMeta.label || '';
+        return label.includes(' ') ? label : `is showing ${label || 'activity'}`;
       }
 
       // CONTACT_ROLE or UNKNOWN — use title if available
@@ -4944,6 +4945,41 @@ export default function Flow() {
                             {introPairCount} intros · {uniqueSupplyWithEmail} supply contacts
                           </p>
                         )}
+                      </motion.div>
+                    )}
+
+                    {/* CATCH-ALL: Emails exist but intro gates failed — never leave dead end */}
+                    {introPairCount === 0 && !enrichmentFailed && totalEnriched > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="flex flex-col items-center gap-3 mt-2"
+                      >
+                        <div className="max-w-sm p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <p className="text-[12px] text-white/50 text-center">
+                            {totalEnriched} emails ready.{!settings?.aiConfig?.apiKey
+                              ? <> Configure AI in <a href="/settings" className="underline text-white/70 hover:text-white transition-colors">Settings</a> to generate intros.</>
+                              : ' Generating intros requires matching signals. Try a different dataset.'}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setState(prev => ({
+                              ...prev,
+                              step: 'upload',
+                              matchingResult: null,
+                              detectedEdges: new Map(),
+                              enrichedDemand: new Map(),
+                              enrichedSupply: new Map(),
+                              demandIntros: new Map(),
+                              supplyIntros: new Map(),
+                            }));
+                          }}
+                          className={BTN.secondary}
+                        >
+                          Try another batch
+                        </button>
                       </motion.div>
                     )}
 
