@@ -44,8 +44,8 @@ Different behavior across domains → check ALIASES (npx vercel alias ls).
 CORS error → edge function needs headers + REDEPLOY.
 Silent failure in user-click path = BUG, not user error.
 
-## Read These First
-- docs/PRODUCT.md — I Layer doctrine, 6 primitives, operator journey, fulfillment, anti-churn
-- docs/ARCHITECTURE.md — system architecture, deployments, Azure config, database
-- docs/STATION_DESIGN.md — UI design system (Linear x Palantir)
+## Read These
+- docs/ARCHITECTURE.md — what exists, what calls what
+- docs/PRODUCT.md — I Layer doctrine, primitives, operator journey
 - docs/SESSION_LOG.md — what was done, what's pending
+- docs/STATION_DESIGN.md — UI design system (when created)
