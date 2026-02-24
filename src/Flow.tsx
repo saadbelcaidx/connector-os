@@ -2554,6 +2554,13 @@ export default function Flow() {
 
     let aiFailureReason: string | undefined;
 
+    if (aiWorkItems.length > 0 && !introAIConfig) {
+      // AI config missing — surface to user instead of silently skipping
+      console.warn(`[COMPOSE] Phase 2 BLOCKED: ${aiWorkItems.length} items ready but no AI config. User must configure AI provider in Settings.`);
+      aiFailureReason = 'No AI provider configured. Go to Settings → AI to add your API key.';
+      setFallbackWarning(aiFailureReason);
+    }
+
     if (aiWorkItems.length > 0 && introAIConfig) {
       console.log(`[COMPOSE] Phase 2: Parallel AI generation (${aiWorkItems.length} items, concurrency=5)...`);
 
@@ -2650,7 +2657,7 @@ export default function Flow() {
     console.log(`  - Supply intros: ${supplyIntros.size}`);
 
     // INVARIANT C: No data loss on resume
-    const resultsDropped = dropped > 0;
+    const resultsDropped = dropped > 0 || !!aiFailureReason;
     const droppedCounts = resultsDropped ? {
       demand: demandIntros.size,
       supply: supplyIntros.size,
@@ -4793,7 +4800,7 @@ export default function Flow() {
                       ) : demandEmailState === 'PARTIAL' ? (
                         <p className="text-[12px] text-white/40 mt-2">{demandEnriched} emails · {demandWithoutEmail} need LinkedIn</p>
                       ) : (
-                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} ready to send</p>
+                        <p className="text-[12px] text-white/40 mt-2">{demandEnriched} emails found</p>
                       )}
                     </motion.div>
 
@@ -4907,6 +4914,18 @@ export default function Flow() {
                     )}
 
                     {/* Generate Intros — export happens AFTER intros in Ready step */}
+                    {introPairCount > 0 && !settings?.aiConfig?.apiKey && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3 }}
+                        className="max-w-sm mx-auto mb-4 p-3 rounded-xl bg-red-500/[0.06] border border-red-500/[0.12]"
+                      >
+                        <p className="text-[12px] text-red-400/90 text-center">
+                          No AI provider configured. Go to <a href="/settings" className="underline hover:text-red-300 transition-colors">Settings → AI</a> to add your API key.
+                        </p>
+                      </motion.div>
+                    )}
                     {introPairCount > 0 && (
                       <motion.div
                         initial={{ opacity: 0, y: 10 }}
@@ -4915,6 +4934,7 @@ export default function Flow() {
                       >
                         <button
                           onClick={regenerateIntros}
+                          disabled={!settings?.aiConfig?.apiKey}
                           className={BTN.primary}
                         >
                           Generate {introPairCount} intros
