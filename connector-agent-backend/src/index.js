@@ -2752,6 +2752,131 @@ app.post('/markets/enrich-batch', async (req, res) => {
 });
 
 // ============================================================
+// MARKETS — AI Description Fallback
+// For companies where standard enrichment returns no description,
+// guess domain from name and use Instantly's hidden AI API.
+// ============================================================
+
+const aiDescCache = new Map(); // name -> { data, timestamp }
+const AI_DESC_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function getAIDescCached(name) {
+  const entry = aiDescCache.get(name.toLowerCase());
+  if (!entry) return undefined;
+  if (Date.now() - entry.timestamp > AI_DESC_CACHE_TTL) {
+    aiDescCache.delete(name.toLowerCase());
+    return undefined;
+  }
+  return entry.data;
+}
+
+function setAIDescCached(name, data) {
+  aiDescCache.set(name.toLowerCase(), { data, timestamp: Date.now() });
+  if (aiDescCache.size > 5000) {
+    const oldest = aiDescCache.keys().next().value;
+    aiDescCache.delete(oldest);
+  }
+}
+
+function guessDomain(companyName) {
+  if (!companyName) return null;
+  const domain = companyName
+    .toLowerCase()
+    .replace(/\s*[-–—]\s*\b(us|uk|eu|emea|apac|global|international|north america|europe|asia)\b.*$/i, '')
+    .replace(/\b(inc|llc|ltd|co|corp|gmbh|ag|sa|plc|pty)\.?\s*$/gi, '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+  return domain.length > 1 ? domain + '.com' : null;
+}
+
+function validateDescription(name, desc) {
+  if (!desc || desc.trim().length < 50) return false;
+  const words = name.toLowerCase().split(/[\s\-–—]+/).filter(w => w.length > 2);
+  if (words.length === 0) {
+    // Short names (UBS, ADM, SAP): check if full name appears
+    const nameClean = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return nameClean.length >= 2 && desc.toLowerCase().includes(nameClean);
+  }
+  return words.some(w => desc.toLowerCase().includes(w));
+}
+
+/**
+ * POST /markets/ai-descriptions
+ * Fallback: fetch AI-generated company descriptions for companies
+ * where standard enrichment returned no data.
+ */
+app.post('/markets/ai-descriptions', async (req, res) => {
+  const { companies } = req.body;
+
+  if (!companies || !Array.isArray(companies) || companies.length === 0) {
+    return res.status(400).json({ error: 'companies array required' });
+  }
+
+  const ORG_AUTH = process.env.INSTANTLY_ORG_AUTH;
+  if (!ORG_AUTH) {
+    console.log('[Markets] AI descriptions skipped — INSTANTLY_ORG_AUTH not configured');
+    return res.json({ descriptions: {} });
+  }
+
+  const items = companies.slice(0, 50);
+  const results = {};
+
+  for (const item of items) {
+    const name = item.name;
+    if (!name) continue;
+
+    const cached = getAIDescCached(name);
+    if (cached !== undefined) {
+      results[name] = cached;
+      continue;
+    }
+
+    const domain = guessDomain(name);
+    if (!domain) {
+      results[name] = null;
+      setAIDescCached(name, null);
+      continue;
+    }
+
+    try {
+      const url = `https://app.instantly.ai/backend/api/v1/companies/${encodeURIComponent(domain)}/ai/info?type=Company+Description`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+      const response = await fetch(url, {
+        headers: { 'X-Org-Auth': ORG_AUTH },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const desc = (data.result || '').trim();
+
+        if (validateDescription(name, desc)) {
+          results[name] = desc;
+          setAIDescCached(name, desc);
+        } else {
+          results[name] = null;
+          setAIDescCached(name, null);
+        }
+      } else {
+        results[name] = null;
+      }
+    } catch (err) {
+      results[name] = null;
+    }
+
+    await sleep(200);
+  }
+
+  console.log(`[Markets] AI descriptions: ${Object.values(results).filter(Boolean).length}/${items.length} resolved`);
+  res.json({ descriptions: results });
+});
+
+// ============================================================
 // ADMIN ENDPOINTS
 // ============================================================
 

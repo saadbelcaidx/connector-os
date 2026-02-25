@@ -145,32 +145,88 @@ export async function enrichCompanies(companyIds: string[]): Promise<Map<string,
   const result = new Map<string, CompanyIntel>();
   if (companyIds.length === 0) return result;
 
-  try {
-    const response = await fetch(`${API_BASE}/markets/enrich-batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ companyIds }),
-    });
+  // Normalize: companyId may arrive as number from Leadsy API
+  const ids = companyIds.map(id => String(id));
 
-    if (!response.ok) {
-      console.log(`[Markets] Batch enrich failed: ${response.status}`);
-      return result;
-    }
-
-    const data = await response.json();
-    const companies = data.companies || {};
-
-    for (const [id, company] of Object.entries(companies)) {
-      if (company) {
-        result.set(String(id), company as CompanyIntel);
-      }
-    }
-
-    console.log(`[Markets] Enriched ${result.size}/${companyIds.length} companies`);
-  } catch (err: any) {
-    console.log(`[Markets] Batch enrich error: ${err.message}`);
+  // Backend caps at 50 per call — chunk to match
+  const BATCH_SIZE = 50;
+  const batches: string[][] = [];
+  for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+    batches.push(ids.slice(i, i + BATCH_SIZE));
   }
 
+  for (const batch of batches) {
+    try {
+      const response = await fetch(`${API_BASE}/markets/enrich-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyIds: batch }),
+      });
+
+      if (!response.ok) {
+        console.log(`[Markets] Batch enrich failed: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const companies = data.companies || {};
+
+      for (const [id, company] of Object.entries(companies)) {
+        if (company) {
+          result.set(String(id), company as CompanyIntel);
+        }
+      }
+    } catch (err: any) {
+      console.log(`[Markets] Batch enrich error: ${err.message}`);
+    }
+  }
+
+  console.log(`[Markets] Enriched ${result.size}/${ids.length} companies (${batches.length} batches)`);
+  return result;
+}
+
+// =============================================================================
+// AI DESCRIPTION FALLBACK
+// For companies where standard enrichment returned no description.
+// =============================================================================
+
+export async function fetchFallbackDescriptions(companyNames: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (companyNames.length === 0) return result;
+
+  const BATCH_SIZE = 50;
+  const batches: string[][] = [];
+  for (let i = 0; i < companyNames.length; i += BATCH_SIZE) {
+    batches.push(companyNames.slice(i, i + BATCH_SIZE));
+  }
+
+  for (const batch of batches) {
+    try {
+      const response = await fetch(`${API_BASE}/markets/ai-descriptions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companies: batch.map(name => ({ name })) }),
+      });
+
+      if (!response.ok) {
+        console.log(`[Markets] AI descriptions batch failed: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const descriptions = data.descriptions || {};
+
+      for (const [name, desc] of Object.entries(descriptions)) {
+        if (desc) {
+          result.set(name, desc as string);
+        }
+      }
+    } catch (err: any) {
+      console.log(`[Markets] AI descriptions error: ${err.message}`);
+    }
+  }
+
+  console.log(`[Markets] Fallback descriptions: ${result.size}/${companyNames.length} resolved`);
   return result;
 }
 

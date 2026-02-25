@@ -16,7 +16,7 @@ import {
   ArrowLeft, ArrowRight, Search, Loader2, ChevronDown, ChevronRight, Radar,
   TrendingUp, Banknote, Rocket, Handshake, AlertTriangle, Tag, Check, X,
 } from 'lucide-react';
-import { searchMarkets, enrichCompanies, normalizeToRecord, storeAsdemand, storeAsSupply } from './services/MarketsService';
+import { searchMarkets, enrichCompanies, fetchFallbackDescriptions, normalizeToRecord, storeAsdemand, storeAsSupply } from './services/MarketsService';
 import { getCsvData } from './services/SignalsClient';
 import type { NormalizedRecord } from './schemas';
 import Dock from './Dock';
@@ -35,6 +35,42 @@ for (const market of MARKETS) {
       }
     }
   }
+}
+
+// =============================================================================
+// INSTANTLY PLACE IDS — Google Places IDs for location filtering
+// Collected from Instantly SuperSearch API network requests.
+// Without valid place_id, Instantly ignores location filter entirely.
+// =============================================================================
+const PLACE_IDS: Record<string, string> = {
+  'United States': 'ChIJCzYy5IS16lQRQrfeQ5K5Oxw',
+  'United Kingdom': 'ChIJqZHHQhE7WgIReiWIMkOg-MQ',
+  'France': 'ChIJMVd4MymgVA0R99lHx5Y__Ws',
+  'Germany': 'ChIJa76xwh5ymkcRW-WRjmtd6HU',
+  'Netherlands': 'ChIJu-SH28MJxkcRnwq9_851obM',
+  'United Arab Emirates': 'ChIJvRKrsd9IXj4RpwoIwFYv0zM',
+  'Canada': 'ChIJ2WrMN9MDDUsRpY9Doiq3aJk',
+  'Israel': 'ChIJi8mnMiRJABURuiw1EyBCa2o',
+  'Australia': 'ChIJ38WHZwf9KysRUhNblaFnglM',
+  'Austria': 'ChIJfyqdJZsHbUcRr8Hk3XvUEhA',
+  'Finland': 'ChIJ3fYyS9_KgUYREKh1PNZGAQA',
+  'Saudi Arabia': 'ChIJQSqV5z-z5xURm7YawktQYFk',
+  'Mexico': 'ChIJU1NoiDs6BIQREZgJa760ZO0',
+  'Sweden': 'ChIJ8fA1bTmyXEYRYm-tjaLruCI',
+  'Italy': 'ChIJA9KNRIL-1BIRb15jJFz1LOI',
+  'Norway': 'ChIJv-VNj0VoEkYRK9BkuJ07sKE',
+  'Denmark': 'ChIJ-1-U7rYnS0YRzZLgw9BDh1I',
+  'Singapore': 'ChIJdZOLiiMR2jERxPWrUs9peIg',
+  'New Zealand': 'ChIJh5Z3Fw4gLG0RM0dqdeIY1rE',
+};
+
+function resolvePlaceId(label: string): string {
+  const normalized = label.toLowerCase().trim().replace(/\s+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const id = PLACE_IDS[normalized];
+  if (!id) {
+    console.warn(`[Markets] No place_id for "${label}" — Instantly may ignore this location filter`);
+  }
+  return id || '';
 }
 
 // =============================================================================
@@ -501,7 +537,7 @@ export default function PrebuiltMarkets() {
       // Build locations — exact API shape: { include: [{ place_id, label }] }
       const locationLabels = locationInput.split(',').map(s => s.trim()).filter(Boolean);
       const locations = locationLabels.length > 0
-        ? { include: locationLabels.map(label => ({ place_id: '', label })) }
+        ? { include: locationLabels.map(label => ({ place_id: resolvePlaceId(label), label })) }
         : undefined;
 
       const result = await searchMarkets({
@@ -546,14 +582,49 @@ export default function PrebuiltMarkets() {
       if (companyIds.length > 0) {
         setProgress(60);
         companyMap = await enrichCompanies(companyIds);
-        setProgress(80);
+        setProgress(75);
       }
+
+      // Fallback: fetch AI descriptions for companies missing description
+      const missingDescNames: string[] = [];
+      const idToName = new Map<string, string>();
+      for (const r of result.records) {
+        const lead = (r.raw as any)?.lead;
+        const companyId = lead?.companyId ? String(lead.companyId) : null;
+        const companyName = lead?.companyName || '';
+        if (!companyId || !companyName) continue;
+        const existing = companyMap.get(companyId);
+        if (!existing || !existing.description) {
+          if (!idToName.has(companyId)) {
+            missingDescNames.push(companyName);
+            idToName.set(companyId, companyName);
+          }
+        }
+      }
+
+      if (missingDescNames.length > 0) {
+        setProgressStage('Fetching company details');
+        const uniqueNames = [...new Set(missingDescNames)];
+        const fallbackDescs = await fetchFallbackDescriptions(uniqueNames);
+        setProgress(85);
+
+        for (const [companyId, companyName] of idToName) {
+          const desc = fallbackDescs.get(companyName);
+          if (desc) {
+            const existing = companyMap.get(companyId) || {};
+            companyMap.set(companyId, { ...existing, description: desc });
+          }
+        }
+        console.log(`[Markets] Merged ${fallbackDescs.size} fallback descriptions`);
+      }
+
+      setProgress(90);
 
       const signalLabel = buildSignalLabelFromFilters(selectedSignals, jobFilters);
       const records = result.records.map(r => {
         const lead = (r.raw as any)?.lead;
         const companyId = lead?.companyId;
-        const company = companyId ? companyMap.get(companyId) || null : null;
+        const company = companyId ? companyMap.get(String(companyId)) || null : null;
         return normalizeToRecord(lead, company, signalLabel, selectedIndustries[0] || null);
       });
 
