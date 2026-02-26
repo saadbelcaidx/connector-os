@@ -131,7 +131,7 @@ Generate your reply:`;
     }
 
     if (aiConfig.provider === 'anthropic' && anthropicKey) {
-      const model = aiConfig.model || 'claude-3-haiku-20240307';
+      const model = (aiConfig.model === 'claude-3-haiku-20240307' ? 'claude-haiku-4-5-20251001' : aiConfig.model) || 'claude-haiku-4-5-20251001';
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {

@@ -393,7 +393,7 @@ export default function ReplyBrainV1() {
               config.model = s.aiModel || 'gpt-4o-mini';
             } else if (s.aiProvider === 'anthropic' && s.anthropicApiKey) {
               config.apiKey = s.anthropicApiKey;
-              config.model = s.aiModel || 'claude-3-haiku-20240307';
+              config.model = (s.aiModel === 'claude-3-haiku-20240307' ? 'claude-haiku-4-5-20251001' : s.aiModel) || 'claude-haiku-4-5-20251001';
             } else if (s.aiProvider === 'azure' && s.azureApiKey) {
               config.apiKey = s.azureApiKey;
               config.azureEndpoint = s.azureEndpoint;
@@ -489,7 +489,7 @@ export default function ReplyBrainV1() {
                 config.model = savedModel || 'gpt-4o-mini';
               } else if (aiProvider === 'anthropic' && aiAnthropicKey) {
                 config.apiKey = aiAnthropicKey;
-                config.model = savedModel || 'claude-3-haiku-20240307';
+                config.model = (savedModel === 'claude-3-haiku-20240307' ? 'claude-haiku-4-5-20251001' : savedModel) || 'claude-haiku-4-5-20251001';
               } else if (aiProvider === 'azure' && aiAzureKey) {
                 config.apiKey = aiAzureKey;
                 config.azureEndpoint = aiAzureEndpoint;

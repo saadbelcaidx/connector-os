@@ -1263,7 +1263,7 @@ export default function Flow() {
             return {
               enabled: true,
               provider: 'anthropic',
-              model: s.aiModel || 'claude-3-haiku-20240307',
+              model: (s.aiModel === 'claude-3-haiku-20240307' ? 'claude-haiku-4-5-20251001' : s.aiModel) || 'claude-haiku-4-5-20251001',
               apiKey: s.claudeApiKey,
             };
           }

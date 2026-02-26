@@ -301,7 +301,7 @@ async function callAnthropic(config: IntroAIConfig, prompt: string): Promise<str
     body: JSON.stringify({
       provider: 'anthropic',
       anthropicApiKey: config.apiKey,
-      model: config.model || 'claude-3-haiku-20240307',
+      model: config.model || 'claude-haiku-4-5-20251001',
       messages: [{ role: 'user', content: prompt }],
       max_tokens: 200,
       temperature: 0.3,

@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
     // ANTHROPIC
     // =========================================================================
     else if (provider === 'anthropic') {
-      const { anthropicApiKey, model = 'claude-3-haiku-20240307' } = body;
+      const { anthropicApiKey, model = 'claude-haiku-4-5-20251001' } = body;
 
       if (!anthropicApiKey) {
         return new Response(

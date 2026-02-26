@@ -348,7 +348,7 @@ async function callAI(
     requestBody.model = model || 'gpt-4o-mini';
   } else if (provider === 'anthropic') {
     requestBody.anthropicApiKey = apiKey;
-    requestBody.model = model || 'claude-3-haiku-20240307';
+    requestBody.model = model || 'claude-haiku-4-5-20251001';
   }
 
   // Route through edge function to avoid CORS
@@ -570,7 +570,7 @@ export function ConnectorAssistant() {
             setAiConfig({
               provider: 'anthropic',
               apiKey: parsed.claudeApiKey,
-              model: parsed.aiModel || 'claude-3-haiku-20240307',
+              model: (parsed.aiModel === 'claude-3-haiku-20240307' ? 'claude-haiku-4-5-20251001' : parsed.aiModel) || 'claude-haiku-4-5-20251001',
             });
             console.log('[ConnectorAssistant] Anthropic config loaded (preferred)');
             return;
@@ -621,7 +621,7 @@ export function ConnectorAssistant() {
             setAiConfig({
               provider: 'anthropic',
               apiKey: parsed.claudeApiKey,
-              model: parsed.aiModel || 'claude-3-haiku-20240307',
+              model: (parsed.aiModel === 'claude-3-haiku-20240307' ? 'claude-haiku-4-5-20251001' : parsed.aiModel) || 'claude-haiku-4-5-20251001',
             });
             console.log('[ConnectorAssistant] Anthropic config loaded (fallback)');
             return;

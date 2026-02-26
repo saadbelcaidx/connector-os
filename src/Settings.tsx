@@ -1650,8 +1650,8 @@ export default function Settings() {
                           className="w-full h-9 pl-3 pr-8 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[13px] text-white/90 appearance-none cursor-pointer transition-all duration-200 hover:bg-white/[0.06] hover:border-white/[0.12] focus:outline-none focus:border-white/20 focus:ring-1 focus:ring-white/10"
                           style={{ colorScheme: 'dark' }}
                         >
-                          <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fast)</option>
-                          <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Best)</option>
+                          <option value="claude-haiku-4-5-20251001">Claude 4.5 Haiku (Fast)</option>
+                          <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Best)</option>
                         </select>
                         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
                           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/40">
