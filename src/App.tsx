@@ -32,6 +32,12 @@ import OnboardingWizard from './OnboardingWizard';
 import PrebuiltMarkets from './PrebuiltMarkets';
 import ConnectorAgent from './connector-agent/ConnectorAgent';
 import Operator from './Operator';
+import Station from './Station';
+import RunsPage from './station/pages/RunsPage';
+import RunDetailPage from './station/pages/RunDetailPageV2';
+import SendPage from './station/pages/SendPage';
+import TestComposeV2 from './station/pages/TestComposeV2';
+import TestFulfillment from './station/pages/TestFulfillment';
 import Privacy from './Privacy';
 import Terms from './Terms';
 import ComingSoon from './components/ComingSoon';
@@ -42,6 +48,7 @@ import ConnectorAssistant from './components/ConnectorAssistant';
 import PlatformApp from './platform/PlatformApp';
 import PlatformDashboard from './platform/PlatformDashboard';
 import PlatformSettings from './platform/PlatformSettings';
+import ExecutionBadge from './station/components/ExecutionBadge';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -129,6 +136,14 @@ function AppRoutes() {
 
       {/* Operator Console - Hidden pipeline dashboard */}
       <Route path="/operator" element={<div className="page-fade"><Operator /></div>} />
+
+      {/* Station - Market evaluation pipeline */}
+      <Route path="/station" element={<div className="page-fade"><Station /></div>} />
+      <Route path="/station/runs" element={<div className="page-fade"><RunsPage /></div>} />
+      <Route path="/station/run/:jobId" element={<div className="page-fade"><RunDetailPage /></div>} />
+      <Route path="/station/run/:jobId/send" element={<div className="page-fade"><SendPage /></div>} />
+      <Route path="/station/test-v2" element={<div className="page-fade"><TestComposeV2 /></div>} />
+      <Route path="/station/test-fulfillment" element={<div className="page-fade"><TestFulfillment /></div>} />
 
       {/* Prebuilt Markets - Signal-based lead search (SSM gated) */}
       <Route

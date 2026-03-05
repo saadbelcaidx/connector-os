@@ -228,6 +228,13 @@ export interface NormalizedRecord {
   schemaId: string;
   raw: any;
 
+  // === EVENT METADATA (signal classification — set at ingestion) ===
+  eventMeta?: {
+    signalType: string | null;
+    signalGroup: string | null;
+    signalLabel: string | null;
+  };
+
   // === ONTOLOGY (system-derived from pack, never user-assigned) ===
   readonly side?: 'demand' | 'supply';
   readonly market?: string;

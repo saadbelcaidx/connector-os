@@ -47,7 +47,7 @@ export interface CreateIntroductionParams {
   // What was sent
   demandIntroText?: string;
   supplyIntroText?: string;
-  introSource?: 'template' | 'ai' | 'ai-fallback';
+  introSource?: 'template' | 'ai' | 'ai-fallback' | 'ai-v2' | 'ai-v2-fulfillment';
 
   // Linking
   threadId?: string;
@@ -55,6 +55,12 @@ export interface CreateIntroductionParams {
   supplyCampaignId?: string;
   demandLeadId?: string;
   supplyLeadId?: string;
+
+  // Overlay tracking
+  overlayClientId?: string;
+  overlayVersion?: number;
+  overlayClientName?: string;
+  overlayHash?: string;
 }
 
 export type IntroStatus =
@@ -163,6 +169,10 @@ export async function createIntroduction(params: CreateIntroductionParams): Prom
       supply_campaign_id: params.supplyCampaignId,
       demand_lead_id: params.demandLeadId,
       supply_lead_id: params.supplyLeadId,
+      overlay_client_id: params.overlayClientId,
+      overlay_version: params.overlayVersion,
+      overlay_client_name: params.overlayClientName,
+      overlay_hash: params.overlayHash,
       sent_at: new Date().toISOString(),
     }).select('id').single();
 
@@ -187,8 +197,8 @@ export async function createIntroduction(params: CreateIntroductionParams): Prom
  */
 export async function createIntroductionsBatch(
   records: CreateIntroductionParams[]
-): Promise<number> {
-  if (records.length === 0) return 0;
+): Promise<string[]> {
+  if (records.length === 0) return [];
 
   try {
     const rows = records.map(params => {
@@ -221,22 +231,27 @@ export async function createIntroductionsBatch(
       supply_campaign_id: params.supplyCampaignId,
       demand_lead_id: params.demandLeadId,
       supply_lead_id: params.supplyLeadId,
+      overlay_client_id: params.overlayClientId,
+      overlay_version: params.overlayVersion,
+      overlay_client_name: params.overlayClientName,
+      overlay_hash: params.overlayHash,
       sent_at: new Date().toISOString(),
     };});
 
-    const { error } = await supabase.from('introductions').insert(rows);
+    const { data, error } = await supabase.from('introductions').insert(rows).select('id');
 
     if (error) {
       console.error('[Introductions] Failed to batch create:', error);
-      return 0;
+      return [];
     }
 
-    console.log(`[Introductions] Batch created ${records.length} introductions`);
-    return records.length;
+    const ids = (data || []).map((r: { id: string }) => r.id);
+    console.log(`[Introductions] Batch created ${ids.length} introductions`);
+    return ids;
 
   } catch (err) {
     console.error('[Introductions] Error batch creating:', err);
-    return 0;
+    return [];
   }
 }
 
@@ -517,6 +532,65 @@ export async function getIntroStats(operatorId: string): Promise<IntroStats> {
   } catch (err) {
     console.error('[Introductions] Error getting stats:', err);
     return empty;
+  }
+}
+
+// ============================================================================
+// OVERLAY ANALYSIS QUERY
+// ============================================================================
+
+export interface OverlayIntroRow {
+  id: string;
+  status: IntroStatus;
+  matchTier: string | null;
+  demandContactTitle: string | null;
+  supplyContactTitle: string | null;
+  needCategory: string | null;
+  capabilityCategory: string | null;
+  dealValue: number | null;
+  overlayHash: string | null;
+  overlayVersion: number | null;
+  createdAt: string;
+}
+
+/**
+ * Get intros for overlay performance analysis.
+ * Returns lightweight rows — activation window filtering happens client-side
+ * since DB can't see localStorage timestamps.
+ */
+export async function getIntrosForOverlayAnalysis(
+  operatorId: string,
+  overlayClientId: string
+): Promise<OverlayIntroRow[]> {
+  try {
+    const { data, error } = await supabase.from('introductions')
+      .select('id, status, match_tier, demand_contact_title, supply_contact_title, need_category, capability_category, deal_value, overlay_hash, overlay_version, created_at')
+      .eq('operator_id', operatorId)
+      .eq('overlay_client_id', overlayClientId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[Introductions] Failed to get overlay analysis:', error);
+      return [];
+    }
+
+    return (data || []).map(row => ({
+      id: row.id as string,
+      status: row.status as IntroStatus,
+      matchTier: row.match_tier as string | null,
+      demandContactTitle: row.demand_contact_title as string | null,
+      supplyContactTitle: row.supply_contact_title as string | null,
+      needCategory: row.need_category as string | null,
+      capabilityCategory: row.capability_category as string | null,
+      dealValue: row.deal_value as number | null,
+      overlayHash: row.overlay_hash as string | null,
+      overlayVersion: row.overlay_version as number | null,
+      createdAt: row.created_at as string,
+    }));
+
+  } catch (err) {
+    console.error('[Introductions] Error getting overlay analysis:', err);
+    return [];
   }
 }
 

@@ -141,7 +141,10 @@ export async function searchMarkets(options: MarketSearchOptions): Promise<Searc
 // COMPANY ENRICHMENT (BATCH)
 // =============================================================================
 
-export async function enrichCompanies(companyIds: string[]): Promise<Map<string, CompanyIntel>> {
+export async function enrichCompanies(
+  companyIds: string[],
+  onProgress?: (enriched: number, total: number) => void,
+): Promise<Map<string, CompanyIntel>> {
   const result = new Map<string, CompanyIntel>();
   if (companyIds.length === 0) return result;
 
@@ -179,6 +182,7 @@ export async function enrichCompanies(companyIds: string[]): Promise<Map<string,
     } catch (err: any) {
       console.log(`[Markets] Batch enrich error: ${err.message}`);
     }
+    onProgress?.(result.size, ids.length);
   }
 
   console.log(`[Markets] Enriched ${result.size}/${ids.length} companies (${batches.length} batches)`);
@@ -190,7 +194,10 @@ export async function enrichCompanies(companyIds: string[]): Promise<Map<string,
 // For companies where standard enrichment returned no description.
 // =============================================================================
 
-export async function fetchFallbackDescriptions(companyNames: string[]): Promise<Map<string, string>> {
+export async function fetchFallbackDescriptions(
+  companyNames: string[],
+  onProgress?: (resolved: number, total: number) => void,
+): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   if (companyNames.length === 0) return result;
 
@@ -224,6 +231,7 @@ export async function fetchFallbackDescriptions(companyNames: string[]): Promise
     } catch (err: any) {
       console.log(`[Markets] AI descriptions error: ${err.message}`);
     }
+    onProgress?.(result.size, companyNames.length);
   }
 
   console.log(`[Markets] Fallback descriptions: ${result.size}/${companyNames.length} resolved`);

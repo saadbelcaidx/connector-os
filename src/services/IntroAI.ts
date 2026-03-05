@@ -257,18 +257,18 @@ function assembleDemandIntroLegacy(
 
 function assembleSupplyIntroLegacy(
   firstName: string,
-  vars: { dreamICP: string; painTheySolve: string },
+  vars: { dreamICP: string; bridge: string },
 ): string {
   const name = (!firstName || firstName === 'there' || firstName === 'Contact')
     ? 'there' : firstName;
-  return `Hey ${name} —\n\nNot sure how many people are on your waiting list, but I got a couple ${vars.dreamICP} who need ${vars.painTheySolve}\n\nLet me know`;
+  return `Hey ${name} —\n\nNot sure how many people are on your waiting list, but I got a couple ${vars.dreamICP} who need ${vars.bridge}\n\nLet me know`;
 }
 
 // =============================================================================
 // AI PROVIDER CALLS
 // =============================================================================
 
-async function callOpenAI(config: IntroAIConfig, prompt: string): Promise<string> {
+async function callOpenAI(config: IntroAIConfig, prompt: string, maxTokens = 200): Promise<string> {
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -279,7 +279,7 @@ async function callOpenAI(config: IntroAIConfig, prompt: string): Promise<string
       model: config.model || 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 200,
+      max_tokens: maxTokens,
     }),
   });
 
@@ -288,7 +288,7 @@ async function callOpenAI(config: IntroAIConfig, prompt: string): Promise<string
   return data.choices[0]?.message?.content || '';
 }
 
-async function callAnthropic(config: IntroAIConfig, prompt: string): Promise<string> {
+async function callAnthropic(config: IntroAIConfig, prompt: string, maxTokens = 200): Promise<string> {
   const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
   const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
@@ -303,7 +303,7 @@ async function callAnthropic(config: IntroAIConfig, prompt: string): Promise<str
       anthropicApiKey: config.apiKey,
       model: config.model || 'claude-haiku-4-5-20251001',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200,
+      max_tokens: maxTokens,
       temperature: 0.3,
     }),
   });
@@ -317,7 +317,7 @@ async function callAnthropic(config: IntroAIConfig, prompt: string): Promise<str
   return data.content || '';
 }
 
-async function callAzure(config: IntroAIConfig, prompt: string): Promise<string> {
+async function callAzure(config: IntroAIConfig, prompt: string, maxTokens = 200): Promise<string> {
   if (!config.azureEndpoint || !config.azureDeployment) {
     throw new Error('Azure endpoint and deployment required');
   }
@@ -333,7 +333,7 @@ async function callAzure(config: IntroAIConfig, prompt: string): Promise<string>
     body: JSON.stringify({
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 200,
+      max_tokens: maxTokens,
     }),
   });
 
@@ -353,15 +353,15 @@ async function callAzure(config: IntroAIConfig, prompt: string): Promise<string>
   return data.choices[0]?.message?.content || '';
 }
 
-export async function callAI(config: IntroAIConfig, prompt: string): Promise<string> {
+export async function callAI(config: IntroAIConfig, prompt: string, maxTokens?: number): Promise<string> {
   switch (config.provider) {
     case 'openai':
-      return callOpenAI(config, prompt);
+      return callOpenAI(config, prompt, maxTokens);
     case 'anthropic':
-      return callAnthropic(config, prompt);
+      return callAnthropic(config, prompt, maxTokens);
     case 'azure':
       try {
-        return await callAzure(config, prompt);
+        return await callAzure(config, prompt, maxTokens);
       } catch (err) {
         if (err instanceof Error && err.message === 'AZURE_CONTENT_FILTER_BLOCK') {
           if (!config.openaiApiKeyFallback) {
@@ -373,7 +373,7 @@ export async function callAI(config: IntroAIConfig, prompt: string): Promise<str
             provider: 'openai',
             apiKey: config.openaiApiKeyFallback,
             model: 'gpt-4o-mini',
-          }, prompt);
+          }, prompt, maxTokens);
         }
         throw err;
       }
@@ -496,7 +496,7 @@ export async function generateIntrosAI(
   // Supply legacy vars — use signalObservation + curated or AI
   const supplyVars = {
     dreamICP: `${demand.industry || 'companies'} in your space`.toLowerCase(),
-    painTheySolve: introPhrase?.asNeed || edge.evidence || 'what they need right now',
+    bridge: introPhrase?.asNeed || edge.evidence || 'what they need right now',
   };
 
   const demandIntro = assembleDemandIntroLegacy(demandFirstName, demand.company, demandVars);
@@ -507,7 +507,7 @@ export async function generateIntrosAI(
     supplyIntro,
     valueProps: {
       demandValueProp: `${demandVars.signalObservation} → ${demandVars.whoTheyAre}`,
-      supplyValueProp: `${supplyVars.dreamICP} looking for ${supplyVars.painTheySolve}`,
+      supplyValueProp: `${supplyVars.dreamICP} looking for ${supplyVars.bridge}`,
     },
   };
 }

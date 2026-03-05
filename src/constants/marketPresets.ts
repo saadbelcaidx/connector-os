@@ -110,7 +110,7 @@ export interface Pack {
   economicRole?: string;
   /** Pre-curated intro-ready phrases — grammar-safe for each template slot */
   introPhrase?: {
-    asNeed: string;    // fits "looking for [X]" (painTheySolve slot)
+    asNeed: string;    // fits "looking for [X]" (bridge slot)
     asEntity: string;  // fits "connected to [X]" (whoTheyAre slot)
   };
   /** Decision area noun phrase — fits "start thinking about [X]" in Block 2 */
@@ -985,4 +985,99 @@ export const INDUSTRY_FOCUSES: IndustryFocus[] = [
     keywordsInclude: 'local marketing, local SEO, franchise, multi-location, local business, service area',
     titleBias: 'Owner, Founder, VP Marketing, Head of Marketing, General Manager',
   },
+];
+
+// =============================================================================
+// STATION FILTER OPTIONS
+// =============================================================================
+
+export const NEWS_SIGNALS = [
+  { value: 'hires', label: 'Hiring' },
+  { value: 'receives_financing', label: 'Funding raised' },
+  { value: 'launches', label: 'Product launch' },
+  { value: 'partners_with', label: 'Partnership' },
+  { value: 'acquires', label: 'Acquisition' },
+  { value: 'signs_new_client', label: 'New client' },
+  { value: 'expands_offices_to', label: 'Expands to' },
+  { value: 'expands_offices_in', label: 'Expands in' },
+  { value: 'expands_facilities', label: 'Expands facilities' },
+  { value: 'opens_new_location', label: 'New location' },
+  { value: 'goes_public', label: 'IPO' },
+  { value: 'invests_into', label: 'Invests' },
+  { value: 'invests_into_assets', label: 'Asset investment' },
+  { value: 'integrates_with', label: 'Integration' },
+  { value: 'is_developing', label: 'Developing' },
+  { value: 'recognized_as', label: 'Award/recognition' },
+  { value: 'receives_award', label: 'Receives award' },
+  { value: 'merges_with', label: 'Merger' },
+  { value: 'sells_assets_to', label: 'Sells assets' },
+  { value: 'leaves', label: 'Key departure' },
+  { value: 'has_issues_with', label: 'Issues' },
+  { value: 'closes_offices_in', label: 'Closes office' },
+  { value: 'decreases_headcount_by', label: 'Layoffs' },
+  { value: 'files_suit_against', label: 'Lawsuit' },
+  { value: 'identified_as_competitor_of', label: 'Competitor ID' },
+];
+
+export const SIGNAL_GROUPS: { category: string; signals: string[] }[] = [
+  { category: 'Growth', signals: ['hires', 'expands_offices_to', 'expands_offices_in', 'expands_facilities', 'opens_new_location'] },
+  { category: 'Capital', signals: ['receives_financing', 'goes_public', 'invests_into', 'invests_into_assets'] },
+  { category: 'Product', signals: ['launches', 'is_developing', 'integrates_with'] },
+  { category: 'Deals', signals: ['partners_with', 'acquires', 'signs_new_client', 'merges_with', 'sells_assets_to'] },
+  { category: 'Risk', signals: ['leaves', 'has_issues_with', 'closes_offices_in', 'decreases_headcount_by', 'files_suit_against'] },
+  { category: 'Other', signals: ['recognized_as', 'receives_award', 'identified_as_competitor_of'] },
+];
+
+export const EMPLOYEE_COUNT_OPTIONS = [
+  { min: 1, max: 10, label: '1–10' },
+  { min: 11, max: 25, label: '11–25' },
+  { min: 26, max: 50, label: '26–50' },
+  { min: 51, max: 100, label: '51–100' },
+  { min: 101, max: 250, label: '101–250' },
+  { min: 251, max: 500, label: '251–500' },
+  { min: 501, max: 1000, label: '501–1K' },
+  { min: 1001, max: 5000, label: '1K–5K' },
+  { min: 5001, max: 10000, label: '5K–10K' },
+];
+
+export const REVENUE_OPTIONS = [
+  '$0 - 1M', '$1 - 10M', '$10 - 50M', '$50 - 100M',
+  '$100 - 250M', '$250 - 500M', '$500M - 1B', '> $1B',
+];
+
+export const FUNDING_TYPE_OPTIONS = [
+  { value: 'angel', label: 'Angel' },
+  { value: 'pre_seed', label: 'Pre-Seed' },
+  { value: 'seed', label: 'Seed' },
+  { value: 'pre_series_a', label: 'Pre-A' },
+  { value: 'series_a', label: 'Series A' },
+  { value: 'pre_series_b', label: 'Pre-B' },
+  { value: 'series_b', label: 'Series B' },
+  { value: 'pre_series_c', label: 'Pre-C' },
+  { value: 'series_c', label: 'Series C' },
+  { value: 'pre_series_d', label: 'Pre-D' },
+  { value: 'series_d', label: 'Series D' },
+  { value: 'pre_series_e', label: 'Pre-E' },
+  { value: 'series_e', label: 'Series E' },
+  { value: 'series_f', label: 'Series F' },
+  { value: 'series_g', label: 'Series G' },
+  { value: 'series_h', label: 'Series H' },
+];
+
+export const INDUSTRY_GROUPS: { category: string; subs: string[] }[] = [
+  { category: 'Software & Internet', subs: ['Computer & Network Security', 'Computer Software', 'Information Technology and Services', 'Internet'] },
+  { category: 'Business Services', subs: ['Alternative Dispute Resolution', 'Design', 'Human Resources', 'Management Consulting', 'Marketing and Advertising', 'Outsourcing/Offshoring', 'Professional Training & Coaching', 'Public Relations and Communications', 'Staffing and Recruiting'] },
+  { category: 'Financial Services', subs: ['Accounting', 'Banking', 'Capital Markets', 'Financial Services', 'Insurance', 'Investment Banking', 'Investment Management', 'Venture Capital & Private Equity'] },
+  { category: 'Healthcare', subs: ['Alternative Medicine', 'Biotechnology', 'Health, Wellness and Fitness', 'Hospital & Health Care', 'Medical Devices', 'Medical Practice', 'Mental Health Care', 'Pharmaceuticals'] },
+  { category: 'Manufacturing', subs: ['Automotive', 'Aviation & Aerospace', 'Chemicals', 'Electrical/Electronic Manufacturing', 'Industrial Automation', 'Machinery', 'Mechanical or Industrial Engineering'] },
+  { category: 'Education', subs: ['Education Management', 'E-Learning', 'Higher Education', 'Primary/Secondary Education', 'Research'] },
+  { category: 'Energy & Utilities', subs: ['Oil & Energy', 'Renewables & Environment', 'Utilities'] },
+  { category: 'Real Estate & Construction', subs: ['Architecture & Planning', 'Civil Engineering', 'Commercial Real Estate', 'Construction', 'Real Estate'] },
+  { category: 'Retail', subs: ['Apparel & Fashion', 'Consumer Goods', 'Luxury Goods & Jewelry', 'Retail'] },
+  { category: 'Media & Entertainment', subs: ['Broadcast Media', 'Media Production', 'Music', 'Online Media', 'Publishing'] },
+  { category: 'Telecommunications', subs: ['Telecommunications', 'Wireless'] },
+  { category: 'Transportation', subs: ['Airlines/Aviation', 'Logistics and Supply Chain', 'Maritime', 'Package/Freight Delivery', 'Transportation/Trucking/Railroad'] },
+  { category: 'Computer & Electronics', subs: ['Computer Games', 'Computer Hardware', 'Computer Networking', 'Consumer Electronics', 'Semiconductors'] },
+  { category: 'Non-Profit', subs: ['Civic & Social Organization', 'Non-Profit Organization Management', 'Philanthropy'] },
+  { category: 'Travel & Leisure', subs: ['Entertainment', 'Hospitality', 'Leisure, Travel & Tourism', 'Restaurants', 'Sports'] },
 ];

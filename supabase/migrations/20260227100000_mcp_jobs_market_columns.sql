@@ -1,0 +1,2 @@
+ALTER TABLE mcp_jobs ADD COLUMN IF NOT EXISTS market_name TEXT;
+ALTER TABLE mcp_jobs ADD COLUMN IF NOT EXISTS market_id TEXT;

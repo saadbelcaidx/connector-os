@@ -17,6 +17,8 @@
  * - Outcomes MUST be preserved end-to-end (no boolean collapse)
  */
 
+import { getCachedContact, saveToCache, isVerificationStale } from '../services/EnrichedContactsCache';
+
 // =============================================================================
 // CANONICAL TYPES
 // =============================================================================
@@ -125,7 +127,7 @@ function scoreSeniority(title: string): number {
   return 10; // default for unknown titles
 }
 
-function pickBestPerson(people: Array<{ id?: string; first_name?: string; last_name?: string; title?: string }>): { id: string; firstName: string; lastName: string; title: string } | null {
+function pickBestPerson(people: Array<{ id?: string; first_name?: string; last_name?: string; title?: string; linkedin_url?: string; city?: string; state?: string }>): { id: string; firstName: string; lastName: string; title: string; linkedinUrl: string | null; city: string | null; state: string | null } | null {
   if (!people || people.length === 0) return null;
 
   const sorted = [...people].sort((a, b) => scoreSeniority(b.title || '') - scoreSeniority(a.title || ''));
@@ -144,6 +146,9 @@ function pickBestPerson(people: Array<{ id?: string; first_name?: string; last_n
     firstName: best.first_name || '',
     lastName: best.last_name || '',
     title: best.title || '',
+    linkedinUrl: best.linkedin_url || null,
+    city: best.city || null,
+    state: best.state || null,
   };
 }
 
@@ -231,6 +236,12 @@ export type EnrichmentResult = {
   title: string;
   /** Was email verified? */
   verified: boolean;
+  /** LinkedIn profile URL (from Apollo FREE search, 0 credits) */
+  linkedinUrl?: string | null;
+  /** City (from Apollo FREE search, 0 credits) */
+  city?: string | null;
+  /** State (from Apollo FREE search, 0 credits) */
+  state?: string | null;
   /** Which provider succeeded (if any) */
   source: ProviderName | 'existing' | 'none';
   /** Inputs that were available */
@@ -467,7 +478,7 @@ async function findPersonWithConnectorAgent(
 async function findCompanyContactWithApolloFree(
   domain: string,
   config: RouterConfig
-): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any; noCandidates?: boolean }> {
+): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; linkedinUrl?: string | null; city?: string | null; state?: string | null; error?: any; noCandidates?: boolean }> {
   try {
     // STEP 1: FREE search to find people at domain
     console.log(`[Router] Apollo FREE search: finding decision makers at ${domain}`);
@@ -523,23 +534,27 @@ async function findCompanyContactWithApolloFree(
     if (!enrichResponse.ok) {
       const errorBody = await enrichResponse.text().catch(() => 'failed to read');
       console.log(`[Router] Apollo PAID enrich error ${enrichResponse.status}:`, errorBody);
-      return { email: null, firstName: best.firstName, lastName: best.lastName, title: best.title, error: { status: enrichResponse.status, body: errorBody } };
+      return { email: null, firstName: best.firstName, lastName: best.lastName, title: best.title, linkedinUrl: best.linkedinUrl, city: best.city, state: best.state, error: { status: enrichResponse.status, body: errorBody } };
     }
 
     const enrichData = await enrichResponse.json();
-    const email = enrichData.person?.email;
+    const person = enrichData.person;
+    const email = person?.email;
 
     if (email) {
-      console.log(`[Router] Apollo PAID enrich: found email ${email} for ${best.firstName} ${best.lastName} (1 credit used)`);
+      console.log(`[Router] Apollo PAID enrich: found email ${email} for ${person.first_name} ${person.last_name} (1 credit used)`);
     } else {
       console.log(`[Router] Apollo PAID enrich: no email for ${best.firstName} ${best.lastName} (1 credit used, no result)`);
     }
 
     return {
       email: email || null,
-      firstName: best.firstName,
-      lastName: best.lastName,
-      title: best.title,
+      firstName: person?.first_name || best.firstName,
+      lastName: person?.last_name || best.lastName,
+      title: person?.title || best.title,
+      linkedinUrl: person?.linkedin_url || best.linkedinUrl || null,
+      city: person?.city || best.city || null,
+      state: person?.state || best.state || null,
     };
   } catch (error) {
     console.error(`[Router] Apollo FREE flow error:`, error);
@@ -561,7 +576,7 @@ async function findCompanyContactWithApolloFree(
 async function findWithApollo(
   params: { domain?: string; company?: string; firstName?: string; lastName?: string; title?: string },
   config: RouterConfig
-): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; error?: any }> {
+): Promise<{ email: string | null; firstName?: string; lastName?: string; title?: string; linkedinUrl?: string | null; city?: string | null; state?: string | null; error?: any }> {
   try {
     const hasPersonName = params.firstName || params.lastName;
 
@@ -646,6 +661,9 @@ async function findWithApollo(
         firstName: person.first_name,
         lastName: person.last_name,
         title: person.title,
+        linkedinUrl: person.linkedin_url || null,
+        city: person.city || null,
+        state: person.state || null,
       };
     }
 
@@ -694,44 +712,40 @@ async function findWithApollo(
 
       console.log(`[Apollo] FREE search: found ${matchedPerson.first_name} ${matchedPerson.last_name}, now enriching...`);
 
-      // STEP 2: PAID match to get email (1 credit)
-      const matchPayload: any = {
-        first_name: params.firstName || '',
-        last_name: params.lastName || '',
-        domain: params.domain,
-        reveal_personal_emails: true,
-      };
-
-      const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+      // STEP 2: PAID enrich by person ID to get email (1 credit, guaranteed match)
+      const enrichResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'people_match',
+          type: 'people_enrich',
           apiKey: config.apolloApiKey,
-          payload: matchPayload,
+          id: matchedPerson.id,
         }),
       });
 
-      if (!matchResponse.ok) {
-        const errorBody = await matchResponse.text().catch(() => 'failed to read body');
-        console.log(`[Apollo] people_match error ${matchResponse.status}:`, errorBody);
-        return { email: null, error: { status: matchResponse.status, body: errorBody } };
+      if (!enrichResponse.ok) {
+        const errorBody = await enrichResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] people_enrich error ${enrichResponse.status}:`, errorBody);
+        return { email: null, error: { status: enrichResponse.status, body: errorBody } };
       }
 
-      const matchData = await matchResponse.json();
-      const person = matchData.person;
+      const enrichData = await enrichResponse.json();
+      const person = enrichData.person;
 
       if (!person?.email) {
-        console.log(`[Apollo] people_match: no email for ${params.firstName} ${params.lastName} (1 credit used)`);
+        console.log(`[Apollo] people_enrich: no email for ${params.firstName} ${params.lastName} (1 credit used)`);
         return { email: null };
       }
 
-      console.log(`[Apollo] people_match: found email for ${params.firstName} ${params.lastName} (1 credit used)`);
+      console.log(`[Apollo] people_enrich: found email for ${params.firstName} ${params.lastName} (1 credit used)`);
       return {
         email: person.email,
         firstName: person.first_name,
         lastName: person.last_name,
         title: person.title,
+        linkedinUrl: person.linkedin_url || null,
+        city: person.city || null,
+        state: person.state || null,
       };
     }
 
@@ -767,9 +781,10 @@ async function findWithApollo(
         return { email: null };
       }
 
-      // Pick best person by seniority (first one is usually best due to Apollo's ranking)
-      const bestPerson = people[0];
-      console.log(`[Apollo] Found ${people.length} decision makers, picking: ${bestPerson.first_name} ${bestPerson.last_name}`);
+      // Pick best person — prefer one with email already available (free hit)
+      const personWithEmail = people.find((p: any) => p.email);
+      const bestPerson = personWithEmail || people[0];
+      console.log(`[Apollo] Found ${people.length} decision makers, picking: ${bestPerson.first_name} ${bestPerson.last_name}${personWithEmail ? ' (has email)' : ''}`);
 
       // If person already has email in search results, return it (no credit used)
       if (bestPerson.email) {
@@ -779,47 +794,46 @@ async function findWithApollo(
           firstName: bestPerson.first_name,
           lastName: bestPerson.last_name,
           title: bestPerson.title,
+          linkedinUrl: bestPerson.linkedin_url || null,
+          city: bestPerson.city || null,
+          state: bestPerson.state || null,
         };
       }
 
-      // Otherwise, use PAID match to get email (1 credit)
-      const matchPayload: any = {
-        first_name: bestPerson.first_name || '',
-        last_name: bestPerson.last_name || '',
-        domain: params.domain,
-        reveal_personal_emails: true,
-      };
-
-      const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+      // Otherwise, enrich by person ID to get email (1 credit, guaranteed match)
+      const enrichResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'people_match',
+          type: 'people_enrich',
           apiKey: config.apolloApiKey,
-          payload: matchPayload,
+          id: bestPerson.id,
         }),
       });
 
-      if (!matchResponse.ok) {
-        const errorBody = await matchResponse.text().catch(() => 'failed to read body');
-        console.log(`[Apollo] people_match error ${matchResponse.status}:`, errorBody);
-        return { email: null, error: { status: matchResponse.status, body: errorBody } };
+      if (!enrichResponse.ok) {
+        const errorBody = await enrichResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] people_enrich error ${enrichResponse.status}:`, errorBody);
+        return { email: null, error: { status: enrichResponse.status, body: errorBody } };
       }
 
-      const matchData = await matchResponse.json();
-      const person = matchData.person;
+      const enrichData = await enrichResponse.json();
+      const person = enrichData.person;
 
       if (!person?.email) {
-        console.log(`[Apollo] people_match: no email for ${bestPerson.first_name} ${bestPerson.last_name} (1 credit used)`);
+        console.log(`[Apollo] people_enrich: no email for ${bestPerson.first_name} ${bestPerson.last_name} (1 credit used)`);
         return { email: null };
       }
 
-      console.log(`[Apollo] people_match: found email (1 credit used)`);
+      console.log(`[Apollo] people_enrich: found email (1 credit used)`);
       return {
         email: person.email,
         firstName: person.first_name,
         lastName: person.last_name,
         title: person.title,
+        linkedinUrl: person.linkedin_url || null,
+        city: person.city || null,
+        state: person.state || null,
       };
     }
 
@@ -855,9 +869,10 @@ async function findWithApollo(
         return { email: null };
       }
 
-      // Pick best person by seniority
-      const bestPerson = people[0];
-      console.log(`[Apollo] Found ${people.length} decision makers at "${params.company}", picking: ${bestPerson.first_name} ${bestPerson.last_name}`);
+      // Pick best person — prefer one with email already available (free hit)
+      const personWithEmail = people.find((p: any) => p.email);
+      const bestPerson = personWithEmail || people[0];
+      console.log(`[Apollo] Found ${people.length} decision makers at "${params.company}", picking: ${bestPerson.first_name} ${bestPerson.last_name}${personWithEmail ? ' (has email)' : ''}`);
 
       // If person already has email in search results, return it (no credit used)
       if (bestPerson.email) {
@@ -867,47 +882,46 @@ async function findWithApollo(
           firstName: bestPerson.first_name,
           lastName: bestPerson.last_name,
           title: bestPerson.title,
+          linkedinUrl: bestPerson.linkedin_url || null,
+          city: bestPerson.city || null,
+          state: bestPerson.state || null,
         };
       }
 
-      // Otherwise, use PAID match to get email (1 credit)
-      const matchPayload: any = {
-        first_name: bestPerson.first_name || '',
-        last_name: bestPerson.last_name || '',
-        organization_name: params.company,
-        reveal_personal_emails: true,
-      };
-
-      const matchResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
+      // Otherwise, enrich by person ID to get email (1 credit, guaranteed match)
+      const enrichResponse = await fetch(`${config.supabaseFunctionsUrl}/apollo-enrichment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'people_match',
+          type: 'people_enrich',
           apiKey: config.apolloApiKey,
-          payload: matchPayload,
+          id: bestPerson.id,
         }),
       });
 
-      if (!matchResponse.ok) {
-        const errorBody = await matchResponse.text().catch(() => 'failed to read body');
-        console.log(`[Apollo] people_match error ${matchResponse.status}:`, errorBody);
-        return { email: null, error: { status: matchResponse.status, body: errorBody } };
+      if (!enrichResponse.ok) {
+        const errorBody = await enrichResponse.text().catch(() => 'failed to read body');
+        console.log(`[Apollo] people_enrich error ${enrichResponse.status}:`, errorBody);
+        return { email: null, error: { status: enrichResponse.status, body: errorBody } };
       }
 
-      const matchData = await matchResponse.json();
-      const person = matchData.person;
+      const enrichData = await enrichResponse.json();
+      const person = enrichData.person;
 
       if (!person?.email) {
-        console.log(`[Apollo] people_match: no email for ${bestPerson.first_name} ${bestPerson.last_name} (1 credit used)`);
+        console.log(`[Apollo] people_enrich: no email for ${bestPerson.first_name} ${bestPerson.last_name} (1 credit used)`);
         return { email: null };
       }
 
-      console.log(`[Apollo] people_match: found email (1 credit used)`);
+      console.log(`[Apollo] people_enrich: found email (1 credit used)`);
       return {
         email: person.email,
         firstName: person.first_name,
         lastName: person.last_name,
         title: person.title,
+        linkedinUrl: person.linkedin_url || null,
+        city: person.city || null,
+        state: person.state || null,
       };
     }
 
@@ -1007,7 +1021,10 @@ export async function routeEnrichment(
     verified: boolean,
     firstName: string = '',
     lastName: string = '',
-    title: string = ''
+    title: string = '',
+    linkedinUrl?: string | null,
+    city?: string | null,
+    state?: string | null,
   ): EnrichmentResult => ({
     action,
     outcome,
@@ -1016,6 +1033,9 @@ export async function routeEnrichment(
     lastName: lastName || record.lastName || '',
     title: title || record.title || '',
     verified,
+    linkedinUrl: linkedinUrl || null,
+    city: city || null,
+    state: state || null,
     source,
     inputsPresent,
     providersAttempted,
@@ -1036,6 +1056,28 @@ export async function routeEnrichment(
 
   if (action === 'CANNOT_ROUTE') {
     return buildResult(action, 'MISSING_INPUT', null, 'none', false);
+  }
+
+  // ==========================================================================
+  // STEP 2.5: Check enrichment cache (avoid credit waste)
+  // ==========================================================================
+
+  if (action !== 'VERIFY') {
+    const cacheKey = inputs.domain || inputs.company || '';
+    if (cacheKey) {
+      const cached = await getCachedContact(cacheKey, {
+        company: inputs.company || undefined,
+        fullName: inputs.person_name || undefined,
+      });
+      if (cached?.email && !isVerificationStale(cached)) {
+        console.log(`[Router] CACHE HIT for ${cacheKey}: ${cached.email}`);
+        return buildResult(action, 'ENRICHED', cached.email, 'existing', cached.verified,
+          cached.first_name || '', cached.last_name || '', cached.title || '');
+      }
+      if (cached?.email) {
+        console.log(`[Router] CACHE STALE for ${cacheKey} — re-enriching`);
+      }
+    }
   }
 
   // ==========================================================================
@@ -1113,7 +1155,7 @@ export async function routeEnrichment(
     providersAttempted.push(provider);
     providerResults[provider].attempted = true;
 
-    let result: { email: string | null; firstName?: string; lastName?: string; title?: string; error?: any };
+    let result: { email: string | null; firstName?: string; lastName?: string; title?: string; linkedinUrl?: string | null; city?: string | null; state?: string | null; error?: any };
 
     // Call appropriate provider method based on action
     switch (provider) {
@@ -1172,7 +1214,7 @@ export async function routeEnrichment(
           } else {
             // Apollo found person but no email — let waterfall continue to Anymail find_decision_maker
             console.log(`[Router] Apollo PAID enrich: no email, falling back to next provider`);
-            result = { email: null, firstName: apolloFreeResult.firstName, lastName: apolloFreeResult.lastName, title: apolloFreeResult.title };
+            result = { email: null, firstName: apolloFreeResult.firstName, lastName: apolloFreeResult.lastName, title: apolloFreeResult.title, linkedinUrl: apolloFreeResult.linkedinUrl, city: apolloFreeResult.city, state: apolloFreeResult.state };
           }
         } else if (action === 'FIND_PERSON') {
           result = await findWithApollo({
@@ -1224,6 +1266,25 @@ export async function routeEnrichment(
 
     if (result.email) {
       providerResults[provider].result = 'success';
+
+      // Cache the enrichment result to avoid credit waste on re-runs
+      const saveName = [result.firstName || firstName, result.lastName || lastName].filter(Boolean).join(' ');
+      const sourceMap: Record<string, 'apollo' | 'anymailfinder' | 'apify'> = {
+        apollo: 'apollo', anymail: 'anymailfinder', connectorAgent: 'apollo',
+      };
+      saveToCache({
+        domain: inputs.domain || inputs.company || '',
+        email: result.email,
+        name: saveName,
+        title: result.title || record.title || '',
+        linkedin: result.linkedinUrl || undefined,
+        companyName: inputs.company || undefined,
+        source: sourceMap[provider] || 'apollo',
+        verificationStatus: 'verified',
+        fullName: inputs.person_name || undefined,
+        company: inputs.company || undefined,
+      }).catch(err => console.warn('[Router] Cache save failed:', err));
+
       return buildResult(
         action,
         'ENRICHED',
@@ -1232,7 +1293,10 @@ export async function routeEnrichment(
         true,
         result.firstName || firstName,
         result.lastName || lastName,
-        result.title || record.title || ''
+        result.title || record.title || '',
+        result.linkedinUrl,
+        result.city,
+        result.state,
       );
     }
 
