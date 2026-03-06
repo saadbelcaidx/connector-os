@@ -175,7 +175,8 @@ export interface ClientProfile {
 export interface FulfillmentClient {
   id: string;
   name: string;
-  economicSide: 'demand' | 'supply' | 'both';
+  economicSide: 'demand' | 'supply';
+  canonicalKey?: string;            // fc_{id} — stable key in dmcb_canonicals, set at first run
   market?: string;
   status: 'active' | 'paused' | 'archived';
   createdAt: string;

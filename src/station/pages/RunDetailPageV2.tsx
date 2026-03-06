@@ -327,7 +327,6 @@ function ContactListItem({
 }) {
   const tier = getTier(contact.bestMatch);
   const tierColor =
-    contact.enriched ? '#34d399' :
     tier === 'strong' ? '#34d399' :
     tier === 'good' ? 'rgba(96,165,250,0.50)' :
     tier === 'weak' ? 'rgba(251,191,36,0.35)' :
@@ -375,12 +374,7 @@ function ContactListItem({
             VETTED
           </span>
         )}
-        <span
-          className="flex-shrink-0 font-mono"
-          style={{ fontSize: '10px', color: 'rgba(255,255,255,0.20)' }}
-        >
-          {contact.bestScore.toFixed(2)}
-        </span>
+        {/* Score hidden from operator — internal only */}
       </div>
       {/* Row 2: industry · signal */}
       {(contact.industry || contact.signal) && (
@@ -507,9 +501,13 @@ function EnrichmentContactCard({
       </div>
       <span className="font-mono text-white/25" style={{ fontSize: '11px' }}>
         {side.outcome === 'AUTH_ERROR'
-          ? 'API key rejected. Check settings.'
-          : side.outcome === 'RATE_LIMITED' || side.outcome === 'CREDITS_EXHAUSTED'
+          ? 'API key invalid or payment issue — check Settings.'
+          : side.outcome === 'CREDITS_EXHAUSTED'
+          ? 'Provider credits exhausted.'
+          : side.outcome === 'RATE_LIMITED'
           ? 'Rate limited — try again shortly.'
+          : side.outcome === 'NO_PROVIDERS'
+          ? 'Add enrichment key in Settings.'
           : side.outcome === 'NO_CANDIDATES' || side.outcome === 'NOT_FOUND'
           ? 'No public contacts found.'
           : side.outcome === 'CANNOT_ROUTE'
@@ -734,6 +732,27 @@ function PairDetail({
           >
             Find the right person
           </button>
+        )}
+
+        {/* Loading orbital */}
+        {enrichResult && typeof enrichResult === 'object' && (enrichResult.demand === 'loading' || enrichResult.supply === 'loading') && (
+          <div className="flex flex-col items-center py-6" style={{ animation: 'breatheIn 0.4s ease-out' }}>
+            <div style={{ position: 'relative', width: '36px', height: '36px', marginBottom: '12px' }}>
+              <div style={{ position: 'absolute', inset: 0, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '50%', animation: 'orbitSpin 3s linear infinite' }}>
+                <div style={{ position: 'absolute', top: '-2px', left: '50%', marginLeft: '-2px', width: '4px', height: '4px', borderRadius: '50%', background: 'rgba(255,255,255,0.50)', boxShadow: '0 0 8px rgba(255,255,255,0.30)' }} />
+              </div>
+              <div style={{ position: 'absolute', inset: '8px', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '50%', animation: 'orbitSpin 1.8s linear infinite reverse' }}>
+                <div style={{ position: 'absolute', top: '-1.5px', left: '50%', marginLeft: '-1.5px', width: '3px', height: '3px', borderRadius: '50%', background: 'rgba(255,255,255,0.35)', boxShadow: '0 0 6px rgba(255,255,255,0.20)' }} />
+              </div>
+              <div style={{ position: 'absolute', inset: '14px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)', animation: 'corePulse 2s ease-in-out infinite' }} />
+            </div>
+            <span className="font-mono" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', animation: 'textBreathe 2.5s ease-in-out infinite' }}>
+              Searching contacts
+            </span>
+            <div style={{ width: '80px', height: '1px', marginTop: '10px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: '20px', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.20), transparent)', animation: 'particleDrift 1.6s ease-in-out infinite' }} />
+            </div>
+          </div>
         )}
 
         {enrichResult === 'no-keys' && (
@@ -1071,6 +1090,27 @@ function ContactDetail({
           </button>
         )}
 
+        {/* Loading orbital */}
+        {enrichResult && typeof enrichResult === 'object' && enrichResult.demand === 'loading' && (
+          <div className="flex flex-col items-center py-6" style={{ animation: 'breatheIn 0.4s ease-out' }}>
+            <div style={{ position: 'relative', width: '36px', height: '36px', marginBottom: '12px' }}>
+              <div style={{ position: 'absolute', inset: 0, border: '1px solid rgba(255,255,255,0.06)', borderRadius: '50%', animation: 'orbitSpin 3s linear infinite' }}>
+                <div style={{ position: 'absolute', top: '-2px', left: '50%', marginLeft: '-2px', width: '4px', height: '4px', borderRadius: '50%', background: 'rgba(255,255,255,0.50)', boxShadow: '0 0 8px rgba(255,255,255,0.30)' }} />
+              </div>
+              <div style={{ position: 'absolute', inset: '8px', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '50%', animation: 'orbitSpin 1.8s linear infinite reverse' }}>
+                <div style={{ position: 'absolute', top: '-1.5px', left: '50%', marginLeft: '-1.5px', width: '3px', height: '3px', borderRadius: '50%', background: 'rgba(255,255,255,0.35)', boxShadow: '0 0 6px rgba(255,255,255,0.20)' }} />
+              </div>
+              <div style={{ position: 'absolute', inset: '14px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)', animation: 'corePulse 2s ease-in-out infinite' }} />
+            </div>
+            <span className="font-mono" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)', animation: 'textBreathe 2.5s ease-in-out infinite' }}>
+              Searching contact
+            </span>
+            <div style={{ width: '80px', height: '1px', marginTop: '10px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, height: '100%', width: '20px', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.20), transparent)', animation: 'particleDrift 1.6s ease-in-out infinite' }} />
+            </div>
+          </div>
+        )}
+
         {enrichResult === 'no-keys' && (
           <span className="font-mono text-white/25" style={{ fontSize: '11px' }}>
             Add Apollo or Anymail Finder in{' '}
@@ -1141,8 +1181,10 @@ export default function RunDetailPageV2() {
   const resumedRef = useRef(false);
 
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
-  const [filterTier, setFilterTier] = useState<'all' | 'strong' | 'good'>('all');
+  const [filterTier, setFilterTier] = useState<'all' | 'strong' | 'good' | 'weak'>('all');
+  const [lensDropdownOpen, setLensDropdownOpen] = useState(false);
   const [intelCache, setIntelCache] = useState<IntelCache>(new Map());
+  const [lensTransitionKey, setLensTransitionKey] = useState(0);
 
   // ── Lens state — hydrate from localStorage, re-read on tab focus ──
   const [lensClientId, setLensClientId] = useState<string | null>(
@@ -1164,8 +1206,29 @@ export default function RunDetailPageV2() {
     };
   }, []);
 
-  const { overlay, profile, clientName, clientEconomicSide } = useMemo(() => {
-    if (!lensClientId) return { overlay: null, profile: null, clientName: null, clientEconomicSide: undefined as 'demand' | 'supply' | undefined };
+  // ── Available clients for lens selector ──
+  const lensClients = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('station_fulfillment_clients');
+      if (!raw) return [];
+      const clients: FulfillmentClient[] = JSON.parse(raw);
+      return clients.filter(c => c.status === 'active');
+    } catch { return []; }
+  }, [lensClientId]); // re-read when lens changes
+
+  const handleLensChange = useCallback((id: string | null) => {
+    setLensClientId(id);
+    setSelectedEvalId(null);
+    setLensTransitionKey(k => k + 1);  // trigger re-mount animation
+    if (id) {
+      localStorage.setItem('station_active_lens_client_id', id);
+    } else {
+      localStorage.removeItem('station_active_lens_client_id');
+    }
+  }, []);
+
+  const { overlay, profile, clientName, clientEconomicSide, clientCanonicalKey } = useMemo(() => {
+    if (!lensClientId) return { overlay: null, profile: null, clientName: null, clientEconomicSide: undefined as 'demand' | 'supply' | undefined, clientCanonicalKey: undefined as string | undefined };
     try {
       const clients: FulfillmentClient[] = JSON.parse(localStorage.getItem('station_fulfillment_clients') || '[]');
       const overlays: ClientOverlay[] = JSON.parse(localStorage.getItem('station_client_overlays') || '[]');
@@ -1175,14 +1238,25 @@ export default function RunDetailPageV2() {
       const ecoSide = client?.economicSide === 'demand' || client?.economicSide === 'supply'
         ? client.economicSide
         : undefined;
+
+      // Backfill: clients created before canonicalKey was added get it stamped now
+      let resolvedKey = client?.canonicalKey;
+      if (client && !resolvedKey) {
+        resolvedKey = `fc_${client.id.replace(/-/g, '').slice(0, 8)}`;
+        const idx = clients.findIndex(c => c.id === client.id);
+        if (idx >= 0) { clients[idx] = { ...clients[idx], canonicalKey: resolvedKey }; }
+        localStorage.setItem('station_fulfillment_clients', JSON.stringify(clients));
+      }
+
       return {
         overlay: active?.overlay ?? null,
         profile: client?.profile ?? null,
         clientName: client?.name ?? null,
         clientEconomicSide: ecoSide,
+        clientCanonicalKey: resolvedKey,
       };
     } catch {
-      return { overlay: null, profile: null, clientName: null, clientEconomicSide: undefined as 'demand' | 'supply' | undefined };
+      return { overlay: null, profile: null, clientName: null, clientEconomicSide: undefined as 'demand' | 'supply' | undefined, clientCanonicalKey: undefined as string | undefined };
     }
   }, [lensClientId]);
   const intelCacheRef = useRef<IntelCache>(intelCache);
@@ -1243,6 +1317,44 @@ export default function RunDetailPageV2() {
   const [enrichResults, setEnrichResults] = useState<Map<string, any>>(new Map());
   const enrichResultsRef = useRef(enrichResults);
   enrichResultsRef.current = enrichResults;
+
+  // Cache-hit toasts — dopamine reward when enrichment is free
+  const [cacheToasts, setCacheToasts] = useState<Array<{ id: number; email: string }>>([]);
+  const toastIdRef = useRef(0);
+
+  const playCoinSound = useCallback(() => {
+    try {
+      const ctx = new AudioContext();
+      // Note 1: B5 (988 Hz) — short ping
+      const o1 = ctx.createOscillator();
+      const g1 = ctx.createGain();
+      o1.type = 'sine';
+      o1.frequency.value = 988;
+      g1.gain.setValueAtTime(0.15, ctx.currentTime);
+      g1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+      o1.connect(g1).connect(ctx.destination);
+      o1.start(ctx.currentTime);
+      o1.stop(ctx.currentTime + 0.12);
+      // Note 2: E6 (1319 Hz) — higher follow-up
+      const o2 = ctx.createOscillator();
+      const g2 = ctx.createGain();
+      o2.type = 'sine';
+      o2.frequency.value = 1319;
+      g2.gain.setValueAtTime(0.12, ctx.currentTime + 0.08);
+      g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      o2.connect(g2).connect(ctx.destination);
+      o2.start(ctx.currentTime + 0.08);
+      o2.stop(ctx.currentTime + 0.25);
+      setTimeout(() => ctx.close(), 500);
+    } catch {}
+  }, []);
+
+  const showCacheToast = useCallback((email: string) => {
+    const id = ++toastIdRef.current;
+    setCacheToasts(prev => [...prev, { id, email }]);
+    setTimeout(() => setCacheToasts(prev => prev.filter(t => t.id !== id)), 2800);
+    playCoinSound();
+  }, [playCoinSound]);
 
   // Restore enrichment results from localStorage on mount
   useEffect(() => {
@@ -1324,16 +1436,25 @@ export default function RunDetailPageV2() {
       console.log('[Enrich] supply result:', supply.outcome, (supply as any).email, (supply as any).source);
       console.log('[Enrich] demand result:', demand.outcome, (demand as any).email, (demand as any).source);
       setEnrichResults(prev => new Map(prev).set(evalId, { supply, demand }));
+      // Cache-hit reward — no API credit consumed
+      if ((supply as any).source === 'existing' && (supply as any).email) {
+        showCacheToast((supply as any).email);
+      }
+      if ((demand as any).source === 'existing' && (demand as any).email) {
+        showCacheToast((demand as any).email);
+      }
     } catch (err) {
       console.error('[Enrich] thrown:', err);
       setEnrichResults(prev => new Map(prev).set(evalId, { supply: { outcome: 'ERROR' }, demand: { outcome: 'ERROR' } }));
     }
   }, [enrichKeys]);
 
-  // Resume job on mount
+  // Resume job on mount AND when jobId changes (navigating between runs)
   useEffect(() => {
-    if (jobId && !resumedRef.current) {
+    if (jobId) {
       resumedRef.current = true;
+      setSelectedEvalId(null);
+      setFilterTier('all');
       job.resume(jobId);
     }
   }, [jobId]);
@@ -1356,9 +1477,9 @@ export default function RunDetailPageV2() {
     if (!overlay) return null;
     return applyOverlayV2(
       job.matches.filter(m => !m.vetoed),
-      job.canonicals, overlay, profile ?? undefined, clientEconomicSide,
+      job.canonicals, overlay, profile ?? undefined, clientEconomicSide, clientCanonicalKey,
     );
-  }, [job.matches, job.canonicals, overlay, profile, clientEconomicSide]);
+  }, [job.matches, job.canonicals, overlay, profile, clientEconomicSide, clientCanonicalKey]);
 
   // Sort: overlay re-rank if active, else curated first + combined score desc
   const sortedMatches = useMemo(() => {
@@ -1425,10 +1546,13 @@ export default function RunDetailPageV2() {
     try {
       const demand = await routeEnrichment(demandRecord, config);
       setEnrichResults(prev => new Map(prev).set(evalId, { demand }));
+      if ((demand as any).source === 'existing' && (demand as any).email) {
+        showCacheToast((demand as any).email);
+      }
     } catch {
       setEnrichResults(prev => new Map(prev).set(evalId, { demand: { outcome: 'ERROR' } }));
     }
-  }, [enrichKeys]);
+  }, [enrichKeys, showCacheToast]);
 
   // Fulfillment: flat contact list deduped by demandKey
   const demandContacts = useMemo(() => {
@@ -1448,6 +1572,15 @@ export default function RunDetailPageV2() {
     const allContacts = groupByDemandFlat(effectiveMatches, job.canonicals, enrichResults);
     return allContacts.length;
   }, [isFulfillment, effectiveMatches, job.canonicals, enrichResults]);
+
+  // Fulfillment: tier counts deduped by demand contact (uses best score per contact)
+  const contactTiers = useMemo(() => {
+    if (!isFulfillment) return tiers;
+    const allContacts = groupByDemandFlat(effectiveMatches, job.canonicals, enrichResults);
+    const counts: Record<Tier, number> = { strong: 0, good: 0, weak: 0, none: 0, conflict: 0 };
+    for (const c of allContacts) counts[getTier(c.bestMatch)]++;
+    return counts;
+  }, [isFulfillment, effectiveMatches, job.canonicals, enrichResults, tiers]);
 
   // Navigate to compose with enrichResults
   const handleNavigateCompose = useCallback(() => {
@@ -1487,32 +1620,61 @@ export default function RunDetailPageV2() {
               {job.progress.completedPairs}/{job.progress.totalPairs} pairs
             </span>
           )}
-          {/* Lens badge — hidden in fulfillment (redundant with client context bar) */}
-          {clientName && !isFulfillment && (
-            <span className="text-[10px] font-mono text-white/30 px-2 py-0.5 border border-white/[0.06] rounded-sm">
-              Lens: {clientName}
-            </span>
+          {/* Lens selector — custom dropdown (matches Station pattern) */}
+          {lensClients.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono text-white/30 shrink-0">Lens:</span>
+              <div className="relative">
+                <button
+                  onClick={() => setLensDropdownOpen(v => !v)}
+                  className="font-mono text-[11px] text-left bg-white/[0.03] border border-white/[0.06] rounded hover:border-white/[0.12] transition-colors flex items-center justify-between px-3"
+                  style={{ height: '28px', minWidth: '120px', outline: 'none', boxShadow: 'none' }}
+                >
+                  <span className={lensClientId ? 'text-white/70' : 'text-white/20'}>
+                    {lensClientId
+                      ? lensClients.find(c => c.id === lensClientId)?.name ?? 'All Signals'
+                      : 'All Signals'}
+                  </span>
+                  <span className="text-white/20 ml-2">▾</span>
+                </button>
+                {lensDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setLensDropdownOpen(false)} />
+                    <div className="absolute top-full left-0 right-0 mt-0.5 bg-[#09090b] border border-white/[0.06] rounded z-50 max-h-48 overflow-y-auto" style={{ scrollbarWidth: 'none', minWidth: '120px', animation: 'lensDropIn 150ms ease-out' }}>
+                      <button
+                        onClick={() => { handleLensChange(null); setLensDropdownOpen(false); }}
+                        className={`w-full text-left px-2.5 py-1.5 font-mono text-[11px] transition-colors ${!lensClientId ? 'text-white/90 bg-white/[0.06]' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
+                        style={{ border: 'none', outline: 'none', cursor: 'pointer' }}
+                      >
+                        All Signals
+                      </button>
+                      {lensClients.map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => { handleLensChange(c.id); setLensDropdownOpen(false); }}
+                          className={`w-full text-left px-2.5 py-1.5 font-mono text-[11px] transition-colors ${lensClientId === c.id ? 'text-white/90 bg-white/[0.06]' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
+                          style={{ border: 'none', outline: 'none', cursor: 'pointer' }}
+                        >
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
         {/* Right: stats summary */}
         <div className="flex items-center gap-3 font-mono" style={{ fontSize: '10px' }}>
-          {!isFulfillment && effectiveMatches.filter(m => m.evalStatus === 'curated' && !m.vetoed).length > 0 && (
-            <span style={{ color: '#34d399' }}>{effectiveMatches.filter(m => m.evalStatus === 'curated' && !m.vetoed).length} vetted</span>
-          )}
-          {tiers.strong > 0 && (
-            <span style={{ color: 'rgba(52,211,153,0.50)' }}>{tiers.strong} strong</span>
-          )}
-          {tiers.good > 0 && (
-            <span style={{ color: 'rgba(96,165,250,0.40)' }}>{tiers.good} good</span>
-          )}
           {job.matches.length > 0 && (
             <span className="text-white/20">
               {isFulfillment
                 ? `${uniqueContactCount} contacts`
                 : clientName && overlayResults
                   ? `${effectiveMatches.length} of ${job.matches.filter(m => !m.vetoed).length} for ${clientName}`
-                  : `${effectiveMatches.length} total`
+                  : `${effectiveMatches.length} pairs`
               }
             </span>
           )}
@@ -1592,31 +1754,41 @@ export default function RunDetailPageV2() {
             className="flex items-center gap-1 px-4 flex-shrink-0"
             style={{ height: '40px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}
           >
-            {(['all', 'strong', 'good'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => { setFilterTier(f); setSelectedEvalId(null); }}
-                className="font-mono transition-colors"
-                style={{
-                  fontSize: '10px',
-                  padding: '3px 10px',
-                  borderRadius: '4px',
-                  background: filterTier === f ? 'rgba(255,255,255,0.06)' : 'transparent',
-                  color: filterTier === f ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.25)',
-                  border: 'none',
-                  outline: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                {f === 'all'
-                  ? `All (${isFulfillment ? uniqueContactCount : effectiveMatches.length})`
-                  : `${f.charAt(0).toUpperCase() + f.slice(1)} (${tiers[f]})`}
-              </button>
-            ))}
+            {(['all', 'strong', 'good', 'weak'] as const).map(f => {
+              const count = f === 'all'
+                ? (isFulfillment ? uniqueContactCount : effectiveMatches.length)
+                : contactTiers[f];
+              // Hide empty non-all tabs to keep UI clean
+              if (f !== 'all' && count === 0) return null;
+              const compact = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : String(n);
+              const label = f === 'all' ? 'All'
+                : f === 'good' ? 'Actionable'
+                : f.charAt(0).toUpperCase() + f.slice(1);
+              return (
+                <button
+                  key={f}
+                  onClick={() => { setFilterTier(f); setSelectedEvalId(null); }}
+                  className="font-mono transition-colors"
+                  style={{
+                    fontSize: '10px',
+                    padding: '3px 8px',
+                    borderRadius: '4px',
+                    background: filterTier === f ? 'rgba(255,255,255,0.06)' : 'transparent',
+                    color: filterTier === f ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.25)',
+                    border: 'none',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {label} <span style={{ opacity: 0.5 }}>{compact(count)}</span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Scrollable list */}
-          <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+          <div key={`list-${lensTransitionKey}`} className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none', animation: 'lensSlideIn 200ms ease-out' }}>
             {sortedMatches.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-2 px-6">
                 {isRunning ? (
@@ -1666,7 +1838,7 @@ export default function RunDetailPageV2() {
 
         {/* RIGHT PANEL: Detail */}
         <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
-          <div className="max-w-[560px] mx-auto py-10 px-8">
+          <div key={`detail-${lensTransitionKey}`} className="max-w-[560px] mx-auto py-10 px-8" style={{ animation: 'lensFadeIn 250ms ease-out' }}>
             {isFulfillment && selectedContact ? (
               /* FULFILLMENT: demand-only contact detail (no supply card) */
               <ContactDetail
@@ -1698,8 +1870,45 @@ export default function RunDetailPageV2() {
         </div>
       </div>
 
+      {/* ── CACHE-HIT TOASTS ── */}
+      {cacheToasts.length > 0 && (
+        <div style={{ position: 'fixed', bottom: '96px', right: '24px', zIndex: 49, display: 'flex', flexDirection: 'column-reverse', gap: '8px', pointerEvents: 'none' }}>
+          {cacheToasts.map(t => (
+            <div
+              key={t.id}
+              className="font-mono"
+              style={{
+                background: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.25)',
+                borderRadius: '8px',
+                padding: '10px 18px',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                animation: 'cacheToastIn 0.3s ease-out, cacheToastOut 0.4s ease-in 2.2s forwards',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <div style={{ fontSize: '11px', color: 'rgba(16, 185, 129, 0.90)', fontWeight: 500 }}>
+                Already known — no charge
+              </div>
+              <div style={{ fontSize: '10px', color: 'rgba(16, 185, 129, 0.50)', marginTop: '2px' }}>
+                {t.email}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ── ANIMATIONS ── */}
       <style>{`
+        @keyframes cacheToastIn {
+          from { opacity: 0; transform: translateY(12px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes cacheToastOut {
+          from { opacity: 1; transform: translateY(0) scale(1); }
+          to { opacity: 0; transform: translateY(-8px) scale(0.97); }
+        }
         @keyframes pageIn {
           from { opacity: 0; transform: translateY(6px); }
           to { opacity: 1; transform: translateY(0); }
@@ -1725,6 +1934,14 @@ export default function RunDetailPageV2() {
           from { opacity: 0; transform: translateY(12px) scale(0.98); }
           to { opacity: 1; transform: translateY(0) scale(1); }
         }
+        @keyframes orbitSpin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+        @keyframes corePulse { 0%,100% { opacity: 0.3; transform: scale(0.8) } 50% { opacity: 1; transform: scale(1.2) } }
+        @keyframes textBreathe { 0%,100% { opacity: 0.35 } 50% { opacity: 0.60 } }
+        @keyframes particleDrift { 0% { left: -30px } 100% { left: 120px } }
+        @keyframes breatheIn { from { opacity: 0; transform: scale(0.95) } to { opacity: 1; transform: scale(1) } }
+        @keyframes lensSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes lensFadeIn { from { opacity: 0; transform: translateY(4px) scale(0.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes lensDropIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
     </div>
   );

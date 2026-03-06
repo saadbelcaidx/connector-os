@@ -34,13 +34,16 @@ import {
   type ReserveResult,
 } from '../sendSafety';
 
+type SenderId = 'instantly' | 'plusvibe';
+
 interface Props {
   matches: MatchResult[];
   canonicals: Map<string, CanonicalInfo>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   enrichResults: Map<string, any>;
   aiConfig: IntroAIConfig | null;
-  senderConfig: { apiKey: string; supplyCampaignId: string } | null;
+  senderConfig: { apiKey: string; supplyCampaignId: string; demandCampaignId: string; workspaceId?: string } | null;
+  senderId?: SenderId;
   operatorId: string;
   // Overlay tracking — stamped onto every intro record
   overlayClientId?: string;
@@ -161,7 +164,7 @@ function IntroPreviewRow({
           {/* Supply intro */}
           <div className="mb-4">
             <div className="font-mono uppercase tracking-widest mb-1" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.06em' }}>
-              Supply Copy
+              {supplyName}
             </div>
             <textarea
               value={draft.supplyIntro}
@@ -182,7 +185,7 @@ function IntroPreviewRow({
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="font-mono uppercase tracking-widest" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.06em' }}>
-                Demand Copy
+                {demandName}
               </span>
               <span className="font-mono" style={{ fontSize: '8px', color: 'rgba(255,255,255,0.25)' }}>
                 preview only
@@ -218,6 +221,7 @@ export default function ComposePanel({
   enrichResults,
   aiConfig,
   senderConfig,
+  senderId,
   operatorId,
   overlayClientId,
   overlayVersion,
@@ -251,6 +255,7 @@ export default function ComposePanel({
   const [demandDraft, setDemandDraft] = useState('');
   const [drafts, setDrafts] = useState<Map<string, ComposedDraft>>(new Map());
   const [generating, setGenerating] = useState(false);
+  const [generatingCount, setGeneratingCount] = useState(0);
   const [sending, setSending] = useState(false);
   const [sendDone, setSendDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -331,7 +336,7 @@ export default function ComposePanel({
   }, [draftsStorageKey, drafts]);
 
   const referenceMatch = composeMatches.find(m => m.evalId === referenceEvalId) || null;
-  const remaining = composeMatches.filter(m => m.evalId !== referenceEvalId);
+  const remaining = composeMatches.length === 1 ? composeMatches : composeMatches.filter(m => m.evalId !== referenceEvalId);
 
   // Single-match mode: sync reference draft directly so send works without generate
   const refDraftReady = referenceMatch && demandDraft.trim() && (isFulfillment || supplyDraft.trim());
@@ -349,49 +354,56 @@ export default function ComposePanel({
   // GENERATE
   // =========================================================================
 
-  const handleGenerate = useCallback(async () => {
+  const handleGenerate = useCallback(async (forceAll = false) => {
     if (!aiConfig || !referenceMatch) return;
+
+    // Incremental: only matches without drafts. Force: regenerate everything.
+    const targets = forceAll
+      ? remaining
+      : remaining.filter(m => !drafts.has(m.evalId));
+    if (targets.length === 0) return;
+
+    setGeneratingCount(targets.length);
     setGenerating(true);
     setError(null);
-    setDrafts(new Map());
+    if (forceAll) setDrafts(new Map());
 
     try {
       let composed: ComposedDraft[];
 
       if (isFulfillment && fulfillmentClient?.profile) {
-        // Fulfillment mode — demand-only with demandKey dedup
         composed = await generateFulfillmentIntros(
           aiConfig,
           { match: referenceMatch, demandDraft },
-          remaining,
+          targets,
           canonicals,
           enrichResults,
           fulfillmentClient.profile,
         );
       } else {
-        // Standard two-sided compose
         composed = await generateGroupedIntros(
           aiConfig,
           { match: referenceMatch, supplyDraft, demandDraft },
-          remaining,
+          targets,
           canonicals,
           enrichResults,
         );
       }
 
-      const map = new Map<string, ComposedDraft>();
-      // Include reference as first draft
-      map.set(referenceMatch.evalId, {
-        evalId: referenceMatch.evalId,
-        supplyIntro: isFulfillment ? '' : supplyDraft,
-        demandIntro: demandDraft,
+      // Merge new drafts into existing — never wipe previous work
+      setDrafts(prev => {
+        const map = forceAll ? new Map() : new Map(prev);
+        map.set(referenceMatch.evalId, {
+          evalId: referenceMatch.evalId,
+          supplyIntro: isFulfillment ? '' : supplyDraft,
+          demandIntro: demandDraft,
+        });
+        for (const d of composed) {
+          map.set(d.evalId, d);
+        }
+        return map;
       });
-      for (const d of composed) {
-        map.set(d.evalId, d);
-      }
-      setDrafts(map);
 
-      // Trigger typewriter animation
       setAnimateIntros(true);
       clearTimeout(animateTimerRef.current);
       animateTimerRef.current = setTimeout(() => setAnimateIntros(false), 6000);
@@ -400,7 +412,7 @@ export default function ComposePanel({
     } finally {
       setGenerating(false);
     }
-  }, [aiConfig, referenceMatch, supplyDraft, demandDraft, remaining, canonicals, enrichResults, isFulfillment, fulfillmentClient]);
+  }, [aiConfig, referenceMatch, supplyDraft, demandDraft, remaining, drafts, canonicals, enrichResults, isFulfillment, fulfillmentClient]);
 
   // =========================================================================
   // INLINE EDIT
@@ -440,11 +452,12 @@ export default function ComposePanel({
     setSending(true);
     setSendDone(false);
     setSendSkipped([]);
-    const limiter = getLimiter('instantly');
+    const limiter = getLimiter(senderId ?? 'instantly');
     const config: SenderConfig = {
       apiKey: senderConfig.apiKey,
-      demandCampaignId: null,
+      demandCampaignId: senderConfig.demandCampaignId || null,
       supplyCampaignId: senderConfig.supplyCampaignId,
+      workspaceId: senderConfig.workspaceId,
     };
 
     let sent = 0;
@@ -601,7 +614,7 @@ export default function ComposePanel({
         }
       }
 
-      const total = supplyEmailToPrimary.size;
+      const total = supplyEmailToPrimary.size + (config.demandCampaignId ? demandEmailToPrimary.size : 0);
       setSendProgress({ sent: 0, errors: 0, total });
 
       for (const match of sendablePairs) {
@@ -742,17 +755,22 @@ export default function ComposePanel({
               try {
                 const result = await limiter.sendLead(config, demandParams);
                 if (result.success) {
+                  sent++;
                   if (result.leadId) successLeadIds.add(result.leadId);
                   // Demand sends share the intro record with their supply counterpart
                   // Confirm without intro ID — safety layer still prevents double-send
                   confirmSend(dSendId, '00000000-0000-0000-0000-000000000000').catch(console.error);
                 } else {
+                  errors++;
                   failSend(dSendId).catch(console.error);
                 }
               } catch {
+                errors++;
                 failSend(dSendId).catch(console.error);
               }
             }
+
+            setSendProgress({ sent, errors, total });
           }
         }
       }
@@ -780,7 +798,7 @@ export default function ComposePanel({
 
     setSending(false);
     setSendDone(true);
-  }, [senderConfig, enrichedPairs, drafts, enrichResults, canonicals, operatorId, overlayClientId, overlayVersion, overlayClientName, overlayHash, isFulfillment, fulfillmentClient, composeSessionId, jobId]);
+  }, [senderConfig, senderId, enrichedPairs, drafts, enrichResults, canonicals, operatorId, overlayClientId, overlayVersion, overlayClientName, overlayHash, isFulfillment, fulfillmentClient, composeSessionId, jobId]);
 
   // =========================================================================
   // RENDER
@@ -863,6 +881,15 @@ export default function ComposePanel({
     return seen.size;
   }, [isFulfillment, remaining]);
 
+  // Count of enriched matches that don't have drafts yet (newly enriched)
+  const newMatchCount = useMemo(() => {
+    const undrafted = remaining.filter(m => !drafts.has(m.evalId));
+    if (!isFulfillment) return undrafted.length;
+    const seen = new Set<string>();
+    for (const m of undrafted) seen.add(m.demandKey);
+    return seen.size;
+  }, [remaining, drafts, isFulfillment]);
+
   // Unique contacts for bottom bar label — demand-side in fulfillment, supply-side otherwise
   const uniqueContactCount = useMemo(() => {
     const emails = new Set<string>();
@@ -880,10 +907,10 @@ export default function ComposePanel({
   const refEnrich = referenceMatch ? enrichResults.get(referenceMatch.evalId) : null;
   const supplyContact = refEnrich?.supply?.outcome === 'ENRICHED' && refEnrich.supply.firstName
     ? `${refEnrich.supply.firstName} ${refEnrich.supply.lastName || ''}`.trim()
-    : refS?.who || 'Supply contact';
+    : refS?.who || refS?.company || 'Contact';
   const demandContact = refEnrich?.demand?.outcome === 'ENRICHED' && refEnrich.demand.firstName
     ? `${refEnrich.demand.firstName} ${refEnrich.demand.lastName || ''}`.trim()
-    : refD?.who || 'Demand contact';
+    : refD?.who || refD?.company || 'Contact';
 
   // Config problems — only show what needs attention
   const configIssues: string[] = [];
@@ -1087,7 +1114,7 @@ export default function ComposePanel({
                 </div>
               )}
 
-              {/* ── GENERATE ── */}
+              {/* ── GENERATE (multi-match) ── */}
               {remaining.length > 0 && (
                 <div className="mb-8">
                   {generating ? (
@@ -1132,7 +1159,7 @@ export default function ComposePanel({
                       </div>
                       {/* Text */}
                       <span className="font-mono" style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', animation: 'textBreathe 2.5s ease-in-out infinite' }}>
-                        Writing {isFulfillment ? uniqueRemainingCount : remaining.length} intros
+                        Writing {generatingCount} intros
                       </span>
                       {/* Particle line */}
                       <div style={{ width: '120px', height: '1px', marginTop: '12px', position: 'relative', overflow: 'hidden' }}>
@@ -1150,7 +1177,7 @@ export default function ComposePanel({
                     </div>
                   ) : canGenerate ? (
                     <button
-                      onClick={handleGenerate}
+                      onClick={() => hasDrafts && newMatchCount === 0 ? handleGenerate(true) : handleGenerate()}
                       className="font-mono transition-all"
                       style={{
                         fontSize: '12px',
@@ -1158,23 +1185,45 @@ export default function ComposePanel({
                         background: 'rgba(255,255,255,0.04)',
                         color: 'rgba(255,255,255,0.60)',
                         border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: '6px',
+                        borderRadius: '2px',
                         cursor: 'pointer',
                         outline: 'none',
                       }}
                       onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.80)'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.60)'; }}
                     >
-                      {hasDrafts
-                        ? `Regenerate ${isFulfillment ? uniqueRemainingCount : remaining.length} intros`
-                        : isFulfillment
-                          ? `Generate for ${uniqueRemainingCount} contacts`
-                          : `Generate for ${remaining.length} matches`}
+                      {hasDrafts && newMatchCount > 0
+                        ? `Generate ${newMatchCount} new`
+                        : hasDrafts && newMatchCount === 0
+                          ? `Regenerate all ${isFulfillment ? uniqueRemainingCount : remaining.length}`
+                          : isFulfillment
+                            ? `Generate for ${uniqueRemainingCount} contacts`
+                            : `Generate for ${remaining.length} matches`}
                     </button>
                   ) : (
                     <span className="font-mono" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.20)' }}>
                       {!aiConfig ? 'Configure AI in Settings to generate' :
                        !demandDraft.trim() || (!isFulfillment && !supplyDraft.trim()) ? (isFulfillment ? `Write the demand intro, then generate for ${uniqueRemainingCount} more` : `Write both intros, then generate for ${remaining.length} more`) : ''}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* ── SINGLE MATCH — no AI generation needed ── */}
+              {remaining.length === 0 && composeMatches.length === 1 && (
+                <div className="mb-8">
+                  {refDraftReady ? (
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: 'rgba(52,211,153,0.50)', fontSize: '8px', lineHeight: 1 }}>◆</span>
+                      <span className="font-mono" style={{ fontSize: '11px', color: 'rgba(52,211,153,0.50)' }}>
+                        Ready to send
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="font-mono" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.20)' }}>
+                      {isFulfillment
+                        ? 'Write the intro above — single contact, sends directly'
+                        : 'Write both intros above — single match, sends directly'}
                     </span>
                   )}
                 </div>
@@ -1230,7 +1279,7 @@ export default function ComposePanel({
                       {!isFulfillment && (
                         <div className="mb-4">
                           <div className="font-mono uppercase tracking-widest mb-1" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)', letterSpacing: '0.06em' }}>
-                            Supply
+                            {refS?.company || 'Supply'}
                           </div>
                           <textarea
                             value={drafts.get(referenceMatch.evalId)!.supplyIntro}
@@ -1242,7 +1291,7 @@ export default function ComposePanel({
                       )}
                       <div>
                         <div className="font-mono uppercase tracking-widest mb-1" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)', letterSpacing: '0.06em' }}>
-                          {isFulfillment ? 'Intro' : 'Demand'}
+                          {isFulfillment ? 'Intro' : (refD?.company || 'Demand')}
                         </div>
                         <textarea
                           value={drafts.get(referenceMatch.evalId)!.demandIntro}
@@ -1316,9 +1365,9 @@ export default function ComposePanel({
         <div
           className="flex-shrink-0 flex items-center justify-between px-8"
           style={{
-            height: '56px',
+            minHeight: '56px',
             borderTop: '1px solid rgba(255,255,255,0.04)',
-            background: 'rgba(9,9,11,0.95)',
+            background: 'rgba(9,9,11,0.98)',
             backdropFilter: 'blur(12px)',
             animation: 'barSlideUp 0.4s ease-out',
           }}
@@ -1360,34 +1409,22 @@ export default function ComposePanel({
               </span>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2" style={{ animation: 'sendComplete 0.5s ease-out' }}>
-                <div style={{
-                  width: '6px', height: '6px', borderRadius: '50%',
-                  background: 'rgba(52,211,153,0.60)',
-                  boxShadow: '0 0 8px rgba(52,211,153,0.30)',
-                  animation: 'completePulse 2s ease-in-out infinite',
-                }} />
-                <span className="font-mono" style={{ fontSize: '11px', color: 'rgba(52,211,153,0.60)' }}>
-                  {sendProgress.sent} sent
-                  {sendProgress.errors > 0 && (
-                    <span style={{ color: 'rgba(255,255,255,0.30)' }}> · {sendProgress.errors} errors</span>
-                  )}
-                  {sendSkipped.length > 0 && (
-                    <span style={{ color: 'rgba(251,191,36,0.50)' }}> · {sendSkipped.length} skipped</span>
-                  )}
-                </span>
-              </div>
-              {/* Safety skipped details */}
-              {sendSkipped.length > 0 && (
-                <div className="font-mono" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', maxHeight: '120px', overflowY: 'auto', paddingLeft: '14px' }}>
-                  {sendSkipped.map((s, i) => (
-                    <div key={i} style={{ lineHeight: '1.6' }}>
-                      {s.email} — {s.detail || s.reason}
-                    </div>
-                  ))}
-                </div>
-              )}
+            <div className="flex items-center gap-2" style={{ animation: 'sendComplete 0.5s ease-out' }}>
+              <div style={{
+                width: '6px', height: '6px', borderRadius: '50%',
+                background: 'rgba(52,211,153,0.60)',
+                boxShadow: '0 0 8px rgba(52,211,153,0.30)',
+                animation: 'completePulse 2s ease-in-out infinite',
+              }} />
+              <span className="font-mono" style={{ fontSize: '11px', color: 'rgba(52,211,153,0.60)' }}>
+                {sendProgress.sent} sent
+                {sendProgress.errors > 0 && (
+                  <span style={{ color: 'rgba(255,255,255,0.30)' }}> · {sendProgress.errors} errors</span>
+                )}
+                {sendSkipped.length > 0 && (
+                  <span style={{ color: 'rgba(251,191,36,0.40)' }}> · {sendSkipped.length} cooldown</span>
+                )}
+              </span>
             </div>
           )}
         </div>
@@ -1551,7 +1588,7 @@ export default function ComposePanel({
                     color: isSupplyTab ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.30)',
                   }}
                 >
-                  Supply
+                  {group.companyName}
                 </button>
                 {group.matches.map(m => {
                   const dc = canonicals.get(m.demandKey);
@@ -1584,7 +1621,16 @@ export default function ComposePanel({
                 <span className="font-mono" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)' }}>
                   {isSupplyTab
                     ? `To ${group.contactName || group.companyName}`
-                    : `To ${activeDemandCanon?.who || activeDemandCanon?.company || ''} at ${activeDemandCanon?.company || ''}`
+                    : (() => {
+                        // Prefer enriched contact name, fall back to canonical
+                        const activeMatch = group.matches.find(m => m.evalId === previewTab);
+                        const demandEnrich = activeMatch ? enrichResults.get(activeMatch.evalId)?.demand : null;
+                        const enrichedName = demandEnrich?.outcome === 'ENRICHED' && demandEnrich.firstName
+                          ? `${demandEnrich.firstName} ${demandEnrich.lastName || ''}`.trim()
+                          : null;
+                        const displayName = enrichedName || activeDemandCanon?.who || '';
+                        return `To ${displayName}${activeDemandCanon?.company ? ` at ${activeDemandCanon.company}` : ''}`;
+                      })()
                   }
                 </span>
               </div>

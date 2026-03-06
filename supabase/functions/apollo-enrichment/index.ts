@@ -149,6 +149,13 @@ Deno.serve(async (req: Request) => {
         }
         break;
 
+      case 'organizations_search':
+        // Lightweight org search by name — free, 600/day/key
+        apolloUrl = 'https://api.apollo.io/api/v1/organizations/search';
+        apolloMethod = 'POST';
+        apolloPayload = { q_organization_name: params.q, per_page: params.per_page || 1 };
+        break;
+
       case 'work_owner_search':
         // New: Work Owner Search using mixed_people/search with keywords
         apolloUrl = 'https://api.apollo.io/v1/mixed_people/search';

@@ -28,6 +28,10 @@ interface OrchestrateRequest {
   jobId: string;
   demandKeys: string[];
   supplyKeys: string[];
+  fulfillmentKey?: string;           // @deprecated — use clientKey (REPLACE semantics)
+  fulfillmentSide?: "demand" | "supply"; // @deprecated — use clientSide
+  clientKey?: string;                // Client canonical key — APPENDED to the correct side
+  clientSide?: "demand" | "supply";  // Which side to append clientKey to
   aiConfig: AIConfig;
   topK?: number;
 }
@@ -134,8 +138,8 @@ function classifyDirect(combined: number, vetoed: boolean): string {
   return "QUARANTINE";
 }
 
-function readinessDirect(combined: number): string {
-  if (combined >= 0.7) return "READY";
+function readinessDirect(combined: number, fit: number): string {
+  if (combined >= 0.65 && fit >= 0.65) return "READY";
   if (combined >= 0.4) return "WARMING";
   return "NOT_YET";
 }
@@ -401,7 +405,7 @@ async function warmUpCerebras(cerebrasKey: string): Promise<void> {
 const SCORING_PROMPT = `Score demand-supply pairs. Return JSON: { "results": [...] }
 Each result: { "fit": 0.0-1.0, "timing": 0.0-1.0, "vetoed": boolean, "vetoReason": null or string }
 
-fit: How well supply addresses demand's ACTUAL need.
+fit: How well supply's capability addresses the business need implied by demand's context + trigger.
   1.0 = exact capability match, 0.5 = tangential, 0.0 = none
 timing: How urgent/time-sensitive.
   1.0 = actively needed now, 0.5 = general need, 0.0 = speculative
@@ -420,8 +424,8 @@ async function callCerebrasScoring(
 ): Promise<ScoredResult[]> {
   const userContent = JSON.stringify(
     batch.map((p) => ({
-      demand: { company: p.demand.company, wants: p.demand.wants, industry: p.demand.industry, why_now: p.demand.why_now, keywords: p.demand.keywords },
-      supply: { company: p.supply.company, offers: p.supply.offers, industry: p.supply.industry, keywords: p.supply.keywords },
+      demand: { company: p.demand.company, context: p.demand.wants, industry: p.demand.industry, trigger: p.demand.why_now, keywords: p.demand.keywords },
+      supply: { company: p.supply.company, capability: p.supply.offers, industry: p.supply.industry, keywords: p.supply.keywords },
     })),
   );
 
@@ -436,7 +440,7 @@ async function callCerebrasScoring(
           Connection: "keep-alive",
         },
         body: JSON.stringify({
-          model: "llama-3.1-8b",
+          model: "gpt-oss-120b",
           messages: [
             { role: "system", content: SCORING_PROMPT },
             { role: "user", content: userContent },
@@ -452,19 +456,23 @@ async function callCerebrasScoring(
         return results.slice(0, batch.length).map((r: Record<string, unknown>, i: number) => {
           const fit = Math.max(0, Math.min(1, Number(r.fit) || 0));
           const timing = Math.max(0, Math.min(1, Number(r.timing) || 0));
+          const combined = Math.round((0.7 * fit + 0.3 * timing) * 1000) / 1000;
+          // Server override: if model scored >= 0.3 combined, it sees a match — veto is contradictory
+          const vetoed = combined >= 0.3 ? false : !!r.vetoed;
           return {
             ...batch[i],
             fit,
             timing,
-            combined: Math.round((0.6 * fit + 0.4 * timing) * 1000) / 1000,
-            vetoed: !!r.vetoed,
-            vetoReason: r.vetoed && typeof r.vetoReason === "string"
+            combined,
+            vetoed,
+            vetoReason: vetoed && typeof r.vetoReason === "string"
               ? (r.vetoReason as string).slice(0, 200)
               : null,
           };
         });
       }
-      console.log(`[scoring] Cerebras ${res.status}, falling back`);
+      const errBody = await res.text().catch(() => '');
+      console.error(`[scoring] Cerebras ${res.status}: ${errBody.slice(0, 200)}`);
     } catch (e) {
       console.log(`[scoring] Cerebras error: ${(e as Error).message}`);
     }
@@ -481,7 +489,7 @@ async function callCerebrasScoring(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "llama-3.1-8b-instant",
+          model: "openai/gpt-oss-120b",
           messages: [
             { role: "system", content: SCORING_PROMPT },
             { role: "user", content: userContent },
@@ -497,24 +505,29 @@ async function callCerebrasScoring(
         return results.slice(0, batch.length).map((r: Record<string, unknown>, i: number) => {
           const fit = Math.max(0, Math.min(1, Number(r.fit) || 0));
           const timing = Math.max(0, Math.min(1, Number(r.timing) || 0));
+          const combined = Math.round((0.7 * fit + 0.3 * timing) * 1000) / 1000;
+          const vetoed = combined >= 0.3 ? false : !!r.vetoed;
           return {
             ...batch[i],
             fit,
             timing,
-            combined: Math.round((0.6 * fit + 0.4 * timing) * 1000) / 1000,
-            vetoed: !!r.vetoed,
-            vetoReason: r.vetoed && typeof r.vetoReason === "string"
+            combined,
+            vetoed,
+            vetoReason: vetoed && typeof r.vetoReason === "string"
               ? (r.vetoReason as string).slice(0, 200)
               : null,
           };
         });
       }
+      const errBody = await res.text().catch(() => '');
+      console.error(`[scoring] Groq ${res.status}: ${errBody.slice(0, 200)}`);
     } catch (e) {
       console.log(`[scoring] Groq error: ${(e as Error).message}`);
     }
   }
 
   // Total failure — return zeros
+  console.error(`[scoring] FALLBACK: both Cerebras and Groq failed for batch of ${batch.length} — returning zeros`);
   return batch.map((p) => ({
     ...p,
     fit: 0,
@@ -629,8 +642,8 @@ async function callReasoningBatch(
 ): Promise<ReasonedResult[]> {
   const userContent = JSON.stringify(
     batchPairs.map((p) => ({
-      demand: { company: p.demand.company, who: p.demand.who, wants: p.demand.wants, industry: p.demand.industry, why_now: p.demand.why_now || "", keywords: p.demand.keywords, proof: p.demand.proof, title: p.demand.title, constraints: p.demand.constraints },
-      supply: { company: p.supply.company, who: p.supply.who, offers: p.supply.offers, industry: p.supply.industry, keywords: p.supply.keywords, proof: p.supply.proof, title: p.supply.title },
+      demand: { company: p.demand.company, who: p.demand.who, context: p.demand.wants, industry: p.demand.industry, trigger: p.demand.why_now || "", keywords: p.demand.keywords, proof: p.demand.proof, title: p.demand.title, constraints: p.demand.constraints },
+      supply: { company: p.supply.company, who: p.supply.who, capability: p.supply.offers, industry: p.supply.industry, keywords: p.supply.keywords, proof: p.supply.proof, title: p.supply.title },
       scores: { fit: p.fit, timing: p.timing, combined: p.combined },
     })),
   );
@@ -766,24 +779,25 @@ Output format (must be followed exactly):
 Only these fields. No explanations. No extra keys.
 
 Style for framing:
-- Pattern: "<Demand company> needs <specific need from wants/keywords> – <Supply company> <verb> <specific capability from offers/keywords>."
+- Pattern: "<Demand company> [recent trigger event] – <Supply company> <verb> <specific capability relevant to what follows from the trigger>."
+- WHY NOW is the trigger, not the need. Don't restate it as the need. Infer what demand actually needs from the supply's offering.
 - One sentence, 15-25 words. Name both companies. Be specific — use the keywords and industry, not generic descriptions.
-- Good: "Reco needs cloud-security integration – Incovate Solutions delivers cyber-risk management and penetration testing."
-- Bad: "Reco needs services – Incovate Solutions offers solutions."
+- Good: "Acme's Series B raises founder wealth complexity – Vanguard Partners delivers integrated advisory framework for this stage."
+- Bad: "Acme needs Biotech Funding – Vanguard Partners offers wealth management services."
 
 Style for the note:
-- Pattern: "<Demand> <verb> <need>; <Supply> <verb> <capability>."
+- Pattern: "<Demand> <trigger context>; <Supply> <verb> <capability relevant to that stage>."
 - Reference keywords, proof, or industry details when available to make the note specific.
-- Demand verbs: is hiring for, needs, seeks, is looking for
+- Demand context: recently raised, just expanded, entering growth phase, post-acquisition
 - Supply verbs: runs, offers, delivers, specializes in
 - Do NOT use "requires" or "provides"
 - 2-3 clauses, ~20-30 words max
 
 Positive example:
-{"id": 1, "framing": "Acumen needs oncology trial-management staff – Scian runs biostatistics across 40+ clinical trials.", "note": "Acumen is hiring for trial-management staff; Scian runs oncology biostatistics on 40+ trials.", "urgency": "URGENT", "risk": null}
+{"id": 1, "framing": "Acumen's trial-management expansion triggers clinical ops demand – Scian runs biostatistics across 40+ oncology trials.", "note": "Acumen expanding trial-management ops; Scian runs oncology biostatistics on 40+ trials.", "urgency": "URGENT", "risk": null}
 
 Negative example (DO NOT write like this):
-{"id": 99, "framing": "Acumen needs services from Scian.", "note": "Acumen requires trial-management services and Scian provides oncology biostatistics.", "urgency": "URGENT", "risk": null}
+{"id": 99, "framing": "Acumen needs services from Scian.", "note": "Acumen requires services and Scian provides biostatistics.", "urgency": "URGENT", "risk": null}
 
 Urgency rules:
 - Job posting closing within 30 days → URGENT
@@ -871,7 +885,7 @@ async function callCurationAI(
             { role: "system", content: CURATION_PROMPT },
             { role: "user", content: pairsPayload },
           ],
-          max_tokens: 2500,
+          max_tokens: 8192,
           temperature: 0.0,
           response_format: { type: "json_object" },
         }),
@@ -888,7 +902,14 @@ async function callCurationAI(
       }
 
       const data = await res.json();
-      const raw = data.choices[0].message.content;
+      const raw = data.choices?.[0]?.message?.content;
+      if (!raw || typeof raw !== "string") {
+        const finishReason = data.choices?.[0]?.finish_reason || "unknown";
+        const detail = `content=${typeof raw}, finish_reason=${finishReason}`;
+        log.push({ attempt, status: "parse_error", ms: Date.now() - t0, detail });
+        console.error(`[curation] Attempt ${attempt}: response content is ${typeof raw}, finish_reason=${finishReason}, raw keys=${Object.keys(data).join(",")}`);
+        continue;
+      }
       const parsed = JSON.parse(raw);
       const picks = Array.isArray(parsed.picks) ? parsed.picks : [];
 
@@ -918,25 +939,30 @@ async function curationPass(
 ): Promise<{ deduped: number; curated: number }> {
   const CEREBRAS_KEY = Deno.env.get("CEREBRAS_API_KEY") || "";
 
-  // 1. Query all PASS, non-vetoed rows for this job
+  // 1. Query top non-vetoed rows for this job (all classifications)
   const { data: passRows, error: queryError } = await supabase
     .from("mcp_evaluations")
     .select("eval_id, demand_key, supply_key, scores, classification, vetoed")
     .eq("job_id", jobId)
-    .eq("classification", "PASS")
     .eq("vetoed", false)
-    .order("scores->combined", { ascending: false });
+    .order("scores->combined", { ascending: false })
+    .limit(200);
 
   if (queryError || !passRows) {
     console.error(`[curation] Query error: ${queryError?.message}`);
     return { deduped: 0, curated: 0 };
   }
 
-  console.log(`[curation] ${passRows.length} PASS pairs for job ${jobId}`);
+  console.log(`[curation] ${passRows.length} top pairs (pre-dedup) for job ${jobId}`);
 
-  // 2. Dedup: top 2 per demand_key
-  const deduped = dedupPairs(passRows);
-  console.log(`[curation] Deduped: ${passRows.length} → ${deduped.length}`);
+  // 2. Dedup: top 2 per demand_key, then floor with starvation fallback
+  const rawDeduped = dedupPairs(passRows);
+  let deduped = rawDeduped.filter(p => (p.scores?.combined ?? 0) >= 0.30).slice(0, 50);
+  if (deduped.length < 15) {
+    console.warn(`[curation] STARVATION: ${deduped.length} after floor — dropping floor, using raw dedup`);
+    deduped = rawDeduped.slice(0, 50);
+  }
+  console.log(`[curation] Deduped: ${passRows.length} → ${rawDeduped.length} → ${deduped.length} (after floor)`);
 
   if (deduped.length === 0) return { deduped: 0, curated: 0 };
 
@@ -963,14 +989,14 @@ async function curationPass(
       id: seqId,
       demand: {
         company: dc.company || dc.who || p.demand_key,
-        wants: dc.wants || "",
-        why_now: dc.why_now || "",
+        context: dc.wants || "",
+        trigger: dc.why_now || "",
         industry: dc.industry || "",
         keywords: dc.keywords || [],
       },
       supply: {
         company: sc.company || sc.who || p.supply_key,
-        offers: sc.offers || sc.wants || "",
+        capability: sc.offers || sc.wants || "",
         industry: sc.industry || "",
         keywords: sc.keywords || [],
       },
@@ -1012,7 +1038,7 @@ async function curationPass(
       ...existingConfig,
       curation_log: curationLog,
       curation_summary: {
-        pass_pairs: passRows.length,
+        top_pairs: passRows.length,
         deduped: deduped.length,
         ai_picks: picks.length,
         valid_picks: validPicks.length,
@@ -1057,7 +1083,7 @@ async function bulkInsertScored(
     supply_key: s.supplyKey,
     scores: { fit: s.fit, timing: s.timing, combined: s.combined },
     classification: classifyDirect(s.combined, s.vetoed),
-    readiness: readinessDirect(s.combined),
+    readiness: readinessDirect(s.combined, s.fit),
     vetoed: s.vetoed,
     veto_reason: s.vetoReason,
     risks: [],
@@ -1186,16 +1212,20 @@ async function evaluateDirect(
   const rawScored = await scoringPass(evalInputs, CEREBRAS_KEY);
   timing.scoringMs = Date.now() - tScoring;
 
-  // 1b. Calibrate 8B scores
-  const tCalib = Date.now();
-  const CALIB_A = 1.5;
-  const scored = rawScored.map((s) => {
-    const calibFit = Math.min(1, Math.max(0, CALIB_A * s.fit));
-    const calibTiming = Math.min(1, Math.max(0, CALIB_A * s.timing));
-    const calibCombined = Math.round((0.6 * calibFit + 0.4 * calibTiming) * 1000) / 1000;
-    return { ...s, fit: calibFit, timing: calibTiming, combined: calibCombined };
-  });
-  timing.calibrationMs = Date.now() - tCalib;
+  // 1a. Score histogram for observability
+  {
+    const sorted = [...rawScored].map(s => s.combined ?? 0).sort((a, b) => a - b);
+    const uniqueEffective = new Set(sorted.map(v => Math.round(v * 1000))).size;
+    const sum = sorted.reduce((a, b) => a + b, 0);
+    const mean = sum / sorted.length;
+    const variance = sorted.reduce((a, v) => a + (v - mean) ** 2, 0) / sorted.length;
+    const stddev = Math.sqrt(variance);
+    console.log(`[scoring] HISTOGRAM: n=${sorted.length}, unique=${uniqueEffective}, min=${sorted[0]?.toFixed(4)}, max=${sorted[sorted.length-1]?.toFixed(4)}, mean=${mean.toFixed(4)}, stddev=${stddev.toFixed(4)}, >=0.5: ${sorted.filter(s => s >= 0.5).length}, >=0.3: ${sorted.filter(s => s >= 0.3).length}`);
+  }
+
+  // 1b. 120B scores — no calibration needed (raw scores are well-distributed)
+  const scored = rawScored;
+  timing.calibrationMs = 0;
 
   // 2. Bulk insert ALL scored pairs
   const tDbWrite = Date.now();
@@ -1230,6 +1260,7 @@ async function evaluateDirect(
   timing.markCompleteMs = Date.now() - tComplete;
 
   timing.totalMs = Date.now() - t0;
+  console.log(`[orchestrate] direct_mode_latency_ms=${timing.totalMs}`);
   console.log(`[direct] TIMING: ${JSON.stringify(timing)}`);
   return { scored: scored.length, reasoned: curated, timing };
 }
@@ -1302,7 +1333,7 @@ async function buildAndPublishShards(
       status: "pending",
       pairs: shard,
       pair_count: shard.length,
-      shard_type: "full",
+      shard_type: "scoring",
     });
   }
 
@@ -1320,7 +1351,7 @@ async function buildAndPublishShards(
   const workerUrl = `${supabaseUrl}/functions/v1/mcp-score-worker`;
   const QUEUE_THRESHOLD = 200;
   const QUEUE_NAME = "mcp-eval";
-  const PARALLELISM = 10;
+  const PARALLELISM = 100;
 
   const useQueue = shards.length >= QUEUE_THRESHOLD;
 
@@ -1396,7 +1427,28 @@ Deno.serve(async (req: Request) => {
     const topK = body.topK || 10;
     const t0 = Date.now();
 
-    console.log(`[orchestrate] Job ${jobId}: ${body.demandKeys.length} demand × ${body.supplyKeys.length} supply, K=${topK}`);
+    // Client injection: APPEND client to the correct side, never REPLACE.
+    // Pipeline evaluates full matrix (market + client). Lens filters in the UI.
+    const cKey = body.clientKey || body.fulfillmentKey;   // backwards compat
+    const cSide = body.clientSide || body.fulfillmentSide;
+    let effectiveDemandKeys: string[];
+    let effectiveSupplyKeys: string[];
+    if (cKey && cSide === "supply") {
+      effectiveSupplyKeys = [...new Set([...body.supplyKeys, cKey])];
+      effectiveDemandKeys = body.demandKeys;
+    } else if (cKey && cSide === "demand") {
+      effectiveDemandKeys = [...new Set([...body.demandKeys, cKey])];
+      effectiveSupplyKeys = body.supplyKeys;
+    } else {
+      effectiveDemandKeys = body.demandKeys;
+      effectiveSupplyKeys = body.supplyKeys;
+    }
+    if (effectiveDemandKeys.length === 0 || effectiveSupplyKeys.length === 0) {
+      throw new Error(`Empty side: ${effectiveDemandKeys.length} demand × ${effectiveSupplyKeys.length} supply`);
+    }
+    const isFulfillment = !!cKey;
+
+    console.log(`[orchestrate] Job ${jobId}: ${effectiveDemandKeys.length} demand × ${effectiveSupplyKeys.length} supply${cKey ? ` (client=${cKey}, side=${cSide})` : ""}, K=${topK}`);
 
     // Create job record
     await supabase.from("mcp_jobs").upsert(
@@ -1409,18 +1461,19 @@ Deno.serve(async (req: Request) => {
         reasoning_status: "pending",
         started_at: new Date().toISOString(),
         config: {
-          demandCount: body.demandKeys.length,
-          supplyCount: body.supplyKeys.length,
+          demandCount: effectiveDemandKeys.length,
+          supplyCount: effectiveSupplyKeys.length,
           topK,
           provider: body.aiConfig.provider,
           aiConfig: body.aiConfig,
+          fulfillment: isFulfillment ? { key: body.fulfillmentKey, side: body.fulfillmentSide } : undefined,
         },
       },
       { onConflict: "job_id" },
     );
 
     // Load canonicals
-    const allKeys = [...body.demandKeys, ...body.supplyKeys];
+    const allKeys = [...effectiveDemandKeys, ...effectiveSupplyKeys];
     const { data: canonicals, error: loadError } = await supabase
       .from("dmcb_canonicals")
       .select("record_key, canonical")
@@ -1462,13 +1515,15 @@ Deno.serve(async (req: Request) => {
 
     await supabase.from("mcp_jobs").update({ status: "retrieving" }).eq("job_id", jobId);
 
-    const demandKeys = validCanonicals
-      .filter((c) => (c.canonical.role || "demand") === "demand")
-      .map((c) => c.record_key);
+    // In fulfillment mode, effective keys already constrain one side to the client.
+    // In market routing, discover sides from canonical roles.
+    const demandKeys = isFulfillment
+      ? effectiveDemandKeys
+      : validCanonicals.filter((c) => (c.canonical.role || "demand") === "demand").map((c) => c.record_key);
 
-    const supplyKeys = validCanonicals
-      .filter((c) => (c.canonical.role || "demand") === "supply")
-      .map((c) => c.record_key);
+    const supplyKeys = isFulfillment
+      ? effectiveSupplyKeys
+      : validCanonicals.filter((c) => (c.canonical.role || "demand") === "supply").map((c) => c.record_key);
 
     // MOVE 1: ONE cross-join → Redis cache (keyed by stable embedJobId)
     const tMatrix = Date.now();

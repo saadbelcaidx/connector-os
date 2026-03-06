@@ -1,7 +1,9 @@
 /**
  * ClientProfileModal — Edit client profile (ICP, identity, pain/outcome, proof, messaging, brief)
  *
- * Same dark modal pattern as overlay editor.
+ * Glass modal with collapsible sections.
+ * Sections auto-expand if they have data, otherwise start collapsed.
+ * Brief is always visible at top — the quick-paste entry point.
  * Save button, no auto-save.
  */
 
@@ -41,15 +43,17 @@ function SectionField({
 }) {
   return (
     <div>
-      <p className="text-[9px] font-mono text-white/30 tracking-widest uppercase mb-1">{label}</p>
+      <p className="font-mono tracking-widest uppercase mb-1" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)' }}>{label}</p>
       {multiline ? (
         <textarea
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
           rows={3}
-          className="w-full px-2 py-1.5 text-[11px] bg-white/[0.04] border border-white/[0.08] rounded-sm text-white/80 placeholder-white/20 outline-none focus:border-white/20 resize-y"
-          style={{ minHeight: '48px' }}
+          className="w-full font-mono text-white/80 placeholder-white/15 outline-none resize-y"
+          style={{ padding: '6px 10px', fontSize: '11px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px', minHeight: '48px' }}
+          onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+          onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
         />
       ) : (
         <input
@@ -57,9 +61,89 @@ function SectionField({
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full h-7 px-2 text-[11px] bg-white/[0.04] border border-white/[0.08] rounded-sm text-white/80 placeholder-white/20 outline-none focus:border-white/20"
+          className="w-full font-mono text-white/80 placeholder-white/15 outline-none"
+          style={{ height: '28px', padding: '0 10px', fontSize: '11px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px' }}
+          onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+          onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
         />
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// COLLAPSIBLE SECTION
+// =============================================================================
+
+function CollapsibleSection({
+  title,
+  hasData,
+  defaultOpen,
+  fieldCount,
+  children,
+}: {
+  title: string;
+  hasData: boolean;
+  defaultOpen?: boolean;
+  fieldCount?: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? hasData);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between pb-1.5 font-mono transition-all group"
+        style={{
+          borderBottom: '1px solid rgba(255,255,255,0.04)',
+          background: 'none',
+          border: 'none',
+          borderBottomWidth: '1px',
+          borderBottomStyle: 'solid',
+          borderBottomColor: 'rgba(255,255,255,0.04)',
+          cursor: 'pointer',
+          outline: 'none',
+          padding: '0 0 6px 0',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className="transition-transform"
+            style={{
+              fontSize: '8px',
+              color: 'rgba(255,255,255,0.20)',
+              transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+              display: 'inline-block',
+              transitionDuration: '200ms',
+            }}
+          >
+            ▶
+          </span>
+          <span style={{ fontSize: '10px', color: open ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.30)', letterSpacing: '0.08em', textTransform: 'uppercase' as const }}>
+            {title}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {hasData && !open && (
+            <span style={{ fontSize: '9px', color: 'rgba(52,211,153,0.35)' }}>
+              {fieldCount ?? ''} filled
+            </span>
+          )}
+        </div>
+      </button>
+      <div
+        style={{
+          maxHeight: open ? '800px' : '0px',
+          overflow: 'hidden',
+          transition: 'max-height 0.3s ease-out, opacity 0.2s ease-out',
+          opacity: open ? 1 : 0,
+        }}
+      >
+        <div className="space-y-3 pt-3">
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
@@ -91,31 +175,67 @@ export default function ClientProfileModal({
     setDraft(prev => ({ ...prev, ...partial }));
   };
 
+  // Count filled fields per section for the collapsed badge
+  const identityCount = [draft.companyDescription, draft.specialization].filter(Boolean).length;
+  const icpCount = [
+    fromArray(draft.icpTitles), fromArray(draft.icpIndustries),
+    draft.icpCompanySize, draft.icpGeography, draft.icpDescription,
+  ].filter(Boolean).length;
+  const painCount = [fromArray(draft.painPoints), fromArray(draft.desiredOutcomes)].filter(Boolean).length;
+  const proofCount = [draft.caseStudy, fromArray(draft.differentiators)].filter(Boolean).length;
+  const msgCount = [draft.messagingTone, fromArray(draft.prospectingQuestions)].filter(Boolean).length;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+    <>
+    <style>{`
+      @keyframes overlayFadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes cardFloat { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    `}</style>
+    <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ animation: 'overlayFadeIn 0.2s ease-out' }} onClick={onClose}>
+      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.60)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} />
       <div
-        className="w-[520px] max-h-[85vh] overflow-y-auto bg-[#09090b] border border-white/[0.10] rounded-sm flex flex-col"
-        style={{ scrollbarWidth: 'thin' }}
+        className="relative flex flex-col"
+        style={{ width: '100%', maxWidth: '520px', maxHeight: '85vh', margin: '0 24px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', overflow: 'hidden', animation: 'cardFloat 0.3s ease-out' }}
+        onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06] sticky top-0 bg-[#09090b] z-10">
-          <div>
-            <p className="text-[13px] text-white/90 font-medium">Client Profile</p>
-            <p className="text-[10px] font-mono text-white/30 mt-0.5">{clientName}</p>
+        <div className="flex items-center justify-between px-5 py-3 sticky top-0 z-10" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.02)', backdropFilter: 'blur(8px)' }}>
+          <div className="flex items-center gap-2">
+            <span style={{ color: 'rgba(52,211,153,0.40)', fontSize: '8px', lineHeight: 1 }}>◆</span>
+            <div>
+              <p className="font-mono" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.60)' }}>{clientName}</p>
+              <p className="font-mono" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Profile</p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
+            className="font-mono"
+            style={{ fontSize: '14px', color: 'rgba(255,255,255,0.20)', background: 'none', border: 'none', cursor: 'pointer', outline: 'none', padding: '0 4px' }}
           >
-            ✕
+            x
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto space-y-5" style={{ scrollbarWidth: 'none', padding: '16px 24px 24px' }}>
+
+          {/* ── BRIEF — always open, top position ── */}
+          <div>
+            <p className="font-mono tracking-widest uppercase pb-1" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.45)', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              Brief
+            </p>
+            <div className="pt-3">
+              <SectionField
+                label="Paste onboarding doc / Typeform / notes"
+                value={draft.fullBrief ?? ''}
+                onChange={v => update({ fullBrief: v })}
+                placeholder="Paste the full client brief here — everything else below is optional refinement..."
+                multiline
+              />
+            </div>
+          </div>
 
           {/* ── IDENTITY ── */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-mono text-white/50 tracking-widest uppercase border-b border-white/[0.06] pb-1">Identity</p>
+          <CollapsibleSection title="Identity" hasData={identityCount > 0} fieldCount={identityCount}>
             <SectionField
               label="Company Description"
               value={draft.companyDescription ?? ''}
@@ -129,11 +249,10 @@ export default function ClientProfileModal({
               onChange={v => update({ specialization: v })}
               placeholder="Multi-family office, Creative production SaaS"
             />
-          </div>
+          </CollapsibleSection>
 
           {/* ── ICP ── */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-mono text-white/50 tracking-widest uppercase border-b border-white/[0.06] pb-1">ICP — Who they want to reach</p>
+          <CollapsibleSection title="ICP — Who they want to reach" hasData={icpCount > 0} fieldCount={icpCount}>
             <SectionField
               label="Target Titles (comma-separated)"
               value={fromArray(draft.icpTitles)}
@@ -165,11 +284,10 @@ export default function ClientProfileModal({
               placeholder="Free-text summary of ideal client profile"
               multiline
             />
-          </div>
+          </CollapsibleSection>
 
           {/* ── PAIN & OUTCOME ── */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-mono text-white/50 tracking-widest uppercase border-b border-white/[0.06] pb-1">Pain & Outcome</p>
+          <CollapsibleSection title="Pain & Outcome" hasData={painCount > 0} fieldCount={painCount}>
             <SectionField
               label="Pain Points (comma-separated)"
               value={fromArray(draft.painPoints)}
@@ -182,11 +300,10 @@ export default function ClientProfileModal({
               onChange={v => update({ desiredOutcomes: toArray(v) })}
               placeholder="Consolidated wealth plan, Tax optimization"
             />
-          </div>
+          </CollapsibleSection>
 
           {/* ── PROOF ── */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-mono text-white/50 tracking-widest uppercase border-b border-white/[0.06] pb-1">Proof</p>
+          <CollapsibleSection title="Proof" hasData={proofCount > 0} fieldCount={proofCount}>
             <SectionField
               label="Case Study"
               value={draft.caseStudy ?? ''}
@@ -200,11 +317,10 @@ export default function ClientProfileModal({
               onChange={v => update({ differentiators: toArray(v) })}
               placeholder="Direct PE access, In-house tax team"
             />
-          </div>
+          </CollapsibleSection>
 
           {/* ── MESSAGING ── */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-mono text-white/50 tracking-widest uppercase border-b border-white/[0.06] pb-1">Messaging</p>
+          <CollapsibleSection title="Messaging" hasData={msgCount > 0} fieldCount={msgCount}>
             <SectionField
               label="Tone"
               value={draft.messagingTone ?? ''}
@@ -217,31 +333,48 @@ export default function ClientProfileModal({
               onChange={v => update({ prospectingQuestions: toArray(v) })}
               placeholder="What does your current wealth setup look like?"
             />
-          </div>
-
-          {/* ── RAW BRIEF ── */}
-          <div className="space-y-3">
-            <p className="text-[10px] font-mono text-white/50 tracking-widest uppercase border-b border-white/[0.06] pb-1">Raw Brief</p>
-            <SectionField
-              label="Full Brief (paste Typeform / onboarding doc)"
-              value={draft.fullBrief ?? ''}
-              onChange={v => update({ fullBrief: v })}
-              placeholder="Paste the full client brief here..."
-              multiline
-            />
-          </div>
+          </CollapsibleSection>
 
           {/* ── ACTIONS ── */}
-          <div className="flex items-center gap-2 pt-3 border-t border-white/[0.06]">
+          <div className="flex items-center gap-3 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
             <button
               onClick={() => onSave(draft)}
-              className="h-7 px-4 text-[11px] rounded bg-white/[0.08] text-white/80 hover:bg-white/[0.12] transition-colors"
+              className="font-mono transition-all"
+              style={{
+                height: '30px',
+                padding: '0 16px',
+                fontSize: '11px',
+                borderRadius: '6px',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'rgba(255,255,255,0.60)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                cursor: 'pointer',
+                outline: 'none',
+                transform: 'scale(1)',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.10)'; e.currentTarget.style.color = 'rgba(255,255,255,0.85)'; e.currentTarget.style.transform = 'scale(1.02)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.60)'; e.currentTarget.style.transform = 'scale(1)'; }}
+              onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.97)'; }}
+              onMouseUp={e => { e.currentTarget.style.transform = 'scale(1.02)'; }}
             >
               Save Profile
             </button>
             <button
               onClick={onClose}
-              className="h-7 px-3 text-[11px] rounded text-white/40 hover:text-white/60 transition-colors"
+              className="font-mono transition-all"
+              style={{
+                height: '30px',
+                padding: '0 12px',
+                fontSize: '11px',
+                borderRadius: '6px',
+                background: 'transparent',
+                color: 'rgba(255,255,255,0.30)',
+                border: 'none',
+                cursor: 'pointer',
+                outline: 'none',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.30)'; }}
             >
               Cancel
             </button>
@@ -249,5 +382,6 @@ export default function ClientProfileModal({
         </div>
       </div>
     </div>
+    </>
   );
 }

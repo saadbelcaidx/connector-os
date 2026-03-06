@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Network, Mail, TrendingUp, BookOpen, Home, Settings, User, LogOut, Key, Eye, EyeOff, X, ArrowRight, Loader2, Radar } from 'lucide-react';
+import { Mail, TrendingUp, BookOpen, Home, Settings, User, LogOut, Key, Eye, EyeOff, ArrowRight, Loader2, Radio } from 'lucide-react';
 import { useAuth } from './AuthContext';
 
 interface DockApp {
@@ -18,28 +18,16 @@ const dockApps: DockApp[] = [
     route: '/launcher',
   },
   {
-    id: 'flow',
-    name: 'Flow',
-    icon: Network,
-    route: '/flow',
-  },
-  {
-    id: 'hub',
-    name: 'Markets',
-    icon: Radar,
-    route: '/hub',
+    id: 'station',
+    name: 'Station',
+    icon: Radio,
+    route: '/station',
   },
   {
     id: 'msg-sim',
     name: 'Msg Sim',
     icon: Mail,
     route: '/msg-sim',
-  },
-  {
-    id: 'intros',
-    name: 'Intros',
-    icon: Network,
-    route: '/introductions',
   },
   {
     id: 'calculator',
@@ -60,6 +48,40 @@ const dockApps: DockApp[] = [
     route: '/settings',
   },
 ];
+
+// Station input style (matches AuthModal)
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  height: '36px',
+  padding: '0 12px',
+  fontFamily: 'monospace',
+  fontSize: '11px',
+  color: 'rgba(255,255,255,0.8)',
+  background: 'rgba(255,255,255,0.02)',
+  border: '1px solid rgba(255,255,255,0.06)',
+  borderRadius: '2px',
+  outline: 'none',
+  transition: 'border-color 0.2s',
+};
+
+// Station primary button style
+const btnPrimaryStyle: React.CSSProperties = {
+  width: '100%',
+  height: '36px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+  fontFamily: 'monospace',
+  fontSize: '11px',
+  fontWeight: 500,
+  color: '#000',
+  background: '#fff',
+  border: 'none',
+  borderRadius: '2px',
+  cursor: 'pointer',
+  transition: 'opacity 0.2s',
+};
 
 // Account Menu Component
 function AccountMenu({
@@ -129,12 +151,11 @@ function AccountMenu({
 
       {/* Menu */}
       <div
-        className="absolute bottom-full mb-3 right-0 w-[280px] rounded-xl overflow-hidden z-50"
+        className="absolute bottom-full mb-3 right-0 w-[260px] overflow-hidden z-50"
         style={{
-          background: 'rgba(18, 18, 18, 0.95)',
-          backdropFilter: 'blur(20px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 16px 48px rgba(0, 0, 0, 0.5)',
+          background: '#09090b',
+          border: '1px solid rgba(255, 255, 255, 0.06)',
+          borderRadius: '2px',
           animation: 'menu-slide-up 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
@@ -142,25 +163,25 @@ function AccountMenu({
           <>
             {/* User info */}
             <div className="px-4 py-3 border-b border-white/[0.06]">
-              <p className="text-[11px] text-white/40 uppercase tracking-wider mb-1">Signed in as</p>
-              <p className="text-[13px] text-white/80 truncate">{user?.email}</p>
+              <p className="font-mono text-[9px] text-white/25 uppercase tracking-widest mb-1">Signed in as</p>
+              <p className="font-mono text-[11px] text-white/60 truncate">{user?.email}</p>
             </div>
 
             {/* Menu items */}
             <div className="py-1">
               <button
                 onClick={() => setShowPasswordForm(true)}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.04] transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.03] transition-colors"
               >
-                <Key size={15} className="text-white/40" />
-                <span className="text-[13px] text-white/70">Change Password</span>
+                <Key size={14} style={{ color: 'rgba(255,255,255,0.3)', strokeWidth: 1.5 }} />
+                <span className="font-mono text-[11px] text-white/50">Change Password</span>
               </button>
               <button
                 onClick={handleSignOut}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.04] transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.03] transition-colors"
               >
-                <LogOut size={15} className="text-white/40" />
-                <span className="text-[13px] text-white/70">Sign Out</span>
+                <LogOut size={14} style={{ color: 'rgba(255,255,255,0.3)', strokeWidth: 1.5 }} />
+                <span className="font-mono text-[11px] text-white/50">Sign Out</span>
               </button>
             </div>
           </>
@@ -174,39 +195,41 @@ function AccountMenu({
                 setConfirmPassword('');
                 setPasswordError(null);
               }}
-              className="flex items-center gap-1 text-[12px] text-white/40 hover:text-white/60 mb-4 transition-colors"
+              className="font-mono text-[10px] text-white/25 hover:text-white/40 mb-4 transition-colors"
             >
               ← Back
             </button>
 
             {passwordSuccess ? (
               <div className="text-center py-4">
-                <div className="w-10 h-10 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-3">
-                  <Key size={18} className="text-emerald-400" />
+                <div className="w-10 h-10 rounded bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center mx-auto mb-3">
+                  <Key size={16} style={{ color: 'rgba(16,185,129,0.7)', strokeWidth: 1.5 }} />
                 </div>
-                <p className="text-[14px] text-white/80">Password updated!</p>
+                <p className="font-mono text-[11px] text-white/60">Password updated</p>
               </div>
             ) : (
               <>
-                <h3 className="text-[15px] font-medium text-white/90 mb-1">Change Password</h3>
-                <p className="text-[12px] text-white/40 mb-4">Enter a new password</p>
+                <p className="font-mono text-[11px] text-white/60 font-medium mb-1">Change Password</p>
+                <p className="font-mono text-[10px] text-white/30 mb-4">Enter a new password</p>
 
                 <form onSubmit={handleSetPassword}>
-                  <div className="relative mb-3">
+                  <div className="relative" style={{ marginBottom: '8px' }}>
                     <input
                       type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPasswordValue(e.target.value)}
                       placeholder="New password"
                       autoFocus
-                      className="w-full h-[42px] px-3 pr-10 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[14px] text-white placeholder-white/30 focus:outline-none focus:border-white/[0.15] transition-colors"
+                      style={{ ...inputStyle, paddingRight: '36px' }}
+                      onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                      onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-white/30 hover:text-white/50 transition-colors"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-white/20 hover:text-white/40 transition-colors"
                     >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
                   </div>
 
@@ -215,24 +238,29 @@ function AccountMenu({
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm password"
-                    className="w-full h-[42px] px-3 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[14px] text-white placeholder-white/30 focus:outline-none focus:border-white/[0.15] transition-colors mb-3"
+                    style={{ ...inputStyle, marginBottom: '8px' }}
+                    onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
                   />
 
                   {passwordError && (
-                    <p className="text-[12px] text-red-400 mb-3">{passwordError}</p>
+                    <p className="font-mono text-[10px] text-white/30 mb-2">{passwordError}</p>
                   )}
 
                   <button
                     type="submit"
                     disabled={!password || !confirmPassword || isSettingPassword}
-                    className="w-full h-[40px] btn-primary text-[13px] disabled:opacity-50"
+                    style={{
+                      ...btnPrimaryStyle,
+                      opacity: (!password || !confirmPassword || isSettingPassword) ? 0.3 : 1,
+                    }}
                   >
                     {isSettingPassword ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin" style={{ color: '#000' }} />
                     ) : (
                       <>
                         Update Password
-                        <ArrowRight size={14} />
+                        <ArrowRight size={12} />
                       </>
                     )}
                   </button>
@@ -271,27 +299,26 @@ function Dock({ disabled = false }: DockProps) {
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
   const handleAppClick = (app: DockApp) => {
-    if (disabled) return; // Block navigation when disabled
+    if (disabled) return;
     navigate(app.route);
   };
 
   return (
     <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50">
       <div
-        className="flex items-center gap-2 px-3 py-2 rounded-2xl"
+        className="flex items-center gap-1 px-2 py-1.5"
         style={{
-          background: 'rgba(12, 12, 12, 0.85)',
-          backdropFilter: 'blur(20px)',
-          WebkitBackdropFilter: 'blur(20px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.05) inset',
-          animation: 'dock-fade-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) 0.15s forwards',
+          background: 'rgba(9, 9, 11, 0.95)',
+          border: '1px solid rgba(255, 255, 255, 0.06)',
+          borderRadius: '2px',
+          animation: 'dock-fade-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s forwards',
           opacity: 0,
         }}
       >
         {dockApps.map((app) => {
           const Icon = app.icon;
-          const isActive = location.pathname === app.route;
+          const isActive = location.pathname === app.route ||
+            (app.route === '/station' && location.pathname.startsWith('/station'));
 
           return (
             <button
@@ -299,27 +326,33 @@ function Dock({ disabled = false }: DockProps) {
               onClick={() => handleAppClick(app)}
               onMouseEnter={() => !disabled && setHoveredApp(app.id)}
               onMouseLeave={() => setHoveredApp(null)}
-              className="relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl"
+              className="relative flex flex-col items-center gap-0.5 px-3 py-1.5"
               style={{
                 cursor: disabled ? 'not-allowed' : 'pointer',
-                transform: hoveredApp === app.id && !disabled ? 'translateY(-2px)' : 'translateY(0)',
-                transition: 'transform 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease',
-                background: isActive && !disabled ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                background: isActive && !disabled
+                  ? 'rgba(255, 255, 255, 0.04)'
+                  : hoveredApp === app.id && !disabled
+                    ? 'rgba(255, 255, 255, 0.02)'
+                    : 'transparent',
+                borderRadius: '2px',
+                transition: 'background 200ms ease, opacity 200ms ease',
                 opacity: disabled ? 0.4 : 1,
               }}
             >
               <Icon
-                size={18}
+                size={16}
                 style={{
-                  color: isActive && !disabled ? '#fff' : 'rgba(255, 255, 255, 0.5)',
+                  color: isActive && !disabled ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
                   strokeWidth: 1.5,
                   transition: 'color 200ms ease',
                 }}
               />
               <span
-                className="text-[9px] font-medium tracking-wide"
+                className="font-mono"
                 style={{
-                  color: isActive && !disabled ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.4)',
+                  fontSize: '9px',
+                  letterSpacing: '0.04em',
+                  color: isActive && !disabled ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)',
                   transition: 'color 200ms ease',
                 }}
               >
@@ -333,35 +366,41 @@ function Dock({ disabled = false }: DockProps) {
         {isAuthenticated && user && (
           <>
             <div
-              className="w-px h-8 mx-1"
-              style={{ background: 'rgba(255, 255, 255, 0.08)', opacity: disabled ? 0.4 : 1 }}
+              className="w-px h-6 mx-1"
+              style={{ background: 'rgba(255, 255, 255, 0.06)' }}
             />
             <div className="relative">
               <button
                 onClick={() => !disabled && setShowAccountMenu(!showAccountMenu)}
                 onMouseEnter={() => !disabled && setHoveredApp('account')}
                 onMouseLeave={() => setHoveredApp(null)}
-                className="relative flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl"
+                className="relative flex flex-col items-center gap-0.5 px-3 py-1.5"
                 style={{
                   cursor: disabled ? 'not-allowed' : 'pointer',
-                  transform: hoveredApp === 'account' && !disabled ? 'translateY(-2px)' : 'translateY(0)',
-                  transition: 'transform 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease',
-                  background: showAccountMenu && !disabled ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                  background: showAccountMenu && !disabled
+                    ? 'rgba(255, 255, 255, 0.04)'
+                    : hoveredApp === 'account' && !disabled
+                      ? 'rgba(255, 255, 255, 0.02)'
+                      : 'transparent',
+                  borderRadius: '2px',
+                  transition: 'background 200ms ease, opacity 200ms ease',
                   opacity: disabled ? 0.4 : 1,
                 }}
               >
                 <User
-                  size={18}
+                  size={16}
                   style={{
-                    color: showAccountMenu && !disabled ? '#fff' : 'rgba(255, 255, 255, 0.5)',
+                    color: showAccountMenu && !disabled ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)',
                     strokeWidth: 1.5,
                     transition: 'color 200ms ease',
                   }}
                 />
                 <span
-                  className="text-[9px] font-medium tracking-wide"
+                  className="font-mono"
                   style={{
-                    color: showAccountMenu && !disabled ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.4)',
+                    fontSize: '9px',
+                    letterSpacing: '0.04em',
+                    color: showAccountMenu && !disabled ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.25)',
                     transition: 'color 200ms ease',
                   }}
                 >
@@ -381,7 +420,7 @@ function Dock({ disabled = false }: DockProps) {
         @keyframes dock-fade-in {
           from {
             opacity: 0;
-            transform: translateY(100px);
+            transform: translateY(16px);
           }
           to {
             opacity: 1;

@@ -4,7 +4,8 @@ import {
   ArrowLeft, BookOpen, Database, Mail, Send,
   ChevronRight, Brain, Target, GitBranch, Layers,
   Compass, Eye, Sparkles, Users, Trophy, Play, Linkedin, ExternalLink,
-  Rocket, Zap, Clock, Shield, MessageSquare, DollarSign, Flame
+  Rocket, Zap, Clock, Shield, MessageSquare, DollarSign, Flame,
+  Hexagon, BarChart3
 } from 'lucide-react';
 
 // =============================================================================
@@ -127,11 +128,11 @@ const sections: DocSection[] = [
         </div>
 
         {/* Total collected banner - Animated with live effect */}
-        <div className="p-6 rounded-xl bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border border-emerald-500/20 mb-8 text-center relative overflow-hidden">
+        <div className="p-6 rounded bg-white/[0.02] border border-white/[0.06] mb-8 text-center relative overflow-hidden">
           {/* Shimmer effect for "live" feeling */}
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-emerald-400/10 to-transparent -translate-x-full animate-[shimmer_3s_infinite]" />
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-[shimmer_3s_infinite]" />
           <div className="relative">
-            <div className="text-[40px] font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-emerald-300 mb-2">
+            <div className="text-[40px] font-medium tracking-tight text-emerald-400/60 mb-2">
               <AnimatedCounter target={826745} duration={2500} />
             </div>
             <div className="flex items-center justify-center gap-2">
@@ -164,7 +165,7 @@ const sections: DocSection[] = [
             { name: 'Max O.', amount: '$11,331', image: '/winners/max.jfif', note: 'and more...', linkedin: 'https://www.linkedin.com/in/max-ochocinski/' },
             { name: 'Joshua D.', amount: '$6,000', image: '/winners/joshua.jpg', note: 'and more...', linkedin: 'https://www.linkedin.com/in/josh-debayo/' },
           ].map((winner, i) => (
-            <div key={i} className="group p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20 hover:border-emerald-500/30 transition-all hover:scale-[1.02]">
+            <div key={i} className="group p-5 rounded bg-white/[0.02] border border-white/[0.06] hover:border-emerald-500/30 transition-all hover:scale-[1.02]">
               <div className="flex items-center gap-4">
                 {/* Photo */}
                 <div className="relative">
@@ -185,7 +186,7 @@ const sections: DocSection[] = [
                 {/* Info */}
                 <div className="flex-1">
                   <div className="text-[14px] font-medium text-white/90">{winner.name}</div>
-                  <div className="text-[18px] font-bold text-emerald-400">{winner.amount}</div>
+                  <div className="text-[18px] font-medium text-emerald-400/60">{winner.amount}</div>
                   <div className="text-[11px] text-white/40 italic">{winner.note}</div>
                 </div>
               </div>
@@ -198,11 +199,11 @@ const sections: DocSection[] = [
           href="https://www.skool.com/ssmasters"
           target="_blank"
           rel="noopener noreferrer"
-          className="block mt-6 p-5 rounded-xl bg-gradient-to-br from-white/[0.06] to-white/[0.02] border border-white/[0.08] hover:border-white/[0.15] transition-all hover:scale-[1.01] group"
+          className="block mt-6 p-5 rounded bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.15] transition-all hover:scale-[1.01] group"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0">
+              <div className="w-12 h-12 rounded overflow-hidden shrink-0">
                 <img src="/ssm-logo.png" alt="SSM" className="w-full h-full object-cover" />
               </div>
               <div>
@@ -587,6 +588,298 @@ const sections: DocSection[] = [
   // SYSTEM DOCUMENTATION
   // ---------------------------------------------------------------------------
   {
+    id: 'primitives',
+    title: 'Primitives',
+    icon: <Hexagon size={16} />,
+    category: 'system',
+    content: (
+      <article>
+        <p className="lead">
+          Connector OS is built on six primitives. Each one exists because a simpler abstraction broke down as the system scaled — the same way Stripe replaced Charge with PaymentIntent when card-only assumptions stopped working for global payments.
+        </p>
+
+        {/* Philosophy Callout */}
+        <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.12] mb-8">
+          <p className="text-[11px] font-mono text-emerald-400/60 m-0 leading-[1.8]">
+            The system does not use &ldquo;lead&rdquo;, &ldquo;campaign&rdquo;, or &ldquo;match&rdquo; as concepts. Those terms overload too many meanings. Instead, the six primitives below each represent exactly one thing, with a defined lifecycle and clear boundaries between them.
+          </p>
+        </div>
+
+        {/* Dependency Chain Diagram */}
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex-1 text-center">
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Zap size={20} className="text-white/50" />
+              </div>
+              <div className="text-[11px] text-white/50">Signal</div>
+            </div>
+            <div className="text-white/20">&rarr;</div>
+            <div className="flex-1 text-center">
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Users size={20} className="text-white/50" />
+              </div>
+              <div className="text-[11px] text-white/50">Party</div>
+            </div>
+            <div className="text-white/20">&rarr;</div>
+            <div className="flex-1 text-center">
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <BarChart3 size={20} className="text-white/50" />
+              </div>
+              <div className="text-[11px] text-white/50">Evaluation</div>
+            </div>
+            <div className="text-white/20">&rarr;</div>
+            <div className="flex-1 text-center">
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Shield size={20} className="text-white/50" />
+              </div>
+              <div className="text-[11px] text-white/50">Commitment</div>
+            </div>
+            <div className="text-white/20">&rarr;</div>
+            <div className="flex-1 text-center">
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Send size={20} className="text-white/50" />
+              </div>
+              <div className="text-[11px] text-white/50">Introduction</div>
+            </div>
+            <div className="text-white/20">&rarr;</div>
+            <div className="flex-1 text-center">
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Target size={20} className="text-white/50" />
+              </div>
+              <div className="text-[11px] text-white/50">Outcome</div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── SIGNAL ── */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-2 mb-4">
+            <Zap size={16} className="text-white/40" />
+            <span className="text-[13px] font-mono font-medium text-white/80 uppercase tracking-[0.02em]">Signal</span>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What broke</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              Most tools in this space start with a list of companies. But a list of companies doesn&rsquo;t tell you anything about timing — whether something recently changed that makes a conversation relevant right now. Without that, you&rsquo;re just cold-calling a database.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What it is</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              A signal is a detected unit of intent. It represents the fact that something happened — a funding round, a leadership change, a product launch — that shifts what a company needs or can offer. The system synthesizes each signal into a canonical intent object before anything downstream sees it.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">Lifecycle</div>
+            <p className="text-[10px] font-mono text-white/45 m-0">
+              <code>detected</code> &rarr; <code>synthesized</code> &rarr; <code>classified</code> &rarr; <code>consumed</code>
+            </p>
+          </div>
+
+          <div className="bg-white/[0.01] border-l-2 border-white/[0.08] pl-4 py-2">
+            <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+              The system embeds the synthesized intent, not the raw company data. Embedding raw metadata produced ~30% similarity across pairs. Embedding AI-interpreted intent statements brought that to ~49% with 81 pairs above the 60% threshold. This is why signals exist as a separate primitive — the interpretation layer is where matching quality comes from.
+            </p>
+          </div>
+        </div>
+
+        {/* ── PARTY ── */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-2 mb-4">
+            <Users size={16} className="text-white/40" />
+            <span className="text-[13px] font-mono font-medium text-white/80 uppercase tracking-[0.02em]">Party</span>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What broke</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              CRM systems store companies as flat records. But in a two-sided market, the same company can appear on both sides depending on the context. And a company record without a contact, title, or enrichment context doesn&rsquo;t give the operator enough to act on.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What it is</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              A party is a company or actor participating on either side of the market. The system treats demand and supply as roles, not fixed identities — the same party can be demand in one evaluation and supply in another. Parties are enriched with contact data, firmographics, and context before they enter the evaluation pipeline.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">Lifecycle</div>
+            <p className="text-[10px] font-mono text-white/45 m-0">
+              <code>identified</code> &rarr; <code>enriched</code> &rarr; <code>active</code> &rarr; <code>dormant</code>
+            </p>
+          </div>
+
+          <div className="bg-white/[0.01] border-l-2 border-white/[0.08] pl-4 py-2">
+            <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+              The system stays neutral between sides. Both parties are equal participants. Neither is &ldquo;the client&rdquo; until a commitment is created — this is what allows the operator to work both sides of every market simultaneously.
+            </p>
+          </div>
+        </div>
+
+        {/* ── EVALUATION ── */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-2 mb-4">
+            <BarChart3 size={16} className="text-white/40" />
+            <span className="text-[13px] font-mono font-medium text-white/80 uppercase tracking-[0.02em]">Evaluation</span>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What broke</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              Traditional matching relies on keyword overlap or industry similarity. Two companies both being &ldquo;in healthcare&rdquo; is not a reason to connect them. Without structured reasoning about why a specific pair makes sense right now, the operator has to manually figure out the angle for every match — which doesn&rsquo;t scale.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What it is</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              An evaluation is the system&rsquo;s structured assessment of a demand-supply pair. It contains scores across multiple dimensions, a classification (pass, marginal, quarantine), a suggested framing for the introduction, and written reasoning explaining why the pair works. It&rsquo;s a reasoning object, not a binary yes/no.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">Lifecycle</div>
+            <p className="text-[10px] font-mono text-white/45 m-0">
+              <code>proposed</code> &rarr; <code>scored</code> &rarr; <code>classified</code> &rarr; <code>approved</code> / <code>vetoed</code>
+            </p>
+          </div>
+
+          <div className="bg-white/[0.01] border-l-2 border-white/[0.08] pl-4 py-2">
+            <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+              The evaluation layer proposes. The operator and infrastructure layer dispose. Evaluations never route introductions directly — they produce recommendations that the operator reviews and the commitment system gates. This separation is what prevents the AI from becoming a spam engine.
+            </p>
+          </div>
+        </div>
+
+        {/* ── COMMITMENT ── */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield size={16} className="text-white/40" />
+            <span className="text-[13px] font-mono font-medium text-white/80 uppercase tracking-[0.02em]">Commitment</span>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What broke</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              In most sales tools, a &ldquo;deal&rdquo; moves through pipeline stages — interested, qualified, proposal, closed. But these stages are internal labels that don&rsquo;t correspond to anything the counterparty has actually done. Until someone pays, the pipeline is a guess.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What it is</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              A commitment is prepaid priority access to a market segment. It represents a concrete economic action — someone paid for a window of time and a number of credits within a specific segment. Committed parties get routing priority. Uncommitted parties can see anonymized market motion but don&rsquo;t receive introductions.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">Lifecycle</div>
+            <p className="text-[10px] font-mono text-white/45 m-0">
+              <code>reserved</code> &rarr; <code>active</code> &rarr; <code>consuming</code> &rarr; <code>exhausted</code> / <code>expired</code>
+            </p>
+          </div>
+
+          <div className="bg-white/[0.01] border-l-2 border-white/[0.08] pl-4 py-2">
+            <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+              The product being sold is access and timing, not introductions. The commitment is the product. The introduction is the delivery mechanism. This distinction matters because both sides of the market can commit independently — there&rsquo;s no conflict because you&rsquo;re selling access to the operator&rsquo;s infrastructure, not exclusive representation.
+            </p>
+          </div>
+        </div>
+
+        {/* ── INTRODUCTION ── */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-2 mb-4">
+            <Send size={16} className="text-white/40" />
+            <span className="text-[13px] font-mono font-medium text-white/80 uppercase tracking-[0.02em]">Introduction</span>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What broke</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              Scaling outreach typically means template-based email sequences. But an introduction without match-specific context performs like cold outreach — the recipient has no reason to believe the message is relevant to their specific situation.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What it is</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              An introduction is a routed connection between two parties. The operator writes one reference introduction by hand for their best match. The system analyzes the operator&rsquo;s voice, structure, and style, then reconstructs new introductions for each remaining match using that match&rsquo;s specific context — the signal, the framing, the reasoning from the evaluation.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">Lifecycle</div>
+            <p className="text-[10px] font-mono text-white/45 m-0">
+              <code>drafted</code> &rarr; <code>sent</code> &rarr; <code>delivered</code> &rarr; <code>replied</code> / <code>stale</code>
+            </p>
+          </div>
+
+          <div className="bg-white/[0.01] border-l-2 border-white/[0.08] pl-4 py-2">
+            <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+              The compose engine separates style (reusable across matches) from context (specific to each pair). The operator&rsquo;s reference intro is the training data. The system doesn&rsquo;t generate from a template — it decomposes the reference and rebuilds per match. This is why the output sounds like the operator wrote each one individually.
+            </p>
+          </div>
+        </div>
+
+        {/* ── OUTCOME ── */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-2 mb-4">
+            <Target size={16} className="text-white/40" />
+            <span className="text-[13px] font-mono font-medium text-white/80 uppercase tracking-[0.02em]">Outcome</span>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What broke</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              Most platforms track whether an email was sent and whether it was opened. But send and open metrics don&rsquo;t tell you whether the introduction actually led to a conversation, a meeting, or revenue. Without outcome data flowing back into the system, there&rsquo;s no way to improve evaluation quality over time.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">What it is</div>
+            <p className="text-[11px] font-mono text-white/45 leading-[1.8] m-0">
+              An outcome is the result attached to an introduction — reply, meeting booked, deal closed, no response, or stale. Outcomes are tracked per side (demand replied, supply replied) and per stage. They feed back into evaluation calibration, overlay suggestions, and operator learning views.
+            </p>
+          </div>
+
+          <div className="mb-3">
+            <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-1">Lifecycle</div>
+            <p className="text-[10px] font-mono text-white/45 m-0">
+              <code>sent</code> &rarr; <code>replied</code> &rarr; <code>meeting</code> &rarr; <code>closed_won</code> / <code>closed_lost</code> / <code>stale</code>
+            </p>
+          </div>
+
+          <div className="bg-white/[0.01] border-l-2 border-white/[0.08] pl-4 py-2">
+            <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+              The system maintains learning views that aggregate outcomes by match tier, by need/capability pairing, and by overlay configuration. When enough data accumulates (minimum 5 introductions per segment), the system can surface which segments convert better and suggest overlay adjustments. The feedback loop is what makes evaluations improve over time rather than staying static.
+            </p>
+          </div>
+        </div>
+
+        {/* The Pipeline */}
+        <div className="mt-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-3">The Pipeline</div>
+          <p className="text-[10px] font-mono text-white/45 m-0 leading-[1.8]">
+            <code>Raw</code> &rarr; <code>I Layer</code> <span className="text-white/25">(Signal + Party)</span> &rarr; <code>MCP</code> <span className="text-white/25">(Evaluation)</span> &rarr; <code>Commitment</code> &rarr; <code>Route</code> <span className="text-white/25">(Introduction)</span> &rarr; <code>Outcome</code> &rarr; <span className="text-white/25">feedback</span>
+          </p>
+        </div>
+
+        {/* Closing */}
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] mt-8">
+          <p className="text-[11px] font-mono text-white/45 italic m-0 leading-[1.8] text-center">
+            Six clearly-defined primitives with predictable lifecycles are easier to reason about than two or three overloaded concepts that mean different things in different contexts. Every feature in the system is a function that takes one of these objects and moves it to its next state.
+          </p>
+        </div>
+      </article>
+    ),
+  },
+  {
     id: 'architecture',
     title: 'The System',
     icon: <Layers size={16} />,
@@ -594,72 +887,64 @@ const sections: DocSection[] = [
     content: (
       <article>
         <p className="lead">
-          Connector OS is infrastructure. It runs continuously, watching for signals, surfacing matches, waiting for your decision.
+          Connector OS processes raw market data into scored, reasoned evaluations that tell you exactly which pairs to connect and why. Three layers do this: the I Layer synthesizes intent, MCP evaluates pairs, and Station gives you the controls.
         </p>
 
-        {/* System Flow Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
+        {/* Pipeline Visual */}
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center justify-between gap-2">
             <div className="flex-1 text-center">
-              <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-2">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                  <polyline points="17 8 12 3 7 8"/>
-                  <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Database size={20} className="text-white/50" />
               </div>
-              <div className="text-[11px] text-white/50">Load</div>
+              <div className="text-[11px] text-white/50">Raw Input</div>
             </div>
-            <div className="text-white/20">→</div>
+            <div className="text-white/20">&rarr;</div>
             <div className="flex-1 text-center">
-              <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center mx-auto mb-2">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400">
-                  <circle cx="12" cy="12" r="10"/>
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                </svg>
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <Brain size={20} className="text-white/50" />
               </div>
-              <div className="text-[11px] text-white/50">Match</div>
+              <div className="text-[11px] text-white/50">I Layer</div>
             </div>
-            <div className="text-white/20">→</div>
+            <div className="text-white/20">&rarr;</div>
             <div className="flex-1 text-center">
-              <div className="w-12 h-12 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mx-auto mb-2">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400">
-                  <circle cx="11" cy="11" r="8"/>
-                  <path d="m21 21-4.3-4.3"/>
-                </svg>
+              <div className="w-12 h-12 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <BarChart3 size={20} className="text-white/50" />
               </div>
-              <div className="text-[11px] text-white/50">Enrich</div>
+              <div className="text-[11px] text-white/50">MCP</div>
             </div>
-            <div className="text-white/20">→</div>
+            <div className="text-white/20">&rarr;</div>
             <div className="flex-1 text-center">
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-2">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-                </svg>
+              <div className="w-12 h-12 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-2">
+                <Target size={20} className="text-emerald-400/60" />
               </div>
-              <div className="text-[11px] text-white/50">Send</div>
+              <div className="text-[11px] text-white/50">Station</div>
             </div>
           </div>
         </div>
 
-        <h3>What happens when you open it</h3>
+        <h3>The I Layer</h3>
         <p>
-          Signals have already been collected. Matches have already been scored. The system has done the work before you arrived. You're not searching — you're scanning what's already been prepared.
+          Raw company data enters the system from Apify datasets or Pre-Built Markets. The I Layer synthesizes each record into a canonical intent object — a structured statement of who the company is, what they want, and why the timing matters now. Nothing downstream ever sees raw data. The canonical is the source of truth.
+        </p>
+        <p>
+          This matters because embedding raw metadata produces roughly 30% average similarity across pairs — noise matching noise. Embedding the AI-synthesized intent brings that to 49% with 81 pairs clearing the 60% threshold. The interpretation layer is where matching quality comes from.
         </p>
 
-        <h3>What you don't see</h3>
+        <h3>MCP Evaluation</h3>
         <p>
-          Behind the interface, pressure is being detected across thousands of data points. Companies hiring. Funding announced. Leadership changes. Expansion signals. The system reads these patterns and inverts them: who has the need, who has the solution.
+          MCP takes every demand-supply pair and scores it across two dimensions: fit (how well the supply addresses the demand) and timing (how urgent the signal is). It generates written reasoning explaining why the pair works, a suggested framing for the introduction, and a classification — pass, marginal, or quarantine. One AI call per shard of up to 250 pairs, dispatched via QStash with automatic fallback across three providers.
         </p>
 
-        <h3>What you control</h3>
+        <h3>Station</h3>
         <p>
-          Timing. You decide when — or if — the intro happens. The system surfaces the opportunity. You control the gate. That's where leverage lives.
+          Station is the operator workspace. You select a market, trigger evaluation, and watch results stream in via Realtime subscriptions. Matches appear grouped by demand company with tier indicators. You review the reasoning, fetch company intelligence, compose introductions, and send — all from one continuous flow.
         </p>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/[0.06] mt-6">
-          <p className="text-[14px] text-white/60 italic m-0 text-center">
-            "The connector doesn't chase. The connector routes."
+        {/* Invariant Callout */}
+        <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.12] mt-6">
+          <p className="text-[11px] font-mono text-emerald-400/60 m-0 leading-[1.8]">
+            Nothing raw touches MCP. Only I Layer canonical intent objects enter evaluation. If the system embeds raw company descriptions instead of synthesized intent, matching quality degrades. This invariant is enforced at the pipeline boundary.
           </p>
         </div>
       </article>
@@ -673,462 +958,117 @@ const sections: DocSection[] = [
     content: (
       <article>
         <p className="lead">
-          The complete operator workflow. From signal to connection. Every decision point mapped.
+          Five steps take you from raw market data to sent introductions. Each step produces an object the next step consumes. You control the gate between evaluation and send.
         </p>
 
         {/* The Complete Flow */}
-        <div className="my-10 p-8 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
-          <h3 className="mt-0 mb-6 text-center text-[18px]">The complete flow</h3>
+        <div className="my-10 p-8 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center justify-between gap-2 mb-6">
             {[
-              { num: '1', label: 'Load', color: 'blue', desc: 'Datasets load' },
-              { num: '2', label: 'Match', color: 'purple', desc: 'Supply matched' },
-              { num: '3', label: 'Enrich', color: 'cyan', desc: 'Find contacts' },
-              { num: '4', label: 'Send', color: 'emerald', desc: 'Both get intro' },
+              { num: '1', label: 'Market', desc: 'Pick sources' },
+              { num: '2', label: 'Evaluate', desc: 'AI scores pairs' },
+              { num: '3', label: 'Review', desc: 'Read reasoning' },
+              { num: '4', label: 'Compose', desc: 'Write one, clone all' },
+              { num: '5', label: 'Send', desc: 'Route intros' },
             ].map((step, i) => (
               <div key={i} className="flex-1 text-center">
-                <div className={`w-10 h-10 rounded-xl bg-${step.color}-500/20 border border-${step.color}-500/30 flex items-center justify-center mx-auto mb-2`}>
-                  <span className="text-[14px] font-bold text-white/80">{step.num}</span>
+                <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                  <span className="text-[14px] font-medium text-white/80">{step.num}</span>
                 </div>
                 <div className="text-[11px] font-medium text-white/70">{step.label}</div>
                 <div className="text-[10px] text-white/40 mt-1">{step.desc}</div>
               </div>
             ))}
           </div>
-          <div className="h-1 rounded-full bg-gradient-to-r from-blue-500/40 via-purple-500/40 via-cyan-500/40 to-emerald-500/40"/>
+          <div className="h-1 rounded-full bg-white/[0.06]"/>
         </div>
 
-        {/* Step 1: The Interface */}
-        <h3>Step 1: The matching engine interface</h3>
+        {/* Step 1 */}
+        <h3>Step 1: Select a market</h3>
         <p>
-          When you open the matching engine, you see two panels:
+          Open Station. You see two input methods: Pre-Built Markets, which pull live company data from Instantly SuperSearch, and Apify Datasets, which accept any structured scrape. Pick your demand source and supply source. The system accepts any combination.
+        </p>
+        <p>
+          Click Analyze. The system runs diagnostics on your data — record counts, field completeness, signal distribution — before anything enters the pipeline. If your data has problems, you see them here, not three steps later.
         </p>
 
-        <div className="my-6 grid grid-cols-2 gap-4">
-          <div className="p-5 rounded-xl bg-blue-500/[0.08] border border-blue-500/20">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                <span className="text-[16px]">🏢</span>
-              </div>
-              <span className="text-[14px] font-medium text-white">Left Panel: DEMAND</span>
-            </div>
-            <p className="text-[12px] text-white/50 m-0 mb-3">
-              Companies with signals. These are loaded from your Apify demand dataset.
-            </p>
-            <ul className="text-[12px] text-white/40 m-0 pl-4 space-y-1">
-              <li>Company name & domain</li>
-              <li>Signal type (hiring, funding, etc.)</li>
-              <li>Job titles being hired</li>
-              <li>Signal summary</li>
-            </ul>
-          </div>
-
-          <div className="p-5 rounded-xl bg-purple-500/[0.08] border border-purple-500/20">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                <span className="text-[16px]">👤</span>
-              </div>
-              <span className="text-[14px] font-medium text-white">Right Panel: SUPPLY</span>
-            </div>
-            <p className="text-[12px] text-white/50 m-0 mb-3">
-              Providers who can help. Matched based on what the demand company needs.
-            </p>
-            <ul className="text-[12px] text-white/40 m-0 pl-4 space-y-1">
-              <li>Provider name & specialty</li>
-              <li>Match score</li>
-              <li>What they solve</li>
-              <li>Their decision-maker</li>
-            </ul>
-          </div>
-        </div>
-
-        {/* Visual: The Two Panels */}
-        <div className="my-8 p-6 rounded-2xl bg-black/40 border border-white/[0.08]">
-          <div className="grid grid-cols-2 gap-6">
-            {/* Left panel mock */}
-            <div className="space-y-2">
-              <div className="text-[10px] text-blue-400/80 uppercase tracking-wider mb-3">Demand Companies</div>
-              {[
-                { name: 'TechCorp', signal: 'Hiring 5 engineers', status: 'ready' },
-                { name: 'ScaleUp Inc', signal: 'Series B funding', status: 'pending' },
-                { name: 'GrowthCo', signal: '3 DevOps roles', status: 'ready' },
-              ].map((item, i) => (
-                <div key={i} className={`p-3 rounded-lg ${i === 0 ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-white/[0.02] border border-white/[0.06]'}`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-medium text-white/80">{item.name}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${item.status === 'ready' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/40'}`}>
-                      {item.status}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-white/40 mt-1">{item.signal}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Right panel mock */}
-            <div className="space-y-2">
-              <div className="text-[10px] text-purple-400/80 uppercase tracking-wider mb-3">Matched Supply</div>
-              {[
-                { name: 'Toptal', match: '92%', specialty: 'Senior engineers' },
-                { name: 'Andela', match: '87%', specialty: 'Remote dev teams' },
-                { name: 'Terminal', match: '84%', specialty: 'Engineering talent' },
-              ].map((item, i) => (
-                <div key={i} className={`p-3 rounded-lg ${i === 0 ? 'bg-purple-500/10 border border-purple-500/30' : 'bg-white/[0.02] border border-white/[0.06]'}`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-medium text-white/80">{item.name}</span>
-                    <span className="text-[11px] text-purple-400 font-medium">{item.match}</span>
-                  </div>
-                  <div className="text-[11px] text-white/40 mt-1">{item.specialty}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="text-[11px] text-white/30 text-center mt-4">
-            ↑ Click a demand company on the left, supply options appear on the right
-          </div>
-        </div>
-
-        {/* Step 2: You Pick the Match */}
-        <h3>Step 2: You pick the supply</h3>
+        {/* Step 2 */}
+        <h3>Step 2: Run the evaluation</h3>
         <p>
-          When you click a demand company, the system shows matched supply providers. <strong>You pick ONE.</strong>
+          Click Run. The system creates every possible demand-supply pair, shards them into batches, and dispatches each shard to MCP for AI evaluation. A run with 30 demand and 68 supply companies produces 2,040 pairs. At current throughput, that completes in roughly 80 seconds.
+        </p>
+        <p>
+          You navigate to the Runs page automatically. A progress bar shows pairs scored, estimated time remaining, and the current classification breakdown — how many pairs have passed, how many are marginal, how many quarantined.
         </p>
 
-        <div className="my-6 p-5 rounded-xl bg-gradient-to-r from-blue-500/[0.08] via-purple-500/[0.08] to-purple-500/[0.08] border border-white/[0.08]">
-          <div className="flex items-center justify-center gap-8">
-            <div className="text-center">
-              <div className="w-14 h-14 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[24px]">🏢</span>
-              </div>
-              <div className="text-[12px] text-white/70">TechCorp</div>
-              <div className="text-[10px] text-white/40">Hiring 5 engineers</div>
-            </div>
-
-            <div className="flex flex-col items-center">
-              <div className="text-[20px] text-white/30 mb-2">→</div>
-              <div className="px-3 py-1.5 rounded-lg bg-white/[0.06] border border-white/[0.1]">
-                <div className="text-[11px] text-white/60 font-medium">You decide</div>
-              </div>
-              <div className="text-[20px] text-white/30 mt-2">→</div>
-            </div>
-
-            <div className="text-center">
-              <div className="w-14 h-14 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[24px]">👤</span>
-              </div>
-              <div className="text-[12px] text-white/70">Toptal</div>
-              <div className="text-[10px] text-white/40">92% match</div>
-            </div>
+        {/* Live Progress Mock */}
+        <div className="my-6 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[11px] font-mono text-white/50">v5-1709823456</span>
+            <span className="text-[11px] text-emerald-400/60">82 / 82 shards</span>
           </div>
-        </div>
-
-        <div className="p-4 rounded-xl bg-amber-500/[0.08] border border-amber-500/20 my-6">
-          <div className="flex items-center gap-3">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 16v-4M12 8h.01"/>
-            </svg>
-            <p className="text-[13px] text-white/70 m-0">
-              <strong>Why one supply per demand?</strong> Sending to multiple providers for the same deal creates confusion and removes your leverage. You're the gatekeeper — you choose who gets the opportunity.
-            </p>
+          <div className="h-1.5 rounded-full bg-white/[0.06] mb-3">
+            <div className="h-1.5 rounded-full bg-emerald-500/40" style={{ width: '100%' }} />
           </div>
-        </div>
-
-        {/* Step 3: Enrichment */}
-        <h3>Step 3: Enrichment (find the decision-maker)</h3>
-        <p>
-          Before you can send, you need the decision-maker's email. Click "Enrich" and the system finds them.
-        </p>
-
-        <div className="my-6 p-5 rounded-xl bg-gradient-to-br from-cyan-500/[0.08] to-cyan-500/[0.02] border border-cyan-500/20">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="w-12 h-12 rounded-xl bg-cyan-500/20 flex items-center justify-center">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400">
-                <circle cx="11" cy="11" r="8"/>
-                <path d="M21 21l-4.35-4.35"/>
-              </svg>
-            </div>
-            <div>
-              <div className="text-[14px] font-medium text-white">Enrichment Process</div>
-              <div className="text-[12px] text-white/50">Apollo → Anymail Finder → Verified email</div>
-            </div>
-          </div>
-
           <div className="grid grid-cols-4 gap-3">
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[18px] mb-1">🏢</div>
-              <div className="text-[10px] text-white/40">Domain</div>
-              <div className="text-[11px] text-white/70">techcorp.com</div>
+            <div className="text-center">
+              <div className="text-[14px] font-medium text-emerald-400/60">248</div>
+              <div className="text-[10px] text-white/30">Pass</div>
             </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[18px] mb-1">🔍</div>
-              <div className="text-[10px] text-white/40">Finding</div>
-              <div className="text-[11px] text-white/70">VP Engineering</div>
+            <div className="text-center">
+              <div className="text-[14px] font-medium text-white/50">412</div>
+              <div className="text-[10px] text-white/30">Marginal</div>
             </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[18px] mb-1">👤</div>
-              <div className="text-[10px] text-white/40">Found</div>
-              <div className="text-[11px] text-white/70">John Smith</div>
+            <div className="text-center">
+              <div className="text-[14px] font-medium text-white/30">1,334</div>
+              <div className="text-[10px] text-white/30">Quarantine</div>
             </div>
-            <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-center">
-              <div className="text-[18px] mb-1">✉️</div>
-              <div className="text-[10px] text-emerald-400/70">Email</div>
-              <div className="text-[11px] text-emerald-400">j.smith@...</div>
+            <div className="text-center">
+              <div className="text-[14px] font-medium text-white/20">46</div>
+              <div className="text-[10px] text-white/30">Vetoed</div>
             </div>
           </div>
         </div>
 
-        {/* Step 4: Send */}
-        <h3>Step 4: Send (dual intro)</h3>
+        {/* Step 3 */}
+        <h3>Step 3: Review matches</h3>
         <p>
-          Once enriched, you can send. The system generates <strong>two canonical intros</strong> — one for each side. Every intro follows the same structure, enforced by 169 tests.
+          When the run completes, click into it. Matches appear grouped by demand company, sorted by combined score. Each match card shows the framing — a one-line pitch angle — the fit and timing scores, and the AI&rsquo;s classification. Expand any card to read the full reasoning: two to three sentences explaining why this specific pair works right now.
+        </p>
+        <p>
+          You can fetch company intelligence inline — description, pain points, competitors, ICP — from the detail panel without leaving the page. This context helps you decide which pairs to route and which to skip.
         </p>
 
-        <div className="my-6 grid grid-cols-2 gap-4">
-          <div className="p-5 rounded-xl bg-blue-500/[0.08] border border-blue-500/20">
-            <div className="text-[12px] font-medium text-blue-400 mb-3">→ TO DEMAND</div>
-            <div className="p-3 rounded-lg bg-black/30 border border-white/[0.06] text-[12px] text-white/60 font-mono">
-              Hey John — quick relevance check. I'm connecting biotech companies with teams in the same space. TechCorp came up as a clean fit. I can make the intro if it's useful — if not, no worries.
-            </div>
-            <div className="text-[11px] text-white/40 mt-3">Sent to the decision-maker at the company with the signal</div>
+        {/* Match Card Mock */}
+        <div className="my-6 p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="text-[11px] text-white/60 italic mb-2">&ldquo;Acme&rsquo;s DevOps expansion aligns with Terminal&rsquo;s post-Series B placement track record&rdquo;</div>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-[12px] text-white/70">Acme Corp</span>
+            <span className="text-white/20">&rarr;</span>
+            <span className="text-[12px] text-white/70">Terminal</span>
+            <span className="ml-auto text-[11px] font-mono text-emerald-400/60">0.84</span>
           </div>
-
-          <div className="p-5 rounded-xl bg-purple-500/[0.08] border border-purple-500/20">
-            <div className="text-[12px] font-medium text-purple-400 mb-3">→ TO SUPPLY</div>
-            <div className="p-3 rounded-lg bg-black/30 border border-white/[0.06] text-[12px] text-white/60 font-mono">
-              Hey Sarah — got a lead. TechCorp is scaling their engineering team. John Smith is running point. Worth a look?
-            </div>
-            <div className="text-[11px] text-white/40 mt-3">Sent to the provider who can fulfill the need</div>
+          <div className="flex gap-2">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400/60">PASS</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-white/[0.04] text-white/40">fit: 0.91</span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-white/[0.04] text-white/40">timing: 0.73</span>
           </div>
         </div>
 
-        {/* Copy doctrine callout */}
-        <div className="my-6 p-4 rounded-xl bg-violet-500/[0.06] border border-violet-500/20">
-          <div className="flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center shrink-0">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-            </div>
-            <div>
-              <div className="text-[13px] font-medium text-white/80 mb-1">Copy infrastructure</div>
-              <p className="text-[12px] text-white/50 m-0">
-                No timing claims without evidence. No "moving fast" without presignal data. The system makes zero claims it can't prove. One file. 169 tests. Zero divergence.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20 my-6">
-          <p className="text-[13px] text-emerald-400/80 m-0 text-center">
-            <strong>Whoever replies first reveals timing.</strong> You route based on who's ready.
-          </p>
-        </div>
-
-        {/* Daily Limits */}
-        <h3>Sending limits & control</h3>
+        {/* Step 4 */}
+        <h3>Step 4: Compose introductions</h3>
         <p>
-          You control how much you send. Set your own daily target and batch size.
+          Navigate to Send. Write one reference introduction by hand for your strongest match — the supply intro and the demand intro. The compose engine analyzes your voice, structure, and style, then generates new introductions for every remaining match using that match&rsquo;s specific context: the signal, the framing, and the reasoning from the evaluation.
+        </p>
+        <p>
+          The system separates style from context. Your reference intro is the training data. The output sounds like you wrote each one individually because the AI decomposes your reference and rebuilds per pair — it does not fill a template.
         </p>
 
-        <div className="my-6 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] text-center">
-              <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Daily target</div>
-              <div className="text-[24px] font-bold text-white/80">50 – 1,000</div>
-              <div className="text-[11px] text-white/40 mt-1">You set the goal</div>
-            </div>
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] text-center">
-              <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Batch size</div>
-              <div className="text-[24px] font-bold text-white/80">1 – 500</div>
-              <div className="text-[11px] text-white/40 mt-1">Per send action</div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
-              <span className="text-[12px] text-white/60">You pick which matches to send</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
-              <span className="text-[12px] text-white/60">Adjust batch size up or down anytime</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
-              <span className="text-[12px] text-white/60">Only approved matches go out</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
-              <span className="text-[12px] text-white/60">Skip days if needed — no pressure</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Real Scenarios */}
-        <h3>Real scenarios</h3>
-
-        {/* Scenario 1 */}
-        <div className="my-6 p-6 rounded-2xl bg-gradient-to-br from-blue-500/[0.06] to-blue-500/[0.02] border border-blue-500/20">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-              <span className="text-[14px]">1️⃣</span>
-            </div>
-            <div className="text-[14px] font-medium text-white">Scenario: Hiring Signal</div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400 font-medium shrink-0 mt-0.5">1</div>
-              <div>
-                <div className="text-[12px] text-white/70">Signal appears: "Acme Corp hiring 8 DevOps engineers"</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400 font-medium shrink-0 mt-0.5">2</div>
-              <div>
-                <div className="text-[12px] text-white/70">You click it. Supply shows: Terminal (91%), Andela (88%), Toptal (85%)</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400 font-medium shrink-0 mt-0.5">3</div>
-              <div>
-                <div className="text-[12px] text-white/70">You pick Terminal (best for DevOps)</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400 font-medium shrink-0 mt-0.5">4</div>
-              <div>
-                <div className="text-[12px] text-white/70">Click Enrich → System finds VP of Eng: "Mike Chen, mike@acmecorp.com"</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-medium shrink-0 mt-0.5">5</div>
-              <div>
-                <div className="text-[12px] text-white/70">Click Send → Two intros go out</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[11px] text-white/40">Outcome:</div>
-            <div className="text-[12px] text-white/60 mt-1">Mike replies "interested, let's talk" → You connect him with Terminal → Deal closes</div>
-          </div>
-        </div>
-
-        {/* Scenario 2 */}
-        <div className="my-6 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/[0.06] to-emerald-500/[0.02] border border-emerald-500/20">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-              <span className="text-[14px]">2️⃣</span>
-            </div>
-            <div className="text-[14px] font-medium text-white">Scenario: Funding Signal</div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-medium shrink-0 mt-0.5">1</div>
-              <div>
-                <div className="text-[12px] text-white/70">Signal: "Startup XYZ raised $15M Series A"</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-medium shrink-0 mt-0.5">2</div>
-              <div>
-                <div className="text-[12px] text-white/70">Funding = they'll need to hire fast</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-medium shrink-0 mt-0.5">3</div>
-              <div>
-                <div className="text-[12px] text-white/70">You match them with a recruiting partner who scales startups post-funding</div>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-medium shrink-0 mt-0.5">4</div>
-              <div>
-                <div className="text-[12px] text-white/70">Enrich → Find CEO's email → Send</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[11px] text-white/40">Outcome:</div>
-            <div className="text-[12px] text-white/60 mt-1">CEO replies "perfect timing, we're about to start hiring" → You make the intro → Commission earned</div>
-          </div>
-        </div>
-
-        {/* Scenario 3: Neither replies */}
-        <div className="my-6 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-              <span className="text-[14px]">3️⃣</span>
-            </div>
-            <div className="text-[14px] font-medium text-white">Scenario: Neither Replies</div>
-          </div>
-
-          <p className="text-[12px] text-white/50 mb-4">
-            Not every send converts. That's expected. Here's what happens:
-          </p>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[11px] text-white/40 mb-1">You sent</div>
-              <div className="text-[14px] text-white/60">2 intros</div>
-            </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[11px] text-white/40 mb-1">No reply</div>
-              <div className="text-[14px] text-white/60">Move on</div>
-            </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[11px] text-white/40 mb-1">You lost</div>
-              <div className="text-[14px] text-white/60">Nothing</div>
-            </div>
-          </div>
-
-          <p className="text-[12px] text-white/40 mt-4 mb-0">
-            No exposure. No chasing. No wasted time. Just rotate to the next signal.
-          </p>
-        </div>
-
-        {/* The Doctrine Reminder */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border border-amber-500/20">
-          <h3 className="mt-0 mb-4 text-[16px] text-amber-400/90">Remember the doctrine</h3>
-          <div className="space-y-3">
-            <div className="flex items-start gap-3">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0 mt-0.5">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              <div className="text-[13px] text-white/60">
-                <strong className="text-white/80">Interest ≠ Readiness.</strong> Just because they reply doesn't mean they're ready. You control when they meet.
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0 mt-0.5">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              <div className="text-[13px] text-white/60">
-                <strong className="text-white/80">Never reveal position.</strong> Don't say "they're ready" or "just waiting on you." You route when timing aligns.
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0 mt-0.5">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              <div className="text-[13px] text-white/60">
-                <strong className="text-white/80">You're the axis.</strong> Both sides need you. You're not selling — you're connecting potential when timing agrees.
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* Step 5 */}
+        <h3>Step 5: Send</h3>
+        <p>
+          Review the generated intros. Approve or edit any you want to adjust. Hit send. Introductions route through your configured sender — Instantly or PlusVibe — with your API keys and campaign IDs. The system never touches your sender credentials outside of the send action.
+        </p>
 
         {/* Quick Reference */}
         <h3>Quick reference</h3>
@@ -1136,34 +1076,36 @@ const sections: DocSection[] = [
           <table className="w-full text-[12px]">
             <thead>
               <tr>
-                <th className="text-left p-3 bg-white/[0.02] border-b border-white/[0.06] text-white/40 font-medium">Action</th>
+                <th className="text-left p-3 bg-white/[0.02] border-b border-white/[0.06] text-white/40 font-medium">Step</th>
                 <th className="text-left p-3 bg-white/[0.02] border-b border-white/[0.06] text-white/40 font-medium">What happens</th>
+                <th className="text-left p-3 bg-white/[0.02] border-b border-white/[0.06] text-white/40 font-medium">Output</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td className="p-3 border-b border-white/[0.04] text-white/60">Click demand company</td>
-                <td className="p-3 border-b border-white/[0.04] text-white/50">Supply options appear on right</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/60">Market</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/50">Select demand + supply sources</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/40">Canonical intents</td>
               </tr>
               <tr>
-                <td className="p-3 border-b border-white/[0.04] text-white/60">Select supply</td>
-                <td className="p-3 border-b border-white/[0.04] text-white/50">Match is created</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/60">Evaluate</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/50">AI scores every pair</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/40">Scored evaluations</td>
               </tr>
               <tr>
-                <td className="p-3 border-b border-white/[0.04] text-white/60">Click Enrich</td>
-                <td className="p-3 border-b border-white/[0.04] text-white/50">System finds decision-maker email</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/60">Review</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/50">Read reasoning, check intel</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/40">Approved pairs</td>
               </tr>
               <tr>
-                <td className="p-3 border-b border-white/[0.04] text-white/60">Click Send</td>
-                <td className="p-3 border-b border-white/[0.04] text-white/50">Two intros go out (demand + supply)</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/60">Compose</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/50">Write one, system clones all</td>
+                <td className="p-3 border-b border-white/[0.04] text-white/40">Draft intros</td>
               </tr>
               <tr>
-                <td className="p-3 border-b border-white/[0.04] text-white/60">Reply comes in</td>
-                <td className="p-3 border-b border-white/[0.04] text-white/50">System classifies → you decide next step</td>
-              </tr>
-              <tr>
-                <td className="p-3 text-white/60">Both interested</td>
-                <td className="p-3 text-white/50">You make the intro → deal closes</td>
+                <td className="p-3 text-white/60">Send</td>
+                <td className="p-3 text-white/50">Route through your sender</td>
+                <td className="p-3 text-white/40">Delivered intros</td>
               </tr>
             </tbody>
           </table>
@@ -1185,10 +1127,10 @@ const sections: DocSection[] = [
 
         {/* Signal Types Visual */}
         <div className="grid grid-cols-2 gap-3 my-8">
-          <div className="p-4 rounded-xl bg-blue-500/[0.08] border border-blue-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50">
                   <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                   <circle cx="8.5" cy="7" r="4"/>
                   <path d="M20 8v6M23 11h-6"/>
@@ -1199,10 +1141,10 @@ const sections: DocSection[] = [
             <p className="text-[12px] text-white/50 m-0">Teams scaling, roles opening, urgency building</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.08] border border-emerald-500/20">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+              <div className="w-8 h-8 rounded bg-emerald-500/20 flex items-center justify-center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400/60">
                   <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
                 </svg>
               </div>
@@ -1211,10 +1153,10 @@ const sections: DocSection[] = [
             <p className="text-[12px] text-white/50 m-0">Capital raised means money to spend</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-purple-500/[0.08] border border-purple-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400">
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50">
                   <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                   <circle cx="9" cy="7" r="4"/>
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -1225,10 +1167,10 @@ const sections: DocSection[] = [
             <p className="text-[12px] text-white/50 m-0">New executives bring new initiatives</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50">
                   <path d="M23 6l-9.5 9.5-5-5L1 18"/>
                   <path d="M17 6h6v6"/>
                 </svg>
@@ -1245,14 +1187,14 @@ const sections: DocSection[] = [
         </p>
 
         {/* Timing Visual */}
-        <div className="my-8 p-5 rounded-xl bg-gradient-to-r from-red-500/[0.08] via-amber-500/[0.08] to-emerald-500/[0.08] border border-white/[0.08]">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] text-red-400/80">Yesterday</span>
-            <span className="text-[11px] text-amber-400/80 font-medium">Today</span>
-            <span className="text-[11px] text-emerald-400/80">Next month</span>
+            <span className="text-[11px] text-white/40">Yesterday</span>
+            <span className="text-[11px] text-white/50 font-medium">Today</span>
+            <span className="text-[11px] text-emerald-400/60/80">Next month</span>
           </div>
-          <div className="h-2 rounded-full bg-gradient-to-r from-red-500/20 via-amber-500/40 to-emerald-500/20 relative">
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-amber-400 rounded-full shadow-lg shadow-amber-500/50"/>
+          <div className="h-2 rounded-full bg-white/[0.06] relative">
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-white/40 rounded-full shadow-lg shadow-white/10"/>
           </div>
           <p className="text-[12px] text-white/50 text-center mt-3 mb-0">
             The window is narrow. The system catches it while it's open.
@@ -1269,112 +1211,92 @@ const sections: DocSection[] = [
     content: (
       <article>
         <p className="lead">
-          For every need, there's someone who solves it. The system finds both. You decide if they meet.
+          MCP evaluates every demand-supply pair across two dimensions — fit and timing — and produces written reasoning explaining why the pair works. You review the reasoning. The AI does not decide who gets introduced.
         </p>
 
-        {/* Matching Flow Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-purple-500/[0.08] to-purple-500/[0.02] border border-purple-500/20">
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <div className="w-16 h-16 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-3">
-                <span className="text-[24px]">🏢</span>
-              </div>
-              <div className="text-[13px] font-medium text-white text-center">Demand</div>
-              <div className="text-[11px] text-white/40 text-center">Has a need</div>
-            </div>
-
-            <div className="flex-1 flex flex-col items-center px-4">
-              <div className="w-full h-px bg-gradient-to-r from-blue-500/50 via-purple-500 to-emerald-500/50 mb-3"/>
-              <div className="px-4 py-2 rounded-xl bg-purple-500/20 border border-purple-500/30">
-                <div className="text-[12px] font-medium text-purple-300">Match Score</div>
-                <div className="text-[18px] font-bold text-white text-center">87%</div>
-              </div>
-              <div className="w-full h-px bg-gradient-to-r from-blue-500/50 via-purple-500 to-emerald-500/50 mt-3"/>
-            </div>
-
-            <div className="flex-1">
-              <div className="w-16 h-16 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-3">
-                <span className="text-[24px]">👤</span>
-              </div>
-              <div className="text-[13px] font-medium text-white text-center">Supply</div>
-              <div className="text-[11px] text-white/40 text-center">Solves it</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Scoring Factors - matches SignalQualityScorer */}
-        <div className="grid grid-cols-4 gap-2 my-6">
-          <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06] text-center">
-            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Persistence</div>
-            <div className="text-[13px] text-white/70">0-30</div>
-            <div className="text-[10px] text-white/30 mt-1">How long unfilled</div>
-          </div>
-          <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06] text-center">
-            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Density</div>
-            <div className="text-[13px] text-white/70">0-30</div>
-            <div className="text-[10px] text-white/30 mt-1">Signal volume</div>
-          </div>
-          <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06] text-center">
-            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Velocity</div>
-            <div className="text-[13px] text-white/70">0-20</div>
-            <div className="text-[10px] text-white/30 mt-1">Accelerating</div>
-          </div>
-          <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06] text-center">
-            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Stacking</div>
-            <div className="text-[13px] text-white/70">0-20</div>
-            <div className="text-[10px] text-white/30 mt-1">Multiple types</div>
-          </div>
-        </div>
-
-        {/* Signal Quality Tiers */}
-        <div className="my-8">
-          <h3>Signal quality tiers</h3>
-          <p className="text-[13px] text-white/50">
-            Every signal gets scored based on persistence, density, velocity, and stacking. Higher scores mean stronger timing.
-          </p>
-
-          <div className="grid grid-cols-3 gap-3 mt-4">
-            <div className="p-4 rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 text-center">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center mx-auto mb-2">
-                <span className="text-emerald-400 font-bold text-[14px]">A</span>
-              </div>
-              <div className="text-[13px] font-medium text-emerald-300">Strong</div>
-              <div className="text-[11px] text-white/40 mt-1">Score 70+</div>
-              <div className="text-[11px] text-white/30 mt-2">Multiple indicators, timing is now</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-blue-500/[0.08] border border-blue-500/20 text-center">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center mx-auto mb-2">
-                <span className="text-blue-400 font-bold text-[14px]">B</span>
-              </div>
-              <div className="text-[13px] font-medium text-blue-300">Good</div>
-              <div className="text-[11px] text-white/40 mt-1">Score 45-69</div>
-              <div className="text-[11px] text-white/30 mt-2">Solid indicators, momentum forming</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/[0.04] border border-white/[0.08] text-center">
-              <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center mx-auto mb-2">
-                <span className="text-white/60 font-bold text-[14px]">C</span>
-              </div>
-              <div className="text-[13px] font-medium text-white/60">Medium</div>
-              <div className="text-[11px] text-white/40 mt-1">Score &lt;45</div>
-              <div className="text-[11px] text-white/30 mt-2">Early signs, worth exploring</div>
-            </div>
-          </div>
-
-          <p className="text-[12px] text-white/40 mt-4 text-center">
-            Reach out to all three tiers — timing varies, potential doesn't.
-          </p>
-        </div>
-
-        <h3>What you decide</h3>
+        {/* Scoring Dimensions */}
+        <h3>How pairs are scored</h3>
         <p>
-          The system suggests. You approve. Some matches are obvious — route them immediately. Some need judgment — wait, gather more context, or skip entirely. You control the gate.
+          Each pair receives two scores between 0 and 1. <strong>Fit</strong> measures how well the supply&rsquo;s offering addresses the demand&rsquo;s need. <strong>Timing</strong> measures how urgent the signal is — whether the company is actively hiring, recently funded, or showing speculative early indicators.
+        </p>
+        <p>
+          The combined score is computed server-side: <code>0.6 &times; fit + 0.4 &times; timing</code>. The server computes this, never the AI — arithmetic is not a language model&rsquo;s job.
         </p>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-transparent border border-emerald-500/20 mt-6">
-          <p className="text-[13px] text-emerald-400/80 m-0 text-center">
-            No other tool connects demand to supply with timing. This is the difference.
+        <div className="grid grid-cols-2 gap-3 my-6">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Fit</div>
+            <div className="text-[18px] font-medium text-white/70">0 &ndash; 1</div>
+            <div className="text-[10px] text-white/30 mt-1">Does the supply solve what the demand needs?</div>
+          </div>
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Timing</div>
+            <div className="text-[18px] font-medium text-white/70">0 &ndash; 1</div>
+            <div className="text-[10px] text-white/30 mt-1">Is something happening right now that makes this urgent?</div>
+          </div>
+        </div>
+
+        {/* Classification Tiers */}
+        <h3>Classification</h3>
+        <p>
+          The combined score determines classification. These tiers control what the operator sees first, not what gets discarded — the system ranks, it does not gate.
+        </p>
+
+        <div className="grid grid-cols-4 gap-2 my-6">
+          <div className="p-3 rounded bg-emerald-500/[0.08] border border-emerald-500/20 text-center">
+            <div className="text-[13px] font-medium text-emerald-400/60">Pass</div>
+            <div className="text-[11px] text-white/40 mt-1">&ge; 0.50</div>
+            <div className="text-[10px] text-white/30 mt-2">Strong fit + timing</div>
+          </div>
+          <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="text-[13px] font-medium text-white/50">Marginal</div>
+            <div className="text-[11px] text-white/40 mt-1">0.30 &ndash; 0.49</div>
+            <div className="text-[10px] text-white/30 mt-2">Partial alignment</div>
+          </div>
+          <div className="p-3 rounded bg-white/[0.04] border border-white/[0.08] text-center">
+            <div className="text-[13px] font-medium text-white/40">Quarantine</div>
+            <div className="text-[11px] text-white/40 mt-1">&lt; 0.30</div>
+            <div className="text-[10px] text-white/30 mt-2">Weak signal</div>
+          </div>
+          <div className="p-3 rounded bg-red-500/[0.06] border border-red-500/20 text-center">
+            <div className="text-[13px] font-medium text-red-400/60">Vetoed</div>
+            <div className="text-[11px] text-white/40 mt-1">Flagged</div>
+            <div className="text-[10px] text-white/30 mt-2">Competitor or nonsensical</div>
+          </div>
+        </div>
+
+        {/* Reasoning */}
+        <h3>Reasoning</h3>
+        <p>
+          Every scored pair gets written reasoning — two to three sentences naming both companies and explaining the connection. It also gets a framing line: a 20-word-or-less pitch angle that becomes the opening of the introduction if you route the pair.
+        </p>
+
+        <div className="my-6 p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-2">Example reasoning</div>
+          <p className="text-[11px] font-mono text-white/50 italic m-0 leading-[1.8]">
+            &ldquo;Acme Corp is scaling its DevOps team with 8 open roles, suggesting infrastructure investment that typically follows Series B growth. Terminal specializes in placing senior engineers at exactly this stage. The timing aligns because Acme&rsquo;s hiring velocity has accelerated over the past 30 days.&rdquo;
+          </p>
+        </div>
+
+        <div className="my-6 p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+          <div className="text-[9px] font-mono text-white/25 uppercase tracking-[0.08em] mb-2">Example framing</div>
+          <p className="text-[11px] font-mono text-white/50 italic m-0">
+            &ldquo;Acme&rsquo;s DevOps expansion aligns with Terminal&rsquo;s post-Series B placement track record&rdquo;
+          </p>
+        </div>
+
+        {/* Infrastructure */}
+        <h3>Infrastructure</h3>
+        <p>
+          MCP dispatches shards to QStash with parallelism of 10. The primary AI provider runs at roughly 2,900 tokens per second. If it fails, the system falls back to a second provider at 500 tokens per second, then to Azure GPT-4o. Retries happen at the queue level, not inside the scoring function — a failed shard gets redelivered by QStash, not retried in a loop.
+        </p>
+        <p>
+          Results stream to the browser via Supabase Realtime. You do not poll. You do not refresh. Matches appear as they complete.
+        </p>
+
+        <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.12] mt-6">
+          <p className="text-[11px] font-mono text-emerald-400/60 m-0 leading-[1.8]">
+            The evaluation layer proposes. You dispose. Evaluations never route introductions directly — they produce recommendations. The separation between scoring and sending is what prevents the AI from becoming a spam engine.
           </p>
         </div>
       </article>
@@ -1393,33 +1315,33 @@ const sections: DocSection[] = [
 
         {/* Reply Classification Visual */}
         <div className="my-8 space-y-3">
-          <div className="p-4 rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+          <div className="p-4 rounded bg-emerald-500/[0.08] border border-emerald-500/20 flex items-center gap-4">
+            <div className="w-10 h-10 rounded bg-emerald-500/20 flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400/60">
                 <path d="M20 6L9 17l-5-5"/>
               </svg>
             </div>
             <div className="flex-1">
-              <div className="text-[13px] font-medium text-emerald-300">Positive</div>
+              <div className="text-[13px] font-medium text-emerald-400/60">Positive</div>
               <div className="text-[12px] text-white/50">"Yes, I'm interested" → Auto follow-up sent</div>
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.08] border border-amber-500/20 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] flex items-center gap-4">
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50">
                 <circle cx="12" cy="12" r="10"/>
                 <path d="M12 16v-4M12 8h.01"/>
               </svg>
             </div>
             <div className="flex-1">
-              <div className="text-[13px] font-medium text-amber-300">Needs Review</div>
+              <div className="text-[13px] font-medium text-white/50">Needs Review</div>
               <div className="text-[12px] text-white/50">Questions, pricing, objections → Waiting for you</div>
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] flex items-center gap-4">
+            <div className="w-10 h-10 rounded bg-white/10 flex items-center justify-center shrink-0">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/40">
                 <path d="M18 6L6 18M6 6l12 12"/>
               </svg>
@@ -1433,13 +1355,13 @@ const sections: DocSection[] = [
 
         <h3>What the system never says</h3>
         <div className="grid grid-cols-1 gap-2 mt-4">
-          <div className="p-3 rounded-lg bg-red-500/[0.06] border border-red-500/20 text-[12px] text-red-300/70">
+          <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-[12px] text-white/40">
             ✗ "I'll check and get back to you"
           </div>
-          <div className="p-3 rounded-lg bg-red-500/[0.06] border border-red-500/20 text-[12px] text-red-300/70">
+          <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-[12px] text-white/40">
             ✗ "They're ready to go"
           </div>
-          <div className="p-3 rounded-lg bg-red-500/[0.06] border border-red-500/20 text-[12px] text-red-300/70">
+          <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-[12px] text-white/40">
             ✗ "Just waiting on the other side"
           </div>
         </div>
@@ -1457,54 +1379,79 @@ const sections: DocSection[] = [
     content: (
       <article>
         <p className="lead">
-          One click. The intro goes. You're not selling — you're routing interest to where it belongs.
+          The compose engine turns one handwritten introduction into introductions for every remaining match. You write once. The system reconstructs per pair, using each match&rsquo;s specific signal, framing, and reasoning.
         </p>
 
-        {/* Routing Steps Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
+        {/* How it works */}
+        <h3>The reference intro</h3>
+        <p>
+          Pick your strongest match. Write the supply intro and the demand intro by hand — exactly how you would if you were sending one email to one person. This is the reference pair. The system treats it as training data.
+        </p>
+
+        {/* Reference → Clone visual */}
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="space-y-4">
             <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-[13px] font-medium text-blue-400">1</div>
+              <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-[13px] font-medium text-emerald-400/60">1</div>
               <div className="flex-1">
-                <div className="text-[13px] text-white/80">Match appears</div>
-                <div className="text-[11px] text-white/40">Scored and ready</div>
+                <div className="text-[13px] text-white/80">You write one perfect intro pair</div>
+                <div className="text-[11px] text-white/40">Your voice, your structure, your judgment</div>
               </div>
             </div>
             <div className="ml-4 border-l border-white/[0.08] h-4"/>
             <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-[13px] font-medium text-purple-400">2</div>
+              <div className="w-8 h-8 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-[13px] font-medium text-white/50">2</div>
               <div className="flex-1">
-                <div className="text-[13px] text-white/80">You approve</div>
-                <div className="text-[11px] text-white/40">One click</div>
+                <div className="text-[13px] text-white/80">AI analyzes the reference</div>
+                <div className="text-[11px] text-white/40">Infers voice, sentence rhythm, structural pattern</div>
               </div>
             </div>
             <div className="ml-4 border-l border-white/[0.08] h-4"/>
             <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[13px] font-medium text-amber-400">3</div>
+              <div className="w-8 h-8 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-[13px] font-medium text-white/50">3</div>
               <div className="flex-1">
-                <div className="text-[13px] text-white/80">System enriches</div>
-                <div className="text-[11px] text-white/40">Decision-maker found</div>
-              </div>
-            </div>
-            <div className="ml-4 border-l border-white/[0.08] h-4"/>
-            <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-[13px] font-medium text-emerald-400">4</div>
-              <div className="flex-1">
-                <div className="text-[13px] text-white/80">Intro sent</div>
-                <div className="text-[11px] text-white/40">You move on</div>
+                <div className="text-[13px] text-white/80">Reconstructs per match</div>
+                <div className="text-[11px] text-white/40">Same style + new context (signal, framing, reasoning)</div>
               </div>
             </div>
           </div>
         </div>
 
-        <h3>What you write</h3>
+        <h3>Style vs context</h3>
         <p>
-          Nothing — unless you want to. The system generates intros based on the match. Specific to the signal. Specific to the person. Not templates. Not mail merge. Contextual.
+          The compose engine separates what&rsquo;s reusable from what&rsquo;s specific. Your sentence structure, tone, and rhythm are <strong>style</strong> — they transfer across every match. The signal, the company names, the framing line, and the reasoning are <strong>context</strong> — they change per pair. The AI does not fill a template. It decomposes the reference and rebuilds from context.
         </p>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/[0.06] mt-6">
-          <p className="text-[14px] text-white/60 italic m-0 text-center">
-            "The intro is the product. Everything else is delivery."
+        {/* Two modes */}
+        <h3>Two modes</h3>
+        <div className="grid grid-cols-2 gap-3 my-6">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+            <div className="text-[12px] font-medium text-white/70 mb-2">Market routing</div>
+            <p className="text-[11px] text-white/40 m-0">
+              Both sides are strangers. The system generates a supply intro and a demand intro for each pair. Both get outreach simultaneously.
+            </p>
+          </div>
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+            <div className="text-[12px] font-medium text-white/70 mb-2">Fulfillment</div>
+            <p className="text-[11px] text-white/40 m-0">
+              One side is your paying client. The system generates demand-only intros. The client&rsquo;s name never appears in AI output — the prompt describes their capability generically.
+            </p>
+          </div>
+        </div>
+
+        <h3>Deduplication</h3>
+        <p>
+          In fulfillment mode, the same demand contact may appear across multiple supply matches. The compose engine deduplicates at three layers: by demand key at the prompt level (one AI call per unique contact), by draft mapping (the single output maps back to all evaluation IDs sharing that key), and by email at send time (one message per unique address).
+        </p>
+
+        <h3>Sending</h3>
+        <p>
+          Introductions route through your configured sender — Instantly or PlusVibe — using your API keys and campaign IDs. The system does not store or touch your sender credentials outside the send action. If a workspace or provider mismatch is detected between the run and the current session, the send is blocked with an error explaining exactly what doesn&rsquo;t match.
+        </p>
+
+        <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.12] mt-6">
+          <p className="text-[11px] font-mono text-emerald-400/60 m-0 leading-[1.8]">
+            The product being sold is access and timing. The introduction is the delivery mechanism. This distinction matters — both sides of the market can commit independently because you sell access to operator infrastructure, not exclusive representation.
           </p>
         </div>
       </article>
@@ -1522,13 +1469,13 @@ const sections: DocSection[] = [
         </p>
 
         {/* Psyche Header */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-violet-500/[0.12] to-violet-500/[0.02] border border-violet-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center">
-              <span className="text-xl font-serif text-violet-400">Ψ</span>
+            <div className="w-12 h-12 rounded bg-white/[0.04] flex items-center justify-center">
+              <span className="text-xl font-serif text-white/50">Ψ</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">Psyche</div>
+              <div className="text-[16px] font-medium text-white">Psyche</div>
               <div className="text-[12px] text-white/50">The seven minds</div>
             </div>
           </div>
@@ -1540,7 +1487,7 @@ const sections: DocSection[] = [
         {/* The Seven Minds Pipeline */}
         <div className="my-8">
           <h3 className="flex items-center gap-2 mb-6">
-            <span className="text-sm font-serif text-violet-400">Ψ</span>
+            <span className="text-sm font-serif text-white/50">Ψ</span>
             The Seven Minds
           </h3>
 
@@ -1548,64 +1495,64 @@ const sections: DocSection[] = [
           <div className="grid grid-cols-7 gap-2 mb-6">
             {/* Animus */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center mb-2 relative">
-                <span className="text-[11px] font-bold text-violet-400">1</span>
-                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-violet-500/30" />
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-2 relative">
+                <span className="text-[11px] font-medium text-white/50">1</span>
+                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-white/[0.06]" />
               </div>
-              <span className="text-[10px] font-semibold text-violet-400">Animus</span>
+              <span className="text-[10px] font-medium text-white/50">Animus</span>
               <span className="text-[9px] text-white/30">Creator</span>
             </div>
             {/* Ego */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mb-2 relative">
-                <span className="text-[11px] font-bold text-emerald-400">2</span>
+              <div className="w-10 h-10 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mb-2 relative">
+                <span className="text-[11px] font-medium text-emerald-400/60">2</span>
                 <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-emerald-500/30" />
               </div>
-              <span className="text-[10px] font-semibold text-emerald-400">Ego</span>
+              <span className="text-[10px] font-medium text-emerald-400/60">Ego</span>
               <span className="text-[9px] text-white/30">Gatekeeper</span>
             </div>
             {/* Senex */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mb-2 relative">
-                <span className="text-[11px] font-bold text-amber-400">3</span>
-                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-amber-500/30" />
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-2 relative">
+                <span className="text-[11px] font-medium text-white/50">3</span>
+                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-white/[0.06]" />
               </div>
-              <span className="text-[10px] font-semibold text-amber-400">Senex</span>
+              <span className="text-[10px] font-medium text-white/50">Senex</span>
               <span className="text-[9px] text-white/30">Elder</span>
             </div>
             {/* Shadow */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center mb-2 relative">
-                <span className="text-[11px] font-bold text-red-400">4</span>
-                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-red-500/30" />
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-2 relative">
+                <span className="text-[11px] font-medium text-white/40">4</span>
+                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-white/[0.06]" />
               </div>
-              <span className="text-[10px] font-semibold text-red-400">Shadow</span>
+              <span className="text-[10px] font-medium text-white/40">Shadow</span>
               <span className="text-[9px] text-white/30">Mirror</span>
             </div>
             {/* Anima */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mb-2 relative">
-                <span className="text-[11px] font-bold text-cyan-400">5</span>
-                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-cyan-500/30" />
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-2 relative">
+                <span className="text-[11px] font-medium text-white/50">5</span>
+                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-white/[0.06]" />
               </div>
-              <span className="text-[10px] font-semibold text-cyan-400">Anima</span>
+              <span className="text-[10px] font-medium text-white/50">Anima</span>
               <span className="text-[9px] text-white/30">Weaver</span>
             </div>
             {/* Magician */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-fuchsia-500/20 border border-fuchsia-500/30 flex items-center justify-center mb-2 relative">
-                <span className="text-[11px] font-bold text-fuchsia-400">6</span>
-                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-fuchsia-500/30" />
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mb-2 relative">
+                <span className="text-[11px] font-medium text-white/50">6</span>
+                <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-2 h-[2px] bg-white/[0.06]" />
               </div>
-              <span className="text-[10px] font-semibold text-fuchsia-400">Magician</span>
+              <span className="text-[10px] font-medium text-white/50">Magician</span>
               <span className="text-[9px] text-white/30">Mover</span>
             </div>
             {/* Self */}
             <div className="flex flex-col items-center">
-              <div className="w-10 h-10 rounded-xl bg-white/20 border border-white/30 flex items-center justify-center mb-2">
-                <span className="text-[11px] font-bold text-white">7</span>
+              <div className="w-10 h-10 rounded bg-white/20 border border-white/30 flex items-center justify-center mb-2">
+                <span className="text-[11px] font-medium text-white">7</span>
               </div>
-              <span className="text-[10px] font-semibold text-white">Self</span>
+              <span className="text-[10px] font-medium text-white">Self</span>
               <span className="text-[9px] text-white/30">Whole</span>
             </div>
           </div>
@@ -1615,9 +1562,9 @@ const sections: DocSection[] = [
         <div className="my-8 space-y-3">
           <h3>What each mind does</h3>
 
-          <div className="p-4 rounded-xl bg-violet-500/[0.06] border border-violet-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center text-[11px] font-bold text-violet-400">1</span>
+              <span className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center text-[11px] font-medium text-white/50">1</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Animus — The Creator</div>
                 <div className="text-[12px] text-white/50">Generates the initial reply. Classification, tone, personalization.</div>
@@ -1625,9 +1572,9 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-[11px] font-bold text-emerald-400">2</span>
+              <span className="w-8 h-8 rounded bg-emerald-500/20 flex items-center justify-center text-[11px] font-medium text-emerald-400/60">2</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Ego — The Gatekeeper</div>
                 <div className="text-[12px] text-white/50">Quality check. Blocks anything that sounds desperate, generic, or salesy.</div>
@@ -1635,9 +1582,9 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center text-[11px] font-bold text-amber-400">3</span>
+              <span className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center text-[11px] font-medium text-white/50">3</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Senex — The Elder</div>
                 <div className="text-[12px] text-white/50">Doctrine guardian. Ensures leverage is maintained — never chase, never beg.</div>
@@ -1645,9 +1592,9 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-red-500/[0.06] border border-red-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center text-[11px] font-bold text-red-400">4</span>
+              <span className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center text-[11px] font-medium text-white/40">4</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Shadow — The Mirror</div>
                 <div className="text-[12px] text-white/50">Red team. Finds how the reply could be misread, ignored, or deleted.</div>
@@ -1655,9 +1602,9 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center text-[11px] font-bold text-cyan-400">5</span>
+              <span className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center text-[11px] font-medium text-white/50">5</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Anima — The Weaver</div>
                 <div className="text-[12px] text-white/50">Thread coherence. Checks that we're responding to what was actually said.</div>
@@ -1665,9 +1612,9 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-fuchsia-500/[0.06] border border-fuchsia-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-fuchsia-500/20 flex items-center justify-center text-[11px] font-bold text-fuchsia-400">6</span>
+              <span className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center text-[11px] font-medium text-white/50">6</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Magician — The Mover</div>
                 <div className="text-[12px] text-white/50">Deal momentum. Ensures every reply moves the conversation forward.</div>
@@ -1675,9 +1622,9 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.06] border border-white/20">
+          <div className="p-4 rounded bg-white/[0.06] border border-white/20">
             <div className="flex items-center gap-3">
-              <span className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-[11px] font-bold text-white">7</span>
+              <span className="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-[11px] font-medium text-white">7</span>
               <div className="flex-1">
                 <div className="text-[13px] font-medium text-white">Self — The Whole</div>
                 <div className="text-[12px] text-white/50">Integration. If composite score is below threshold, Self rewrites until it's right.</div>
@@ -1687,9 +1634,9 @@ const sections: DocSection[] = [
         </div>
 
         {/* Self-Correction Explainer */}
-        <div className="my-8 p-5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/[0.08]">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <h3 className="flex items-center gap-2 mt-0 mb-3">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400/60">
               <path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-9 9 9 9 0 0 0 9 9"/>
               <path d="M21 12l-4 4 4 4"/>
             </svg>
@@ -1700,30 +1647,30 @@ const sections: DocSection[] = [
             incorporating all feedback from previous layers. Up to 2 correction rounds before output.
           </p>
           <div className="grid grid-cols-4 gap-2">
-            <div className="p-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/20 text-center">
-              <div className="text-[11px] text-amber-400">Leverage</div>
-              <div className="text-[14px] font-semibold text-white mt-1">0-10</div>
+            <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+              <div className="text-[11px] text-white/50">Leverage</div>
+              <div className="text-[14px] font-medium text-white mt-1">0-10</div>
             </div>
-            <div className="p-3 rounded-lg bg-cyan-500/[0.08] border border-cyan-500/20 text-center">
-              <div className="text-[11px] text-cyan-400">Context</div>
-              <div className="text-[14px] font-semibold text-white mt-1">0-10</div>
+            <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+              <div className="text-[11px] text-white/50">Context</div>
+              <div className="text-[14px] font-medium text-white mt-1">0-10</div>
             </div>
-            <div className="p-3 rounded-lg bg-fuchsia-500/[0.08] border border-fuchsia-500/20 text-center">
-              <div className="text-[11px] text-fuchsia-400">Momentum</div>
-              <div className="text-[14px] font-semibold text-white mt-1">0-10</div>
+            <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+              <div className="text-[11px] text-white/50">Momentum</div>
+              <div className="text-[14px] font-medium text-white mt-1">0-10</div>
             </div>
-            <div className="p-3 rounded-lg bg-white/[0.08] border border-white/20 text-center">
+            <div className="p-3 rounded bg-white/[0.08] border border-white/20 text-center">
               <div className="text-[11px] text-white/60">Composite</div>
-              <div className="text-[14px] font-semibold text-white mt-1">0-10</div>
+              <div className="text-[14px] font-medium text-white mt-1">0-10</div>
             </div>
           </div>
         </div>
 
         {/* Tone Principles Visual */}
         <div className="my-8 grid grid-cols-3 gap-3">
-          <div className="p-4 rounded-xl bg-gradient-to-br from-blue-500/[0.08] to-blue-500/[0.02] border border-blue-500/20 text-center">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center mx-auto mb-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center mx-auto mb-3">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50">
                 <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z"/>
               </svg>
             </div>
@@ -1731,9 +1678,9 @@ const sections: DocSection[] = [
             <div className="text-[11px] text-white/40 mt-1">You're helping them</div>
           </div>
 
-          <div className="p-4 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-purple-500/[0.02] border border-purple-500/20 text-center">
-            <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center mx-auto mb-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center mx-auto mb-3">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/50">
                 <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
                 <path d="M22 4L12 14.01l-3-3"/>
               </svg>
@@ -1742,9 +1689,9 @@ const sections: DocSection[] = [
             <div className="text-[11px] text-white/40 mt-1">You filter, not chase</div>
           </div>
 
-          <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20 text-center">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center mx-auto mb-3">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="w-10 h-10 rounded bg-emerald-500/20 flex items-center justify-center mx-auto mb-3">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400/60">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
             </div>
@@ -1756,13 +1703,13 @@ const sections: DocSection[] = [
         {/* Energy Decay Visual */}
         <div className="my-8">
           <h3>Energy Decay</h3>
-          <div className="p-5 rounded-xl bg-gradient-to-r from-amber-500/[0.12] via-amber-500/[0.06] to-white/[0.02] border border-white/[0.08] mt-4">
+          <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] mt-4">
             <div className="flex items-center justify-between mb-4">
-              <span className="text-[11px] text-amber-400/80 font-medium">Early</span>
+              <span className="text-[11px] text-white/50 font-medium">Early</span>
               <span className="text-[11px] text-white/40">Message #5</span>
               <span className="text-[11px] text-white/30">Later</span>
             </div>
-            <div className="h-1.5 rounded-full bg-gradient-to-r from-amber-500/60 via-amber-500/30 to-white/10"/>
+            <div className="h-1.5 rounded-full bg-white/[0.06]"/>
             <div className="flex justify-between mt-3">
               <span className="text-[11px] text-white/50">Warm, explanatory</span>
               <span className="text-[11px] text-white/30">Efficient, just next step</span>
@@ -1774,238 +1721,11 @@ const sections: DocSection[] = [
         </div>
 
         {/* Philosophy Note */}
-        <div className="p-5 rounded-xl bg-gradient-to-br from-white/[0.03] to-transparent border border-white/[0.06] mt-6">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] mt-6">
           <p className="text-[14px] text-white/60 italic m-0 text-center">
             "The system just works. We don't show the machinery — only the magic."
           </p>
         </div>
-      </article>
-    ),
-  },
-  {
-    id: 'faq',
-    title: 'FAQ',
-    icon: <Compass size={16} />,
-    category: 'system',
-    content: (
-      <article>
-        <p className="lead">
-          Common questions, answered. Everything you need to know about how the system works.
-        </p>
-
-        {/* Token Protection Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-[15px] font-semibold text-white m-0">Token Protection</h3>
-              <p className="text-[13px] text-white/50 m-0">Your credits are safe. Always.</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3 mt-4">
-            <div className="p-3 rounded-xl bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[11px] text-emerald-400/80 uppercase tracking-wider mb-1">Memory</div>
-              <div className="text-[13px] text-white/70">Instant</div>
-            </div>
-            <div className="p-3 rounded-xl bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[11px] text-emerald-400/80 uppercase tracking-wider mb-1">Local</div>
-              <div className="text-[13px] text-white/70">30 min</div>
-            </div>
-            <div className="p-3 rounded-xl bg-black/20 border border-white/[0.06] text-center">
-              <div className="text-[11px] text-emerald-400/80 uppercase tracking-wider mb-1">Database</div>
-              <div className="text-[13px] text-white/70">Forever</div>
-            </div>
-          </div>
-
-          <p className="text-[13px] text-white/50 mt-4 mb-0">
-            Navigate away, close the browser, come back tomorrow. Your enriched data stays. No duplicate charges.
-          </p>
-        </div>
-
-        {/* Demand vs Supply Visual */}
-        <div className="my-8">
-          <h3 className="flex items-center gap-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M16 12l-4-4-4 4M12 16V8"/>
-            </svg>
-            Demand vs Supply
-          </h3>
-
-          <div className="grid grid-cols-2 gap-4 mt-4">
-            <div className="p-4 rounded-xl bg-blue-500/[0.08] border border-blue-500/20">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-                  </svg>
-                </div>
-                <span className="text-[14px] font-medium text-white">Demand</span>
-              </div>
-              <p className="text-[12px] text-white/50 m-0">
-                Companies with a need. Hiring, funding, expanding, scaling. You reach the decision-maker.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-purple-500/[0.08] border border-purple-500/20">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-purple-400">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
-                  </svg>
-                </div>
-                <span className="text-[14px] font-medium text-white">Supply</span>
-              </div>
-              <p className="text-[12px] text-white/50 m-0">
-                Providers who fulfill needs. Agencies, consultants, vendors. You connect them to opportunity.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Common Messages */}
-        <div className="my-8">
-          <h3 className="flex items-center gap-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 16v-4M12 8h.01"/>
-            </svg>
-            Message Guide
-          </h3>
-
-          <div className="space-y-3 mt-4">
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-start gap-4">
-              <div className="px-2 py-1 rounded-md bg-amber-500/10 text-amber-400 text-[11px] font-medium whitespace-nowrap">
-                No providers
-              </div>
-              <div>
-                <p className="text-[13px] text-white/70 m-0">Your supply doesn't match this category. Add providers who serve this vertical.</p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-start gap-4">
-              <div className="px-2 py-1 rounded-md bg-amber-500/10 text-amber-400 text-[11px] font-medium whitespace-nowrap">
-                No supply
-              </div>
-              <div>
-                <p className="text-[13px] text-white/70 m-0">No Supply dataset uploaded. Go to Settings → Data Sources.</p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-start gap-4">
-              <div className="px-2 py-1 rounded-md bg-white/10 text-white/50 text-[11px] font-medium whitespace-nowrap">
-                Not enriched
-              </div>
-              <div>
-                <p className="text-[13px] text-white/70 m-0">Click "Enrich" to find the decision-maker at this company.</p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-start gap-4">
-              <div className="px-2 py-1 rounded-md bg-white/10 text-white/50 text-[11px] font-medium whitespace-nowrap">
-                Waiting for data
-              </div>
-              <div>
-                <p className="text-[13px] text-white/70 m-0">No Demand dataset configured. Go to Settings → Data Sources.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Dual Send Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
-          <h3 className="flex items-center gap-2 mt-0">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/60">
-              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-            </svg>
-            Dual Send
-          </h3>
-
-          <div className="flex items-center justify-center gap-4 my-6">
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[18px]">🏢</span>
-              </div>
-              <div className="text-[11px] text-white/50">Demand</div>
-            </div>
-
-            <div className="flex-1 flex items-center justify-center">
-              <div className="h-px bg-gradient-to-r from-blue-500/50 via-white/20 to-purple-500/50 flex-1"/>
-              <div className="px-3 py-1 rounded-full bg-white/[0.06] border border-white/[0.1] text-[11px] text-white/60 mx-2">
-                You
-              </div>
-              <div className="h-px bg-gradient-to-r from-purple-500/50 via-white/20 to-blue-500/50 flex-1"/>
-            </div>
-
-            <div className="text-center">
-              <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[18px]">👤</span>
-              </div>
-              <div className="text-[11px] text-white/50">Supply</div>
-            </div>
-          </div>
-
-          <p className="text-[13px] text-white/50 text-center m-0">
-            Both sides get outreach. Whoever replies first reveals timing. You control the connection.
-          </p>
-        </div>
-
-        {/* Background Enrichment */}
-        <div className="my-8">
-          <h3 className="flex items-center gap-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
-            Background Processing
-          </h3>
-
-          <div className="p-4 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/20 mt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"/>
-              <span className="text-[13px] text-white/70">Enrichment runs in the background while you work.</span>
-            </div>
-            <p className="text-[12px] text-white/40 mt-2 mb-0">
-              Close the tab, grab coffee, come back. Completed work is saved. In-progress work resumes.
-            </p>
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="my-8">
-          <h3 className="flex items-center gap-2">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/60">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-            Account & Access
-          </h3>
-
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <div className="text-[13px] font-medium text-white mb-1">Reset Password</div>
-              <p className="text-[12px] text-white/40 m-0">
-                Logged in: Settings → Account<br/>
-                Logged out: "Forgot password?" on login
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
-              <div className="text-[13px] font-medium text-white mb-1">Request Access</div>
-              <p className="text-[12px] text-white/40 m-0">
-                SSM members: auto-approved<br/>
-                Others: reviewed by Saad
-              </p>
-            </div>
-          </div>
-        </div>
-
       </article>
     ),
   },
@@ -2025,17 +1745,17 @@ const sections: DocSection[] = [
         </p>
 
         {/* Hero Stats */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/[0.12] to-emerald-500/[0.02] border border-emerald-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="grid grid-cols-3 gap-4 text-center">
             <div>
-              <div className="text-[28px] font-bold text-emerald-400">$0</div>
+              <div className="text-[28px] font-medium text-emerald-400/60">$0</div>
               <div className="text-[11px] text-white/40">Starting point</div>
             </div>
             <div className="flex items-center justify-center">
               <div className="text-[20px] text-white/20">→</div>
             </div>
             <div>
-              <div className="text-[28px] font-bold text-emerald-400">$10,000+</div>
+              <div className="text-[28px] font-medium text-emerald-400/60">$10,000+</div>
               <div className="text-[11px] text-white/40">First retainer</div>
             </div>
           </div>
@@ -2059,7 +1779,7 @@ const sections: DocSection[] = [
           A few minutes from now, that intro could land. A week from now, you could be in rooms you didn't have language for six days ago.
         </p>
 
-        <div className="my-8 p-5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/[0.08]">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[14px] text-white/70 italic m-0 text-center">
             "Contrary to popular belief, this doesn't happen linearly. It happens exponentially. There are years where nothing happens — and then there are weeks, even days, where everything happens all at once."
           </p>
@@ -2073,7 +1793,7 @@ const sections: DocSection[] = [
           Entire companies have been built on nothing but connections and referrals.
         </p>
 
-        <div className="p-4 rounded-xl bg-amber-500/[0.08] border border-amber-500/20 my-6">
+        <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <p className="text-[13px] text-white/70 m-0 italic">
             "People have spent millions of words explaining something humans already do naturally."
           </p>
@@ -2100,34 +1820,34 @@ const sections: DocSection[] = [
               const section = document.getElementById('ouroboros-loop');
               if (section) section.scrollIntoView({ behavior: 'smooth' });
             }}
-            className="text-emerald-400 hover:text-emerald-300 underline underline-offset-4 transition-colors"
+            className="text-emerald-400/60 hover:text-emerald-400/60 underline underline-offset-4 transition-colors"
           >
             Go here now → The Ouroboros Loop
           </button>
         </p>
 
         {/* Progression Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="text-[10px] text-white/40 uppercase tracking-wider mb-4 text-center">The progression</div>
           <div className="flex items-center justify-between">
             <div className="text-center flex-1">
-              <div className="text-[18px] font-bold text-white/60">$40K</div>
+              <div className="text-[18px] font-medium text-white/60">$40K</div>
               <div className="text-[10px] text-white/30">Month 6</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="text-[18px] font-bold text-white/70">$123K</div>
+              <div className="text-[18px] font-medium text-white/70">$123K</div>
               <div className="text-[10px] text-white/30">Month 10</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="text-[18px] font-bold text-white/80">$186K</div>
+              <div className="text-[18px] font-medium text-white/80">$186K</div>
               <div className="text-[10px] text-white/30">Month 12</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="text-[18px] font-bold text-emerald-400">$1M+</div>
-              <div className="text-[10px] text-emerald-400/50">6 months later</div>
+              <div className="text-[18px] font-medium text-emerald-400/60">$1M+</div>
+              <div className="text-[10px] text-emerald-400/60/50">6 months later</div>
             </div>
           </div>
         </div>
@@ -2137,14 +1857,14 @@ const sections: DocSection[] = [
           Here's what I want you to understand before we go further:
         </p>
 
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="space-y-3 text-center">
             <div className="text-[15px] text-white/70">You don't get paid for the intro.</div>
             <div className="text-[15px] text-white/80">You get paid for the <strong className="text-white">ability</strong> to make intros whenever you want.</div>
             <div className="h-px bg-white/[0.08] my-4" />
-            <div className="text-[13px] text-white/50">That ability = <span className="text-emerald-400">Distribution</span></div>
-            <div className="text-[13px] text-white/50">Distribution = <span className="text-emerald-400">Monopoly</span></div>
-            <div className="text-[13px] text-white/50">Monopoly = <span className="text-emerald-400">Wealth</span></div>
+            <div className="text-[13px] text-white/50">That ability = <span className="text-emerald-400/60">Distribution</span></div>
+            <div className="text-[13px] text-white/50">Distribution = <span className="text-emerald-400/60">Monopoly</span></div>
+            <div className="text-[13px] text-white/50">Monopoly = <span className="text-emerald-400/60">Wealth</span></div>
           </div>
         </div>
 
@@ -2181,7 +1901,7 @@ const sections: DocSection[] = [
           So why do you second-guess whether you deserve $10,000 for facilitating a deal that could make someone millions?
         </p>
 
-        <div className="my-8 p-5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[13px] text-white/70 m-0">
             Some of the dumbest people on earth are printing cash right now — selling bath water, selling bottled air, selling rocks. And you're hesitating to ask for $10,000 for connecting two parties who both benefit?
           </p>
@@ -2201,19 +1921,19 @@ const sections: DocSection[] = [
           I had this too. I was a bouncer. Then a freelancer doing $500 gigs on random automations. Then controlling and routing deals for million-dollar companies.
         </p>
 
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-violet-500/[0.08] to-violet-500/[0.02] border border-violet-500/20">
-          <h4 className="mt-0 mb-4 text-[15px] text-violet-300">The pattern</h4>
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
+          <h4 className="mt-0 mb-4 text-[15px] text-white/50">The pattern</h4>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-full bg-violet-500/20 flex items-center justify-center text-[11px] text-violet-400">1</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50">1</div>
               <span className="text-[13px] text-white/60">You don't wait to feel confident</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-full bg-violet-500/20 flex items-center justify-center text-[11px] text-violet-400">2</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50">2</div>
               <span className="text-[13px] text-white/60">You act as confident</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded-full bg-violet-500/20 flex items-center justify-center text-[11px] text-violet-400">3</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50">3</div>
               <span className="text-[13px] text-white/60">Confidence gets downloaded during the act</span>
             </div>
           </div>
@@ -2227,7 +1947,7 @@ const sections: DocSection[] = [
           You walk into the room and your brain goes: "Okay, we're doing this now. I remember this." And it catches up.
         </p>
 
-        <div className="my-8 p-5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/[0.08]">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[14px] text-white/70 italic m-0 text-center">
             "You are already who you want to be. Your refusal to believe it is the only reason you do not see it."
           </p>
@@ -2238,7 +1958,7 @@ const sections: DocSection[] = [
           If you still have the doubt of "but I'm not ready" or "I don't have enough social proof" — that's just an excuse to stay comfortable. To avoid the fear.
         </p>
 
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border border-amber-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[14px] text-white/80 m-0 text-center italic">
             "He who denies fear becomes its slave. He who acknowledges his fear holds it gently in his palm — lives in its presence. He has fear, but fear does not have him."
           </p>
@@ -2256,13 +1976,13 @@ const sections: DocSection[] = [
         </p>
 
         <div className="my-8 grid grid-cols-2 gap-4">
-          <div className="p-4 rounded-xl bg-red-500/[0.06] border border-red-500/20">
-            <div className="text-[11px] text-red-400/80 uppercase tracking-wider mb-2">Don't</div>
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+            <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Don't</div>
             <p className="text-[12px] text-white/50 m-0">"OMG I can't believe this happened!"</p>
             <p className="text-[11px] text-white/30 mt-2 m-0">This programs your brain to treat wins as exceptions.</p>
           </div>
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
-            <div className="text-[11px] text-emerald-400/80 uppercase tracking-wider mb-2">Do</div>
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
+            <div className="text-[11px] text-emerald-400/60/80 uppercase tracking-wider mb-2">Do</div>
             <p className="text-[12px] text-white/50 m-0">"Of course. This is just how it works."</p>
             <p className="text-[11px] text-white/30 mt-2 m-0">This programs your brain to expect this as normal.</p>
           </div>
@@ -2283,8 +2003,8 @@ const sections: DocSection[] = [
           But when you walk in like — "Yeah, that $10,000 is what it's worth. Take it or leave it." That's power. And humans respond to that.
         </p>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-transparent border border-emerald-500/20 mt-8">
-          <p className="text-[13px] text-emerald-400/80 m-0 text-center">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] mt-8">
+          <p className="text-[13px] text-emerald-400/60/80 m-0 text-center">
             Get into the room. Name the price. Do it scared if you have to. But do it. Every time you do, you're updating the system. The $100,000 confidence shows up automatically — because it's already yours.
           </p>
         </div>
@@ -2310,7 +2030,7 @@ const sections: DocSection[] = [
           Most of this fails because it ignores something important: <strong>timing</strong>.
         </p>
 
-        <div className="my-8 p-5 rounded-xl bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border border-amber-500/20">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[13px] text-white/60 m-0">
             Think about this: you're exhausted, halfway through eating a tasty plate of Chicken Alfredo pasta, about to crash. Then someone asks you to "hop on a quick call" or "take a look at something" or "do them a small favor."
           </p>
@@ -2329,7 +2049,7 @@ const sections: DocSection[] = [
         <h3>The Ouroboros</h3>
 
         {/* Visual Loop */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/[0.08] to-emerald-500/[0.02] border border-emerald-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="text-center mb-6">
             <div className="w-16 h-16 mx-auto mb-3 relative">
               <svg viewBox="0 0 100 100" className="w-full h-full">
@@ -2350,36 +2070,36 @@ const sections: DocSection[] = [
 
           <div className="flex items-center justify-between gap-2 mb-4">
             <div className="text-center flex-1">
-              <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[12px] font-bold text-blue-400">1</span>
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <span className="text-[12px] font-medium text-white/50">1</span>
               </div>
               <div className="text-[11px] text-white/60">Signal</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[12px] font-bold text-purple-400">2</span>
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <span className="text-[12px] font-medium text-white/50">2</span>
               </div>
               <div className="text-[11px] text-white/60">Match</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[12px] font-bold text-cyan-400">3</span>
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <span className="text-[12px] font-medium text-white/50">3</span>
               </div>
               <div className="text-[11px] text-white/60">Enrich</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[12px] font-bold text-amber-400">4</span>
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                <span className="text-[12px] font-medium text-white/50">4</span>
               </div>
               <div className="text-[11px] text-white/60">Route</div>
             </div>
             <div className="text-white/20">→</div>
             <div className="text-center flex-1">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-2">
-                <span className="text-[12px] font-bold text-emerald-400">5</span>
+              <div className="w-10 h-10 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-2">
+                <span className="text-[12px] font-medium text-emerald-400/60">5</span>
               </div>
               <div className="text-[11px] text-white/60">Deal</div>
             </div>
@@ -2400,10 +2120,10 @@ const sections: DocSection[] = [
         <h3>Breaking it down</h3>
 
         <div className="space-y-4 my-8">
-          <div className="p-4 rounded-xl bg-blue-500/[0.06] border border-blue-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                <span className="text-[12px] font-bold text-blue-400">1</span>
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <span className="text-[12px] font-medium text-white/50">1</span>
               </div>
               <span className="text-[14px] font-medium text-white">Signal</span>
             </div>
@@ -2412,7 +2132,7 @@ const sections: DocSection[] = [
             </p>
 
             {/* Restaurant Line Visual */}
-            <div className="ml-11 mt-4 p-4 rounded-lg bg-black/20 border border-white/[0.06]">
+            <div className="ml-11 mt-4 p-4 rounded bg-black/20 border border-white/[0.06]">
               <div className="flex items-center gap-3 mb-3">
                 <div className="flex items-center gap-1">
                   <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-[10px]">👤</div>
@@ -2422,7 +2142,7 @@ const sections: DocSection[] = [
                   <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-[10px]">👤</div>
                 </div>
                 <div className="text-white/20">→</div>
-                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[12px]">🍽️</div>
+                <div className="w-8 h-8 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-[12px]">🍽️</div>
               </div>
               <p className="text-[11px] text-white/40 m-0 italic">
                 If you see a line outside a restaurant, you don't ask people if they're hungry. The line already tells you. That's a signal.
@@ -2430,10 +2150,10 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-purple-500/[0.06] border border-purple-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                <span className="text-[12px] font-bold text-purple-400">2</span>
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <span className="text-[12px] font-medium text-white/50">2</span>
               </div>
               <span className="text-[14px] font-medium text-white">Match</span>
             </div>
@@ -2442,10 +2162,10 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                <span className="text-[12px] font-bold text-cyan-400">3</span>
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <span className="text-[12px] font-medium text-white/50">3</span>
               </div>
               <span className="text-[14px] font-medium text-white">Enrich</span>
             </div>
@@ -2454,10 +2174,10 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                <span className="text-[12px] font-bold text-amber-400">4</span>
+              <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                <span className="text-[12px] font-medium text-white/50">4</span>
               </div>
               <span className="text-[14px] font-medium text-white">Route</span>
             </div>
@@ -2466,10 +2186,10 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                <span className="text-[12px] font-bold text-emerald-400">5</span>
+              <div className="w-8 h-8 rounded bg-emerald-500/20 flex items-center justify-center">
+                <span className="text-[12px] font-medium text-emerald-400/60">5</span>
               </div>
               <span className="text-[14px] font-medium text-white">Deal</span>
             </div>
@@ -2479,7 +2199,7 @@ const sections: DocSection[] = [
           </div>
         </div>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/[0.08]">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[13px] text-white/60 m-0 text-center">
             You do this & learn what works, and do it endlessly like the snake eating its tail. One day you'll wake up with millions in your bank account.
           </p>
@@ -2490,9 +2210,9 @@ const sections: DocSection[] = [
           I wrote about each step of this loop in detail:
         </p>
         <ul>
-          <li><a href="/library?page=data-sources" className="text-emerald-400 hover:text-emerald-300">Signals</a> — Where they come from, how to read them</li>
-          <li><a href="/library?page=matching-engine" className="text-emerald-400 hover:text-emerald-300">Matching</a> — How to pair demand with supply</li>
-          <li><a href="/library?page=outbound" className="text-emerald-400 hover:text-emerald-300">Routing</a> — The intro mechanics</li>
+          <li><a href="/library?page=data-sources" className="text-emerald-400/60 hover:text-emerald-400/60">Signals</a> — Where they come from, how to read them</li>
+          <li><a href="/library?page=matching-engine" className="text-emerald-400/60 hover:text-emerald-400/60">Matching</a> — How to pair demand with supply</li>
+          <li><a href="/library?page=outbound" className="text-emerald-400/60 hover:text-emerald-400/60">Routing</a> — The intro mechanics</li>
         </ul>
       </article>
     ),
@@ -2509,151 +2229,151 @@ const sections: DocSection[] = [
         </p>
 
         {/* Day 1 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-blue-500/[0.08] to-blue-500/[0.02] border border-blue-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-blue-400">1</span>
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center">
+              <span className="text-[14px] font-medium text-white/50">1</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">Signal Hunting</div>
+              <div className="text-[16px] font-medium text-white">Signal Hunting</div>
               <div className="text-[11px] text-white/40">Find 150 companies that need something right now</div>
             </div>
           </div>
 
           <div className="space-y-3 mt-4">
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Set up your first Apify dataset (job postings, funding, leadership changes)</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Load it into Connector OS</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Understand the tier system: A (hot), B (warm), C (exploring)</span>
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[10px] text-blue-400/80 uppercase tracking-wider mb-1">End of Day 1</div>
+          <div className="mt-4 p-3 rounded bg-black/20 border border-white/[0.06]">
+            <div className="text-[10px] text-white/50/80 uppercase tracking-wider mb-1">End of Day 1</div>
             <div className="text-[12px] text-white/50">You have a list of 150 companies bleeding.</div>
           </div>
         </div>
 
         {/* Day 2 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-purple-500/[0.08] to-purple-500/[0.02] border border-purple-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-purple-400">2</span>
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center">
+              <span className="text-[14px] font-medium text-white/50">2</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">Building Your Supply</div>
+              <div className="text-[16px] font-medium text-white">Building Your Supply</div>
               <div className="text-[11px] text-white/40">Find 150 providers who solve what those companies need</div>
             </div>
           </div>
 
           <div className="space-y-3 mt-4">
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Identify who counts as supply (recruiters, agencies, consultants)</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Source from LinkedIn, Clutch, agency directories</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Pick your identity: Insider, Researcher, or Network Hub</span>
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[10px] text-purple-400/80 uppercase tracking-wider mb-1">End of Day 2</div>
+          <div className="mt-4 p-3 rounded bg-black/20 border border-white/[0.06]">
+            <div className="text-[10px] text-white/50/80 uppercase tracking-wider mb-1">End of Day 2</div>
             <div className="text-[12px] text-white/50">You have demand AND supply. The loop can begin.</div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-purple-500/[0.08] border border-purple-500/20">
+          <div className="mt-4 p-3 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="text-[11px] text-white/50">
-              <strong className="text-white/70">Deep dive:</strong> I wrote about the three connector identities <a href="/library?page=what-is-connector" className="text-purple-400 hover:text-purple-300">here</a>.
+              <strong className="text-white/70">Deep dive:</strong> I wrote about the three connector identities <a href="/library?page=what-is-connector" className="text-white/50 hover:text-white/50">here</a>.
             </div>
           </div>
         </div>
 
         {/* Day 3 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-cyan-500/[0.08] to-cyan-500/[0.02] border border-cyan-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-cyan-400">3</span>
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center">
+              <span className="text-[14px] font-medium text-white/50">3</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">First Matches</div>
+              <div className="text-[16px] font-medium text-white">First Matches</div>
               <div className="text-[11px] text-white/40">Match 150 demand companies to supply partners</div>
             </div>
           </div>
 
           <div className="space-y-3 mt-4">
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Use the matching engine to pair demand → supply</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Rule: ONE supply per demand (you're the gatekeeper)</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Enrich to find decision-makers</span>
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[10px] text-cyan-400/80 uppercase tracking-wider mb-1">End of Day 3</div>
+          <div className="mt-4 p-3 rounded bg-black/20 border border-white/[0.06]">
+            <div className="text-[10px] text-white/50/80 uppercase tracking-wider mb-1">End of Day 3</div>
             <div className="text-[12px] text-white/50">150 matched pairs, enriched, ready to send.</div>
           </div>
         </div>
 
         {/* Day 4 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border border-amber-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-amber-400">4</span>
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center">
+              <span className="text-[14px] font-medium text-white/50">4</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">First Intros Go Out</div>
+              <div className="text-[16px] font-medium text-white">First Intros Go Out</div>
               <div className="text-[11px] text-white/40">Send 150 intros (300 messages — 150 demand + 150 supply)</div>
             </div>
           </div>
 
           <div className="space-y-3 mt-4">
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/40 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Dual intro format: hit both sides at the same time</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/40 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Voice: warm but not eager, brief but not cold</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/40 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Never say "they're ready" or "waiting on them"</span>
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[10px] text-amber-400/80 uppercase tracking-wider mb-1">End of Day 4</div>
+          <div className="mt-4 p-3 rounded bg-black/20 border border-white/[0.06]">
+            <div className="text-[10px] text-white/50 uppercase tracking-wider mb-1">End of Day 4</div>
             <div className="text-[12px] text-white/50">300 messages in the world. The loop is live.</div>
           </div>
         </div>
 
         {/* Day 5 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-white/60">5</span>
+            <div className="w-10 h-10 rounded bg-white/10 flex items-center justify-center">
+              <span className="text-[14px] font-medium text-white/60">5</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">The Silence</div>
+              <div className="text-[16px] font-medium text-white">The Silence</div>
               <div className="text-[11px] text-white/40">Understand what's happening while you wait</div>
             </div>
           </div>
@@ -2673,59 +2393,59 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
+          <div className="mt-4 p-3 rounded bg-black/20 border border-white/[0.06]">
             <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">End of Day 5</div>
             <div className="text-[12px] text-white/50">You've added 150 more signals. Pipeline is building.</div>
           </div>
         </div>
 
         {/* Day 6 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-fuchsia-500/[0.08] to-fuchsia-500/[0.02] border border-fuchsia-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-fuchsia-500/20 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-fuchsia-400">6</span>
+            <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center">
+              <span className="text-[14px] font-medium text-white/50">6</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">Handling Replies</div>
+              <div className="text-[16px] font-medium text-white">Handling Replies</div>
               <div className="text-[11px] text-white/40">Respond to whoever replied — correctly</div>
             </div>
           </div>
 
           <div className="space-y-3 mt-4">
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Positive reply → move toward the intro</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Questions → answer without revealing position</span>
             </div>
             <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-400 mt-2 shrink-0" />
+              <div className="w-1.5 h-1.5 rounded-full bg-white/30 mt-2 shrink-0" />
               <span className="text-[13px] text-white/60">Negative → archive, move on, no hard feelings</span>
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-black/20 border border-white/[0.06]">
-            <div className="text-[10px] text-fuchsia-400/80 uppercase tracking-wider mb-1">End of Day 6</div>
+          <div className="mt-4 p-3 rounded bg-black/20 border border-white/[0.06]">
+            <div className="text-[10px] text-white/50/80 uppercase tracking-wider mb-1">End of Day 6</div>
             <div className="text-[12px] text-white/50">Active conversations. Timing is forming.</div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-fuchsia-500/[0.08] border border-fuchsia-500/20">
+          <div className="mt-4 p-3 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="text-[11px] text-white/50">
-              <strong className="text-white/70">The doctrine:</strong> Interest ≠ readiness. <a href="/library?page=initiation" className="text-fuchsia-400 hover:text-fuchsia-300">Read more</a>.
+              <strong className="text-white/70">The doctrine:</strong> Interest ≠ readiness. <a href="/library?page=initiation" className="text-white/50 hover:text-white/60">Read more</a>.
             </div>
           </div>
         </div>
 
         {/* Day 7 */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-emerald-500/[0.12] to-emerald-500/[0.02] border border-emerald-500/30">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-              <span className="text-[14px] font-bold text-emerald-400">7</span>
+            <div className="w-10 h-10 rounded bg-emerald-500/20 flex items-center justify-center">
+              <span className="text-[14px] font-medium text-emerald-400/60">7</span>
             </div>
             <div>
-              <div className="text-[16px] font-semibold text-white">The Close</div>
+              <div className="text-[16px] font-medium text-white">The Close</div>
               <div className="text-[11px] text-white/40">Make one real introduction</div>
             </div>
           </div>
@@ -2745,16 +2465,16 @@ const sections: DocSection[] = [
             </div>
           </div>
 
-          <div className="mt-4 p-3 rounded-lg bg-emerald-500/[0.12] border border-emerald-500/30">
-            <div className="text-[10px] text-emerald-400/80 uppercase tracking-wider mb-1">End of Day 7</div>
-            <div className="text-[12px] text-emerald-300/80">One intro made. One deal in motion. The loop continues.</div>
+          <div className="mt-4 p-3 rounded bg-emerald-500/[0.12] border border-emerald-500/30">
+            <div className="text-[10px] text-emerald-400/60/80 uppercase tracking-wider mb-1">End of Day 7</div>
+            <div className="text-[12px] text-emerald-400/60/80">One intro made. One deal in motion. The loop continues.</div>
           </div>
         </div>
 
         {/* The Math */}
         <h3>The math</h3>
 
-        <div className="my-6 p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.12] to-emerald-500/[0.02] border border-emerald-500/20">
+        <div className="my-6 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="space-y-2 text-[13px]">
             <div className="flex justify-between text-white/60">
               <span>300 messages/day × 20 days</span>
@@ -2775,7 +2495,7 @@ const sections: DocSection[] = [
             <div className="h-px bg-white/[0.1] my-3" />
             <div className="flex justify-between text-white">
               <span>$8,000-$10,000 retainer × 3</span>
-              <span className="text-emerald-400 font-semibold">= $24,000-$30,000/month</span>
+              <span className="text-emerald-400/60 font-medium">= $24,000-$30,000/month</span>
             </div>
           </div>
           <p className="text-[11px] text-white/40 mt-3 mb-0 text-center">Plus commission on the back end from supply.</p>
@@ -2786,20 +2506,20 @@ const sections: DocSection[] = [
         <p>Both sides pay. Neither knows what the other paid.</p>
 
         <div className="my-6 grid grid-cols-2 gap-4">
-          <div className="p-4 rounded-xl bg-blue-500/[0.08] border border-blue-500/20">
-            <div className="text-[11px] text-blue-400/80 uppercase tracking-wider mb-2">Demand pays</div>
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+            <div className="text-[11px] text-white/50/80 uppercase tracking-wider mb-2">Demand pays</div>
             <div className="text-[14px] font-medium text-white mb-1">Retainer (upfront)</div>
             <div className="text-[12px] text-white/50">For curation — you filtered 100 providers down to 1.</div>
           </div>
-          <div className="p-4 rounded-xl bg-purple-500/[0.08] border border-purple-500/20">
-            <div className="text-[11px] text-purple-400/80 uppercase tracking-wider mb-2">Supply pays</div>
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
+            <div className="text-[11px] text-white/50/80 uppercase tracking-wider mb-2">Supply pays</div>
             <div className="text-[14px] font-medium text-white mb-1">Access fee + Commission</div>
             <div className="text-[12px] text-white/50">For access + % when deal closes. They're earning from your intro.</div>
           </div>
         </div>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-transparent border border-emerald-500/20">
-          <p className="text-[13px] text-emerald-400/80 m-0 text-center">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06]">
+          <p className="text-[13px] text-emerald-400/60/80 m-0 text-center">
             Upfront from both — small. The real money comes from Supply when the deal closes. You brought them the bag. They share.
           </p>
         </div>
@@ -2818,24 +2538,24 @@ const sections: DocSection[] = [
         </p>
 
         {/* The Three Locks Visual */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="grid grid-cols-3 gap-4">
             <div className="text-center">
-              <div className="w-14 h-14 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-3">
+              <div className="w-14 h-14 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-3">
                 <span className="text-[20px]">📄</span>
               </div>
               <div className="text-[13px] font-medium text-white">The Contract</div>
               <div className="text-[11px] text-white/40">Locks you in legally</div>
             </div>
             <div className="text-center">
-              <div className="w-14 h-14 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto mb-3">
+              <div className="w-14 h-14 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-3">
                 <span className="text-[20px]">🎯</span>
               </div>
               <div className="text-[13px] font-medium text-white">The Script</div>
               <div className="text-[11px] text-white/40">Controls who gets what</div>
             </div>
             <div className="text-center">
-              <div className="w-14 h-14 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-3">
+              <div className="w-14 h-14 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-3">
                 <span className="text-[20px]">📊</span>
               </div>
               <div className="text-[13px] font-medium text-white">The Dashboard</div>
@@ -2848,7 +2568,7 @@ const sections: DocSection[] = [
           If you have these three, they can't bypass you or cut you out. Not legally, not operationally, and not economically.
         </p>
 
-        <div className="my-8 p-5 rounded-xl bg-amber-500/[0.08] border border-amber-500/20">
+        <div className="my-8 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[13px] text-white/70 m-0">
             <strong className="text-white">The mindset shift:</strong> If you're asking "how do I make sure they don't cut me out?" — you're still thinking like a freelancer. Freelancers worry about getting cut out. Distribution owners don't. Because you don't sell the intro. You sell the system that creates intros. And you can't bypass the system.
           </p>
@@ -2859,7 +2579,7 @@ const sections: DocSection[] = [
           This locks your position legally. Don't skip it — if you do, clients can go around you and you have no leverage.
         </p>
 
-        <div className="my-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+        <div className="my-6 p-4 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="text-[11px] text-white/40 uppercase tracking-wider mb-3">Key clauses</div>
           <div className="space-y-3">
             <div className="flex items-start gap-3">
@@ -2881,9 +2601,9 @@ const sections: DocSection[] = [
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
+        <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
           <div className="text-[11px] text-white/50">
-            <strong className="text-white/70">Watch the full breakdown:</strong> I made a video walking through the exact contract setup, Stripe integration, and the 48-hour expiry trick. <span className="text-emerald-400">[YouTube link]</span>
+            <strong className="text-white/70">Watch the full breakdown:</strong> I made a video walking through the exact contract setup, Stripe integration, and the 48-hour expiry trick. <span className="text-emerald-400/60">[YouTube link]</span>
           </div>
         </div>
 
@@ -2893,41 +2613,41 @@ const sections: DocSection[] = [
         </p>
 
         <div className="my-6 space-y-3">
-          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[11px] text-amber-400 font-bold">1</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50 font-medium">1</div>
               <span className="text-[13px] font-medium text-white">Capacity Check</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">"If I introduce you to someone this week, what's your actual capacity to take on work right now?"</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[11px] text-amber-400 font-bold">2</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50 font-medium">2</div>
               <span className="text-[13px] font-medium text-white">Failure Mode Check</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">"In the past 90 days, what's gone wrong with the vendors you've tried?"</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[11px] text-amber-400 font-bold">3</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50 font-medium">3</div>
               <span className="text-[13px] font-medium text-white">Money Check</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">"What's the financial impact when this problem isn't solved fast?"</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[11px] text-amber-400 font-bold">4</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50 font-medium">4</div>
               <span className="text-[13px] font-medium text-white">Decision-Maker Check</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">"Who besides you needs to approve moving forward once I make the intro?"</p>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[11px] text-amber-400 font-bold">5</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[11px] text-white/50 font-medium">5</div>
               <span className="text-[13px] font-medium text-white">Fit Check</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">"Describe your ideal partner in one sentence — what must they have or avoid?"</p>
@@ -2936,7 +2656,7 @@ const sections: DocSection[] = [
 
         <h4>The Operator Frame</h4>
         <p>After they answer, you say:</p>
-        <div className="my-4 p-4 rounded-xl bg-gradient-to-br from-amber-500/[0.08] to-amber-500/[0.02] border border-amber-500/20">
+        <div className="my-4 p-4 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[13px] text-white/80 m-0 italic">
             "Based on what you told me, I can introduce you — but I don't do one-off intros. I run a system that creates opportunities every single month. One intro solves today's problem. The system solves every month's problem from today forward."
           </p>
@@ -2946,7 +2666,7 @@ const sections: DocSection[] = [
         </p>
 
         <h4>The Close</h4>
-        <div className="my-4 p-4 rounded-xl bg-emerald-500/[0.08] border border-emerald-500/20">
+        <div className="my-4 p-4 rounded bg-emerald-500/[0.08] border border-emerald-500/20">
           <p className="text-[13px] text-white/80 m-0 italic">
             "If I create the system that brings you consistent opportunities, do you want to be one of the partners I prioritize?"
           </p>
@@ -2963,22 +2683,22 @@ const sections: DocSection[] = [
           Without this, they don't see the value. They think you got lucky one time. But when you send them this every Monday, they see new opportunities coming in. They see the flow growing. They see they can't do this themselves.
         </p>
 
-        <div className="my-6 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+        <div className="my-6 p-4 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="text-[11px] text-white/40 uppercase tracking-wider mb-3">Four tabs</div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06]">
+            <div className="p-3 rounded bg-black/20 border border-white/[0.06]">
               <div className="text-[12px] font-medium text-white mb-1">Active Intros</div>
               <div className="text-[11px] text-white/40">Track every introduction, status, revenue potential</div>
             </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06]">
+            <div className="p-3 rounded bg-black/20 border border-white/[0.06]">
               <div className="text-[12px] font-medium text-white mb-1">New Signals</div>
               <div className="text-[11px] text-white/40">Fresh opportunities scraped this week</div>
             </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06]">
+            <div className="p-3 rounded bg-black/20 border border-white/[0.06]">
               <div className="text-[12px] font-medium text-white mb-1">Revenue Tracking</div>
               <div className="text-[11px] text-white/40">Setup fees, commissions, monthly totals</div>
             </div>
-            <div className="p-3 rounded-lg bg-black/20 border border-white/[0.06]">
+            <div className="p-3 rounded bg-black/20 border border-white/[0.06]">
               <div className="text-[12px] font-medium text-white mb-1">Client List</div>
               <div className="text-[11px] text-white/40">Active retainers, status, next actions</div>
             </div>
@@ -2988,22 +2708,22 @@ const sections: DocSection[] = [
         <h4>Monday Morning Ritual (30-45 min)</h4>
         <div className="my-4 space-y-2">
           <div className="flex items-center gap-3">
-            <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400">1</div>
+            <div className="w-5 h-5 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50">1</div>
             <span className="text-[13px] text-white/60">Scrape new signals from LinkedIn, Apollo, Crunchbase</span>
           </div>
           <div className="flex items-center gap-3">
-            <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400">2</div>
+            <div className="w-5 h-5 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50">2</div>
             <span className="text-[13px] text-white/60">Qualify urgent ones, reach out to qualified signals</span>
           </div>
           <div className="flex items-center gap-3">
-            <div className="w-5 h-5 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400">3</div>
+            <div className="w-5 h-5 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50">3</div>
             <span className="text-[13px] text-white/60">Send weekly updates to retainer clients</span>
           </div>
         </div>
 
-        <div className="p-4 rounded-xl bg-blue-500/[0.06] border border-blue-500/20 my-6">
+        <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="text-[11px] text-white/50">
-            <strong className="text-white/70">Watch the full breakdown:</strong> I made a video walking through the exact dashboard setup, weekly workflow, and SOPs. <span className="text-blue-400">[YouTube link]</span>
+            <strong className="text-white/70">Watch the full breakdown:</strong> I made a video walking through the exact dashboard setup, weekly workflow, and SOPs. <span className="text-white/50">[YouTube link]</span>
           </div>
         </div>
       </article>
@@ -3020,13 +2740,13 @@ const sections: DocSection[] = [
           Why nobody can cut you out. You either do the work, or you control who gets the work. The first group gets replaced. The second group gets paid forever.
         </p>
 
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08]">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="space-y-4">
             {/* Layer 1 */}
-            <div className="p-4 rounded-xl bg-blue-500/[0.06] border border-blue-500/20">
+            <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <span className="text-[12px] font-bold text-blue-400">1</span>
+                <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                  <span className="text-[12px] font-medium text-white/50">1</span>
                 </div>
                 <span className="text-[14px] font-medium text-white">Data they don't have</span>
               </div>
@@ -3036,10 +2756,10 @@ const sections: DocSection[] = [
             </div>
 
             {/* Layer 2 */}
-            <div className="p-4 rounded-xl bg-purple-500/[0.06] border border-purple-500/20">
+            <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                  <span className="text-[12px] font-bold text-purple-400">2</span>
+                <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                  <span className="text-[12px] font-medium text-white/50">2</span>
                 </div>
                 <span className="text-[14px] font-medium text-white">Filtering they can't do</span>
               </div>
@@ -3049,10 +2769,10 @@ const sections: DocSection[] = [
             </div>
 
             {/* Layer 3 */}
-            <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+            <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                  <span className="text-[12px] font-bold text-amber-400">3</span>
+                <div className="w-8 h-8 rounded bg-white/[0.04] flex items-center justify-center">
+                  <span className="text-[12px] font-medium text-white/50">3</span>
                 </div>
                 <span className="text-[14px] font-medium text-white">If you stop paying, the flow stops</span>
               </div>
@@ -3062,10 +2782,10 @@ const sections: DocSection[] = [
             </div>
 
             {/* Layer 4 */}
-            <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+            <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
               <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                  <span className="text-[12px] font-bold text-emerald-400">4</span>
+                <div className="w-8 h-8 rounded bg-emerald-500/20 flex items-center justify-center">
+                  <span className="text-[12px] font-medium text-emerald-400/60">4</span>
                 </div>
                 <span className="text-[14px] font-medium text-white">Weekly compounding</span>
               </div>
@@ -3081,7 +2801,7 @@ const sections: DocSection[] = [
           You can't just be like "Hey, don't cut me out." Instead, you frame it as the natural way the system works:
         </p>
 
-        <div className="my-6 p-5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/[0.08]">
+        <div className="my-6 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
           <p className="text-[13px] text-white/80 m-0 italic">
             "Look, one intro is fine — but that's not what gets you your goals. Your goals require a system that creates new opportunities every single month. And the only reason that works is because I control the flow. Cutting me out removes the part that actually makes you money. So it's in your best interest to keep the system running."
           </p>
@@ -3096,8 +2816,8 @@ const sections: DocSection[] = [
           It's like trying to bypass Netflix's recommendation algorithm. You don't know how it picks what to show you. You just see the result. Same thing here.
         </p>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-emerald-500/[0.08] to-transparent border border-emerald-500/20 mt-8">
-          <p className="text-[14px] text-emerald-400/90 m-0 text-center font-medium">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] mt-8">
+          <p className="text-[14px] text-emerald-400/60/90 m-0 text-center font-medium">
             You are the algorithm. And you can't bypass the algorithm.
           </p>
         </div>
@@ -3144,9 +2864,9 @@ const sections: DocSection[] = [
         <h3>Pre-Call Hacks</h3>
 
         <div className="space-y-3 my-6">
-          <div className="p-4 rounded-xl bg-blue-500/[0.06] border border-blue-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400 font-bold">1</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">1</div>
               <span className="text-[13px] font-medium text-white">Limit booking windows</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3154,9 +2874,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-blue-500/[0.06] border border-blue-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center text-[10px] text-blue-400 font-bold">2</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">2</div>
               <span className="text-[13px] font-medium text-white">Uber communicate before kickoff</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3169,9 +2889,9 @@ const sections: DocSection[] = [
         <h3>Communication Hacks (On-Call)</h3>
 
         <div className="space-y-3 my-6">
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">3</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">3</div>
               <span className="text-[13px] font-medium text-white">Compression technique</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3179,9 +2899,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">4</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">4</div>
               <span className="text-[13px] font-medium text-white">"I don't need you" micro frame</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3189,9 +2909,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">5</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">5</div>
               <span className="text-[13px] font-medium text-white">"Here's the part you'll push back on"</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3199,9 +2919,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">6</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">6</div>
               <span className="text-[13px] font-medium text-white">Mutual evaluation frame</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3209,9 +2929,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">7</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">7</div>
               <span className="text-[13px] font-medium text-white">Non-pedestal posture</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3219,9 +2939,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">8</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">8</div>
               <span className="text-[13px] font-medium text-white">"You're right" pattern break</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3229,9 +2949,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">9</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">9</div>
               <span className="text-[13px] font-medium text-white">Predict their fear before they speak</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3239,9 +2959,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center text-[10px] text-amber-400 font-bold">10</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">10</div>
               <span className="text-[13px] font-medium text-white">Risk math, not guarantees</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3254,9 +2974,9 @@ const sections: DocSection[] = [
         <h3>Closing Hacks</h3>
 
         <div className="space-y-3 my-6">
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-bold">11</div>
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400/60 font-medium">11</div>
               <span className="text-[13px] font-medium text-white">Anchor early, price late</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3264,9 +2984,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-bold">12</div>
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400/60 font-medium">12</div>
               <span className="text-[13px] font-medium text-white">Deadline disguised as logistics</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3274,9 +2994,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-bold">13</div>
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400/60 font-medium">13</div>
               <span className="text-[13px] font-medium text-white">Add signal hack</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3284,9 +3004,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400 font-bold">14</div>
+              <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-[10px] text-emerald-400/60 font-medium">14</div>
               <span className="text-[13px] font-medium text-white">Two-option deco</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3299,9 +3019,9 @@ const sections: DocSection[] = [
         <h3>Post-Payment Hacks</h3>
 
         <div className="space-y-3 my-6">
-          <div className="p-4 rounded-xl bg-purple-500/[0.06] border border-purple-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center text-[10px] text-purple-400 font-bold">15</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">15</div>
               <span className="text-[13px] font-medium text-white">Never use freelancer buttons</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3309,9 +3029,9 @@ const sections: DocSection[] = [
             </p>
           </div>
 
-          <div className="p-4 rounded-xl bg-purple-500/[0.06] border border-purple-500/20">
+          <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-6 h-6 rounded-full bg-purple-500/20 flex items-center justify-center text-[10px] text-purple-400 font-bold">16</div>
+              <div className="w-6 h-6 rounded-full bg-white/[0.04] flex items-center justify-center text-[10px] text-white/50 font-medium">16</div>
               <span className="text-[13px] font-medium text-white">Identity flip after payment</span>
             </div>
             <p className="text-[12px] text-white/50 m-0 ml-9">
@@ -3320,15 +3040,15 @@ const sections: DocSection[] = [
           </div>
         </div>
 
-        <div className="p-5 rounded-xl bg-gradient-to-br from-white/[0.04] to-transparent border border-white/[0.08] mt-8">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] mt-8">
           <p className="text-[14px] text-white/70 italic m-0 text-center">
             "Deals don't die because people say no. They die in the gaps you never designed. Your job as an operator: remove the gaps. Remove the friction. Let money move while the yes is still alive."
           </p>
         </div>
 
-        <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
+        <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
           <div className="text-[11px] text-white/50">
-            <strong className="text-white/70">Watch the full breakdown:</strong> I made a video walking through all 16 hacks with real examples. <a href="https://www.youtube.com/watch?v=COoN1mm8NMw" target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:text-emerald-300">Watch here →</a>
+            <strong className="text-white/70">Watch the full breakdown:</strong> I made a video walking through all 16 hacks with real examples. <a href="https://www.youtube.com/watch?v=COoN1mm8NMw" target="_blank" rel="noopener noreferrer" className="text-emerald-400/60 hover:text-emerald-400/60">Watch here →</a>
           </div>
         </div>
       </article>
@@ -3354,45 +3074,45 @@ const sections: DocSection[] = [
           <div className="relative flex items-center gap-6">
             {/* Person A */}
             <div className="relative">
-              <div className="absolute -inset-3 rounded-2xl bg-blue-500/10 animate-pulse" style={{ animationDuration: '3s' }} />
-              <div className="relative p-5 rounded-xl bg-blue-500/[0.06] border border-blue-500/20 text-center w-32">
-                <div className="w-12 h-12 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mx-auto mb-3">
-                  <Users size={20} className="text-blue-400" />
+              <div className="absolute -inset-3 rounded bg-white/[0.02] animate-pulse" style={{ animationDuration: '3s' }} />
+              <div className="relative p-5 rounded bg-white/[0.02] border border-white/[0.06] text-center w-32">
+                <div className="w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-3">
+                  <Users size={20} className="text-white/50" />
                 </div>
                 <div className="text-[12px] font-medium text-white/80">Person A</div>
-                <div className="text-[10px] text-blue-400/60 mt-1">has a problem</div>
+                <div className="text-[10px] text-white/50/60 mt-1">has a problem</div>
               </div>
             </div>
 
             {/* Connector (You) in the middle */}
             <div className="relative flex flex-col items-center">
               {/* Arrow from A */}
-              <div className="absolute -left-6 top-1/2 -translate-y-1/2 w-6 h-px bg-gradient-to-r from-blue-500/50 to-purple-500/50">
+              <div className="absolute -left-6 top-1/2 -translate-y-1/2 w-6 h-px bg-white/[0.1]">
                 <div className="absolute top-0 left-0 w-2 h-px bg-white/60 animate-[shimmer_1.5s_infinite]" />
               </div>
               {/* Arrow to B */}
-              <div className="absolute -right-6 top-1/2 -translate-y-1/2 w-6 h-px bg-gradient-to-r from-purple-500/50 to-emerald-500/50">
+              <div className="absolute -right-6 top-1/2 -translate-y-1/2 w-6 h-px bg-white/[0.1]">
                 <div className="absolute top-0 right-0 w-2 h-px bg-white/60 animate-[shimmer_1.5s_infinite]" style={{ animationDelay: '0.5s' }} />
               </div>
 
               <div className="relative">
-                <div className="absolute -inset-4 rounded-full bg-purple-500/20 animate-ping" style={{ animationDuration: '2.5s' }} />
-                <div className="relative w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/30 to-violet-500/20 border border-purple-500/40 flex items-center justify-center">
-                  <div className="text-[11px] text-purple-300 font-medium">YOU</div>
+                <div className="absolute -inset-4 rounded-full bg-white/[0.04] animate-ping" style={{ animationDuration: '2.5s' }} />
+                <div className="relative w-16 h-16 rounded-full bg-white/[0.04] border border-white/[0.1] flex items-center justify-center">
+                  <div className="text-[11px] text-white/60 font-medium">YOU</div>
                 </div>
               </div>
-              <div className="text-[10px] text-purple-400/60 mt-2">fix both</div>
+              <div className="text-[10px] text-white/50/60 mt-2">fix both</div>
             </div>
 
             {/* Person B */}
             <div className="relative">
-              <div className="absolute -inset-3 rounded-2xl bg-emerald-500/10 animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
-              <div className="relative p-5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 text-center w-32">
+              <div className="absolute -inset-3 rounded bg-emerald-500/10 animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
+              <div className="relative p-5 rounded bg-emerald-500/[0.06] border border-emerald-500/20 text-center w-32">
                 <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-3">
-                  <Users size={20} className="text-emerald-400" />
+                  <Users size={20} className="text-emerald-400/60" />
                 </div>
                 <div className="text-[12px] font-medium text-white/80">Person B</div>
-                <div className="text-[10px] text-emerald-400/60 mt-1">has a problem</div>
+                <div className="text-[10px] text-emerald-400/60/60 mt-1">has a problem</div>
               </div>
             </div>
           </div>
@@ -3413,7 +3133,7 @@ const sections: DocSection[] = [
           <div className="relative">
             {/* Regular ticket (faded) */}
             <div className="absolute -left-24 top-8 opacity-30">
-              <div className="w-32 h-20 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+              <div className="w-32 h-20 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
                 <div className="text-center">
                   <div className="text-[10px] text-white/30 uppercase tracking-wider">Regular</div>
                   <div className="text-[11px] text-white/40 mt-1">Wait in line</div>
@@ -3421,18 +3141,18 @@ const sections: DocSection[] = [
               </div>
             </div>
             {/* VIP ticket (highlighted) */}
-            <div className="relative z-10 w-48 h-28 rounded-xl bg-gradient-to-br from-violet-500/20 to-purple-500/10 border border-violet-500/30 flex items-center justify-center overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-violet-400/10 to-transparent -translate-x-full animate-[shimmer_3s_infinite]" />
+            <div className="relative z-10 w-48 h-28 rounded bg-white/[0.04] border border-white/[0.1] flex items-center justify-center overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-[shimmer_3s_infinite]" />
               <div className="text-center relative z-10">
-                <div className="text-[12px] text-violet-400 uppercase tracking-wider font-medium">VIP Access</div>
-                <div className="text-[20px] font-bold text-white/80 mt-1">Front of line</div>
+                <div className="text-[12px] text-white/50 uppercase tracking-wider font-medium">VIP Access</div>
+                <div className="text-[20px] font-medium text-white/80 mt-1">Front of line</div>
                 <div className="text-[10px] text-white/40 mt-1">First to opportunities</div>
               </div>
             </div>
             {/* Arrow */}
             <div className="absolute -right-16 top-10 flex items-center gap-2">
-              <div className="w-8 h-px bg-gradient-to-r from-violet-500/50 to-transparent" />
-              <div className="text-[10px] text-violet-400/60">UPFRONT</div>
+              <div className="w-8 h-px bg-white/[0.1]" />
+              <div className="text-[10px] text-white/50/60">UPFRONT</div>
             </div>
           </div>
         </div>
@@ -3449,31 +3169,31 @@ const sections: DocSection[] = [
 
         {/* Three Benefits Visual - Animated */}
         <div className="grid grid-cols-3 gap-4 my-8">
-          <div className="relative group p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 text-center">
-            <div className="absolute inset-0 rounded-xl bg-emerald-500/10 animate-pulse opacity-50" style={{ animationDuration: '4s' }} />
+          <div className="relative group p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20 text-center">
+            <div className="absolute inset-0 rounded bg-emerald-500/10 animate-pulse opacity-50" style={{ animationDuration: '4s' }} />
             <div className="relative">
               <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto mb-3">
-                <span className="text-[18px] font-bold text-emerald-400">1</span>
+                <span className="text-[18px] font-medium text-emerald-400/60">1</span>
               </div>
               <div className="text-[12px] font-medium text-white/80">First shot</div>
               <div className="text-[11px] text-white/40 mt-1">Talk to customers first</div>
             </div>
           </div>
-          <div className="relative group p-4 rounded-xl bg-blue-500/[0.06] border border-blue-500/20 text-center">
-            <div className="absolute inset-0 rounded-xl bg-blue-500/10 animate-pulse opacity-50" style={{ animationDuration: '4s', animationDelay: '0.5s' }} />
+          <div className="relative group p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="absolute inset-0 rounded bg-white/[0.02] animate-pulse opacity-50" style={{ animationDuration: '4s', animationDelay: '0.5s' }} />
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center mx-auto mb-3">
-                <span className="text-[18px] font-bold text-blue-400">2</span>
+              <div className="w-10 h-10 rounded-full bg-white/[0.04] flex items-center justify-center mx-auto mb-3">
+                <span className="text-[18px] font-medium text-white/50">2</span>
               </div>
               <div className="text-[12px] font-medium text-white/80">Pre-filtered</div>
               <div className="text-[11px] text-white/40 mt-1">No bullshit leads</div>
             </div>
           </div>
-          <div className="relative group p-4 rounded-xl bg-purple-500/[0.06] border border-purple-500/20 text-center">
-            <div className="absolute inset-0 rounded-xl bg-purple-500/10 animate-pulse opacity-50" style={{ animationDuration: '4s', animationDelay: '1s' }} />
+          <div className="relative group p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="absolute inset-0 rounded bg-white/[0.02] animate-pulse opacity-50" style={{ animationDuration: '4s', animationDelay: '1s' }} />
             <div className="relative">
-              <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center mx-auto mb-3">
-                <span className="text-[18px] font-bold text-purple-400">3</span>
+              <div className="w-10 h-10 rounded-full bg-white/[0.04] flex items-center justify-center mx-auto mb-3">
+                <span className="text-[18px] font-medium text-white/50">3</span>
               </div>
               <div className="text-[12px] font-medium text-white/80">No CAC</div>
               <div className="text-[11px] text-white/40 mt-1">Skip ads, SDRs, marketing</div>
@@ -3504,22 +3224,22 @@ const sections: DocSection[] = [
         </p>
 
         {/* Bounty Hunter Visual - Animated */}
-        <div className="my-8 p-6 rounded-xl bg-gradient-to-br from-amber-500/[0.08] to-transparent border border-amber-500/20 relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-amber-400/5 to-transparent -translate-x-full animate-[shimmer_4s_infinite]" />
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06] relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-[shimmer_4s_infinite]" />
           <div className="relative flex items-center justify-center gap-8">
             <div className="text-center">
               <div className="relative">
-                <div className="absolute -inset-2 rounded-full bg-amber-500/20 animate-ping" style={{ animationDuration: '3s' }} />
-                <div className="relative w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mx-auto mb-2">
-                  <Target size={22} className="text-amber-400" />
+                <div className="absolute -inset-2 rounded-full bg-white/[0.04] animate-ping" style={{ animationDuration: '3s' }} />
+                <div className="relative w-14 h-14 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center mx-auto mb-2">
+                  <Target size={22} className="text-white/50" />
                 </div>
               </div>
-              <div className="text-[11px] text-amber-400/80 uppercase tracking-wider">Upfront</div>
+              <div className="text-[11px] text-white/50 uppercase tracking-wider">Upfront</div>
               <div className="text-[10px] text-white/40">Start the hunt</div>
             </div>
             <div className="flex flex-col items-center">
               <div className="relative w-20">
-                <div className="h-px bg-gradient-to-r from-amber-500/50 to-emerald-500/50" />
+                <div className="h-px bg-white/[0.06]" />
                 <div className="absolute top-0 left-0 w-4 h-px bg-white/60 animate-[moveRight_2s_infinite]" />
               </div>
               <div className="text-[10px] text-white/30 mt-1">+ % on success</div>
@@ -3528,10 +3248,10 @@ const sections: DocSection[] = [
               <div className="relative">
                 <div className="absolute -inset-2 rounded-full bg-emerald-500/20 animate-pulse" style={{ animationDuration: '2s' }} />
                 <div className="relative w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-2">
-                  <DollarSign size={22} className="text-emerald-400" />
+                  <DollarSign size={22} className="text-emerald-400/60" />
                 </div>
               </div>
-              <div className="text-[11px] text-emerald-400/80 uppercase tracking-wider">Bounty</div>
+              <div className="text-[11px] text-emerald-400/60/80 uppercase tracking-wider">Bounty</div>
               <div className="text-[10px] text-white/40">Found the guy</div>
             </div>
           </div>
@@ -3560,14 +3280,14 @@ const sections: DocSection[] = [
         <div className="my-10 flex justify-center">
           <div className="relative w-64 h-64">
             {/* Outer ring - pulsing */}
-            <div className="absolute inset-0 rounded-full border border-purple-500/20 animate-pulse" />
-            <div className="absolute inset-4 rounded-full border border-purple-500/10" />
+            <div className="absolute inset-0 rounded-full border border-white/[0.06] animate-pulse" />
+            <div className="absolute inset-4 rounded-full border border-white/[0.04]" />
 
             {/* Demand side */}
             <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4">
-              <div className="w-20 h-20 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center">
+              <div className="w-20 h-20 rounded-full bg-white/[0.02] border border-white/[0.08] flex items-center justify-center">
                 <div className="text-center">
-                  <div className="text-[10px] text-blue-400/80 uppercase tracking-wider">Demand</div>
+                  <div className="text-[10px] text-white/50/80 uppercase tracking-wider">Demand</div>
                   <div className="text-[9px] text-white/30">floating</div>
                 </div>
               </div>
@@ -3577,7 +3297,7 @@ const sections: DocSection[] = [
             <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-4">
               <div className="w-20 h-20 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
                 <div className="text-center">
-                  <div className="text-[10px] text-emerald-400/80 uppercase tracking-wider">Supply</div>
+                  <div className="text-[10px] text-emerald-400/60/80 uppercase tracking-wider">Supply</div>
                   <div className="text-[9px] text-white/30">floating</div>
                 </div>
               </div>
@@ -3586,10 +3306,10 @@ const sections: DocSection[] = [
             {/* Center - The Connector (Axis Mundi) */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="relative">
-                <div className="absolute -inset-4 rounded-full bg-purple-500/20 animate-ping" style={{ animationDuration: '3s' }} />
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/30 to-violet-500/20 border border-purple-500/40 flex items-center justify-center relative z-10">
+                <div className="absolute -inset-4 rounded-full bg-white/[0.04] animate-ping" style={{ animationDuration: '3s' }} />
+                <div className="w-16 h-16 rounded-full bg-white/[0.04] border border-white/[0.1] flex items-center justify-center relative z-10">
                   <div className="text-center">
-                    <div className="text-[10px] text-purple-300 font-medium">YOU</div>
+                    <div className="text-[10px] text-white/60 font-medium">YOU</div>
                     <div className="text-[8px] text-white/40">axis mundi</div>
                   </div>
                 </div>
@@ -3598,7 +3318,7 @@ const sections: DocSection[] = [
 
             {/* Connection lines */}
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-32 h-px bg-gradient-to-r from-blue-500/30 via-purple-500/50 to-emerald-500/30" />
+              <div className="w-32 h-px bg-white/[0.06]" />
             </div>
           </div>
         </div>
@@ -3627,21 +3347,21 @@ const sections: DocSection[] = [
         </p>
 
         {/* Brain Computation Visual - Animated */}
-        <div className="my-8 p-6 rounded-xl bg-gradient-to-br from-cyan-500/[0.06] to-transparent border border-cyan-500/20 relative overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-cyan-400/5 to-transparent -translate-x-full animate-[shimmer_5s_infinite]" />
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06] relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-[shimmer_5s_infinite]" />
           <div className="relative">
             <div className="flex items-center justify-center gap-2 mb-4">
-              <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-              <div className="text-[11px] text-cyan-400/60 uppercase tracking-wider">The brain</div>
+              <div className="w-2 h-2 rounded-full bg-white/30 animate-pulse" />
+              <div className="text-[11px] text-white/50/60 uppercase tracking-wider">The brain</div>
             </div>
 
             {/* Many-to-one flow */}
             <div className="flex items-center justify-center gap-6 mb-6">
               {/* Demands */}
               <div className="space-y-2">
-                <div className="px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-400 animate-pulse" style={{ animationDuration: '3s' }}>Demand A</div>
-                <div className="px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-400 animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.3s' }}>Demand B</div>
-                <div className="px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-400 animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.6s' }}>Demand C</div>
+                <div className="px-3 py-1.5 rounded bg-white/[0.02] border border-white/[0.06] text-[11px] text-white/50 animate-pulse" style={{ animationDuration: '3s' }}>Demand A</div>
+                <div className="px-3 py-1.5 rounded bg-white/[0.02] border border-white/[0.06] text-[11px] text-white/50 animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.3s' }}>Demand B</div>
+                <div className="px-3 py-1.5 rounded bg-white/[0.02] border border-white/[0.06] text-[11px] text-white/50 animate-pulse" style={{ animationDuration: '3s', animationDelay: '0.6s' }}>Demand C</div>
                 <div className="text-[10px] text-white/30 text-center">...20 total</div>
               </div>
 
@@ -3665,27 +3385,27 @@ const sections: DocSection[] = [
 
               {/* Single output */}
               <div className="text-center relative">
-                <div className="absolute -inset-3 rounded-xl bg-emerald-500/10 animate-ping" style={{ animationDuration: '3s' }} />
-                <div className="relative px-5 py-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-                  <div className="text-[13px] text-emerald-400 font-medium">1 Message</div>
+                <div className="absolute -inset-3 rounded bg-emerald-500/10 animate-ping" style={{ animationDuration: '3s' }} />
+                <div className="relative px-5 py-4 rounded bg-emerald-500/10 border border-emerald-500/30">
+                  <div className="text-[13px] text-emerald-400/60 font-medium">1 Message</div>
                   <div className="text-[10px] text-white/40">to Supply X</div>
                 </div>
               </div>
             </div>
 
             {/* Example message */}
-            <div className="p-3 rounded-lg bg-white/[0.04] border border-white/[0.08] mb-4 relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-[shimmer_3s_infinite]" />
+            <div className="p-3 rounded bg-white/[0.04] border border-white/[0.08] mb-4 relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/3 to-transparent -translate-x-full animate-[shimmer_3s_infinite]" />
               <p className="text-[12px] text-white/50 m-0 font-mono relative">
                 'Hey, I'm seeing companies like Acme doing [signal]. Want access?'
               </p>
             </div>
 
             <div className="text-center">
-              <div className="inline-block px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/20">
-                <span className="text-[11px] text-cyan-400">Matching: many-to-many</span>
+              <div className="inline-block px-4 py-2 rounded-full bg-white/[0.02] border border-white/[0.06]">
+                <span className="text-[11px] text-white/50">Matching: many-to-many</span>
                 <span className="text-[11px] text-white/30 mx-2">→</span>
-                <span className="text-[11px] text-emerald-400">Messaging: one-to-one</span>
+                <span className="text-[11px] text-emerald-400/60">Messaging: one-to-one</span>
               </div>
             </div>
           </div>
@@ -3713,11 +3433,11 @@ const sections: DocSection[] = [
         <div className="my-10 space-y-6">
           {/* Demand Row */}
           <div className="relative group">
-            <div className="absolute -inset-2 bg-gradient-to-r from-blue-500/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <div className="relative flex items-center gap-6 p-5 rounded-xl bg-blue-500/[0.04] border border-blue-500/20">
+            <div className="absolute -inset-2 bg-white/[0.02] rounded opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative flex items-center gap-6 p-5 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="shrink-0">
-                <div className="w-14 h-14 rounded-full bg-blue-500/10 border border-blue-500/30 flex items-center justify-center">
-                  <div className="text-[11px] text-blue-400 font-medium uppercase tracking-wider">Demand</div>
+                <div className="w-14 h-14 rounded-full bg-white/[0.02] border border-white/[0.08] flex items-center justify-center">
+                  <div className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Demand</div>
                 </div>
               </div>
               <div className="flex-1 grid grid-cols-2 gap-8">
@@ -3726,10 +3446,10 @@ const sections: DocSection[] = [
                   <div className="text-[14px] text-white/80 font-medium">"I know someone"</div>
                 </div>
                 <div className="relative">
-                  <div className="absolute -inset-2 bg-blue-500/10 rounded-lg animate-pulse" style={{ animationDuration: '3s' }} />
+                  <div className="absolute -inset-2 bg-white/[0.02] rounded animate-pulse" style={{ animationDuration: '3s' }} />
                   <div className="relative">
-                    <div className="text-[10px] text-blue-400/60 uppercase tracking-wider mb-1">What you hold</div>
-                    <div className="text-[14px] text-blue-300 font-medium">Who the provider is</div>
+                    <div className="text-[10px] text-white/50/60 uppercase tracking-wider mb-1">What you hold</div>
+                    <div className="text-[14px] text-white/50 font-medium">Who the provider is</div>
                   </div>
                 </div>
               </div>
@@ -3738,11 +3458,11 @@ const sections: DocSection[] = [
 
           {/* Supply Row */}
           <div className="relative group">
-            <div className="absolute -inset-2 bg-gradient-to-r from-emerald-500/10 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <div className="relative flex items-center gap-6 p-5 rounded-xl bg-emerald-500/[0.04] border border-emerald-500/20">
+            <div className="absolute -inset-2 bg-white/[0.02] rounded opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <div className="relative flex items-center gap-6 p-5 rounded bg-emerald-500/[0.04] border border-emerald-500/20">
               <div className="shrink-0">
                 <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-                  <div className="text-[11px] text-emerald-400 font-medium uppercase tracking-wider">Supply</div>
+                  <div className="text-[11px] text-emerald-400/60 font-medium uppercase tracking-wider">Supply</div>
                 </div>
               </div>
               <div className="flex-1 grid grid-cols-2 gap-8">
@@ -3751,10 +3471,10 @@ const sections: DocSection[] = [
                   <div className="text-[14px] text-white/80 font-medium">"Companies like Acme"</div>
                 </div>
                 <div className="relative">
-                  <div className="absolute -inset-2 bg-emerald-500/10 rounded-lg animate-pulse" style={{ animationDuration: '3s' }} />
+                  <div className="absolute -inset-2 bg-emerald-500/10 rounded animate-pulse" style={{ animationDuration: '3s' }} />
                   <div className="relative">
-                    <div className="text-[10px] text-emerald-400/60 uppercase tracking-wider mb-1">What you hold</div>
-                    <div className="text-[14px] text-emerald-300 font-medium">The full list of 20 companies</div>
+                    <div className="text-[10px] text-emerald-400/60/60 uppercase tracking-wider mb-1">What you hold</div>
+                    <div className="text-[14px] text-emerald-400/60 font-medium">The full list of 20 companies</div>
                   </div>
                 </div>
               </div>
@@ -3766,15 +3486,15 @@ const sections: DocSection[] = [
 
         <div className="space-y-4 my-8">
           <div className="relative group">
-            <div className="absolute -inset-1 rounded-xl bg-emerald-500/20 animate-pulse opacity-50" style={{ animationDuration: '3s' }} />
-            <div className="relative p-5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20">
+            <div className="absolute -inset-1 rounded bg-emerald-500/20 animate-pulse opacity-50" style={{ animationDuration: '3s' }} />
+            <div className="relative p-5 rounded bg-emerald-500/[0.06] border border-emerald-500/20">
               <div className="flex items-center gap-4">
                 <div className="shrink-0 w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                  <span className="text-[11px] text-emerald-400 font-medium">D</span>
+                  <span className="text-[11px] text-emerald-400/60 font-medium">D</span>
                 </div>
                 <div>
                   <p className="text-[13px] text-white/80 m-0">
-                    <strong className="text-emerald-400">"Yes, intro me"</strong>
+                    <strong className="text-emerald-400/60">"Yes, intro me"</strong>
                   </p>
                   <p className="text-[12px] text-white/50 mt-1 mb-0">→ NOW you reveal the provider → They can't go around you</p>
                 </div>
@@ -3782,15 +3502,15 @@ const sections: DocSection[] = [
             </div>
           </div>
           <div className="relative group">
-            <div className="absolute -inset-1 rounded-xl bg-blue-500/20 animate-pulse opacity-50" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
-            <div className="relative p-5 rounded-xl bg-blue-500/[0.06] border border-blue-500/20">
+            <div className="absolute -inset-1 rounded bg-white/[0.04] animate-pulse opacity-50" style={{ animationDuration: '3s', animationDelay: '0.5s' }} />
+            <div className="relative p-5 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="flex items-center gap-4">
-                <div className="shrink-0 w-12 h-12 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
-                  <span className="text-[11px] text-blue-400 font-medium">S</span>
+                <div className="shrink-0 w-12 h-12 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+                  <span className="text-[11px] text-white/50 font-medium">S</span>
                 </div>
                 <div>
                   <p className="text-[13px] text-white/80 m-0">
-                    <strong className="text-blue-400">"Yes, interested"</strong>
+                    <strong className="text-white/50">"Yes, interested"</strong>
                   </p>
                   <p className="text-[12px] text-white/50 mt-1 mb-0">→ NOW you reveal the 20 companies → They can't go around you</p>
                   <p className="text-[11px] text-white/30 mt-1 mb-0">or drip them one by one</p>
@@ -3808,10 +3528,10 @@ const sections: DocSection[] = [
 
         {/* Mystical letter style */}
         <div className="my-8 relative">
-          <div className="absolute -inset-4 bg-gradient-to-b from-purple-500/[0.03] via-transparent to-purple-500/[0.03] rounded-2xl" />
-          <div className="relative p-8 rounded-xl border border-purple-500/10 bg-[#0a0a0c]">
-            <div className="absolute top-4 left-4 w-8 h-8 border-l border-t border-purple-500/20" />
-            <div className="absolute bottom-4 right-4 w-8 h-8 border-r border-b border-purple-500/20" />
+          <div className="absolute -inset-4 bg-white/[0.01] rounded" />
+          <div className="relative p-8 rounded border border-white/[0.04] bg-[#0a0a0c]">
+            <div className="absolute top-4 left-4 w-8 h-8 border-l border-t border-white/[0.06]" />
+            <div className="absolute bottom-4 right-4 w-8 h-8 border-r border-b border-white/[0.06]" />
 
             <p className="text-[15px] text-white/80 italic leading-relaxed m-0">
               A connector never floods supply with matches. They offer access, then reveal details after intent.
@@ -3838,20 +3558,20 @@ const sections: DocSection[] = [
         </p>
 
         {/* Visual: One deal breakdown */}
-        <div className="p-6 rounded-xl bg-gradient-to-br from-amber-500/[0.08] to-transparent border border-amber-500/20 my-8">
-          <div className="text-[11px] text-amber-400/60 uppercase tracking-wider mb-2 text-center">One deal breakdown</div>
+        <div className="p-6 rounded bg-white/[0.02] border border-white/[0.06] my-8">
+          <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2 text-center">One deal breakdown</div>
           <div className="text-[12px] text-white/40 text-center mb-6">What you make when you connect a recruiter to a hiring company</div>
 
           <div className="grid grid-cols-2 gap-6">
-            <div className="p-5 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 text-center">
-              <div className="text-[10px] text-emerald-400/60 uppercase tracking-wider mb-2">Supply pays you</div>
-              <div className="text-[28px] font-bold text-emerald-400">$15K</div>
+            <div className="p-5 rounded bg-emerald-500/[0.06] border border-emerald-500/20 text-center">
+              <div className="text-[10px] text-emerald-400/60/60 uppercase tracking-wider mb-2">Supply pays you</div>
+              <div className="text-[28px] font-medium text-emerald-400/60">$15K</div>
               <div className="text-[11px] text-white/50 mt-2">access fee (upfront)</div>
               <div className="text-[10px] text-white/30 mt-1">for VIP access to your deal flow</div>
             </div>
-            <div className="p-5 rounded-xl bg-blue-500/[0.06] border border-blue-500/20 text-center">
-              <div className="text-[10px] text-blue-400/60 uppercase tracking-wider mb-2">Demand pays you</div>
-              <div className="text-[28px] font-bold text-blue-400">$15K</div>
+            <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+              <div className="text-[10px] text-white/50/60 uppercase tracking-wider mb-2">Demand pays you</div>
+              <div className="text-[28px] font-medium text-white/50">$15K</div>
               <div className="text-[11px] text-white/50 mt-2">finder's fee + % of deal</div>
               <div className="text-[10px] text-white/30 mt-1">for finding them the right provider</div>
             </div>
@@ -3861,21 +3581,21 @@ const sections: DocSection[] = [
             <div className="flex items-center gap-3">
               <div className="w-12 h-px bg-emerald-500/30" />
               <div className="text-[11px] text-white/40">+</div>
-              <div className="w-12 h-px bg-blue-500/30" />
+              <div className="w-12 h-px bg-white/[0.06]" />
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-white/[0.04] border border-white/[0.08] text-center">
+          <div className="p-4 rounded bg-white/[0.04] border border-white/[0.08] text-center">
             <div className="text-[11px] text-white/40 uppercase tracking-wider mb-1">Your total from one intro</div>
-            <div className="text-[32px] font-bold text-white/90">$30K</div>
+            <div className="text-[32px] font-medium text-white/90">$30K</div>
             <div className="text-[11px] text-white/40">before any % kicks in</div>
           </div>
 
-          <div className="mt-6 p-4 rounded-lg bg-amber-500/[0.06] border border-amber-500/20 text-center">
-            <div className="text-[11px] text-amber-400/60 uppercase tracking-wider mb-2">But wait — there's upside</div>
+          <div className="mt-6 p-4 rounded bg-white/[0.02] border border-white/[0.06] text-center">
+            <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">But wait — there's upside</div>
             <div className="text-[12px] text-white/50">If the deal closes and the client stays...</div>
             <div className="text-[12px] text-white/50 mt-1">Average B2B LTV: <span className="text-white/70 font-medium">$800K</span></div>
-            <div className="text-[13px] text-white/70 mt-2">Your % of that = <span className="text-amber-400 font-medium">generational wealth</span></div>
+            <div className="text-[13px] text-white/70 mt-2">Your % of that = <span className="text-white/50 font-medium">generational wealth</span></div>
           </div>
         </div>
 
@@ -3898,23 +3618,23 @@ const sections: DocSection[] = [
         </p>
 
         {/* Hero Visual - The Math */}
-        <div className="my-8 p-6 rounded-2xl bg-gradient-to-br from-violet-500/[0.12] to-blue-500/[0.05] border border-violet-500/20">
+        <div className="my-8 p-6 rounded bg-white/[0.02] border border-white/[0.06]">
           <div className="text-center mb-6">
-            <div className="text-[11px] text-violet-400/60 uppercase tracking-wider mb-2">The Activation Math</div>
+            <div className="text-[11px] text-white/50/60 uppercase tracking-wider mb-2">The Activation Math</div>
           </div>
           <div className="flex items-center justify-center gap-4 flex-wrap">
             <div className="text-center">
-              <div className="text-[36px] font-bold text-violet-400">1</div>
+              <div className="text-[36px] font-medium text-white/50">1</div>
               <div className="text-[11px] text-white/40">Partner</div>
             </div>
             <div className="text-[24px] text-white/20">×</div>
             <div className="text-center">
-              <div className="text-[36px] font-bold text-blue-400">500</div>
+              <div className="text-[36px] font-medium text-white/50">500</div>
               <div className="text-[11px] text-white/40">Signals</div>
             </div>
             <div className="text-[24px] text-white/20">=</div>
             <div className="text-center">
-              <div className="text-[36px] font-bold text-emerald-400">500</div>
+              <div className="text-[36px] font-medium text-emerald-400/60">500</div>
               <div className="text-[11px] text-white/40">Intros</div>
             </div>
           </div>
@@ -3932,44 +3652,44 @@ const sections: DocSection[] = [
         </p>
 
         <h3>The old way (slow, manual, doesn't scale)</h3>
-        <div className="p-4 rounded-xl bg-red-500/[0.06] border border-red-500/20 my-6">
+        <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <ul className="space-y-2 text-[13px] text-white/60 list-none p-0 m-0">
             <li className="flex items-start gap-2">
-              <span className="text-red-400/60">✗</span>
+              <span className="text-white/40/60">✗</span>
               <span>Manually search for companies that might need them</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-red-400/60">✗</span>
+              <span className="text-white/40/60">✗</span>
               <span>Write individual intros one by one</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-red-400/60">✗</span>
+              <span className="text-white/40/60">✗</span>
               <span>Hope the timing is right</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-red-400/60">✗</span>
+              <span className="text-white/40/60">✗</span>
               <span>Send 10-20 per day if you're fast</span>
             </li>
           </ul>
         </div>
 
         <h3>The new way (Fulfillment Mode)</h3>
-        <div className="p-4 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
+        <div className="p-4 rounded bg-emerald-500/[0.06] border border-emerald-500/20 my-6">
           <ul className="space-y-2 text-[13px] text-white/60 list-none p-0 m-0">
             <li className="flex items-start gap-2">
-              <span className="text-emerald-400">✓</span>
+              <span className="text-emerald-400/60">✓</span>
               <span>Upload your partner as a 1-row CSV</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-emerald-400">✓</span>
+              <span className="text-emerald-400/60">✓</span>
               <span>Load hundreds of demand signals</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-emerald-400">✓</span>
+              <span className="text-emerald-400/60">✓</span>
               <span>System matches ALL demand to your partner</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-emerald-400">✓</span>
+              <span className="text-emerald-400/60">✓</span>
               <span>Generate 500 personalized intros in minutes</span>
             </li>
           </ul>
@@ -3978,9 +3698,9 @@ const sections: DocSection[] = [
         <h3>Step-by-step: Activate a partner</h3>
 
         {/* Step 1 */}
-        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center text-[14px] font-semibold text-violet-400">1</div>
+            <div className="w-8 h-8 rounded-full bg-white/[0.04] flex items-center justify-center text-[14px] font-medium text-white/50">1</div>
             <div className="text-[15px] font-medium text-white/90">Upload your partner</div>
           </div>
           <p className="text-[13px] text-white/60 mb-4">
@@ -3988,7 +3708,7 @@ const sections: DocSection[] = [
           </p>
 
           {/* CSV Format */}
-          <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] mb-4">
+          <div className="p-4 rounded bg-black/40 border border-white/[0.06] mb-4">
             <div className="text-[10px] text-white/30 uppercase tracking-wider mb-2">Required headers</div>
             <div className="font-mono text-[11px] text-white/50 mb-4">
               Full Name,Company Name,Domain,Service Description,LinkedIn URL,Email,Target Industries
@@ -4004,42 +3724,42 @@ const sections: DocSection[] = [
             <div className="text-[11px] text-white/30 uppercase tracking-wider">What goes where</div>
             <div className="grid gap-2">
               <div className="flex items-start gap-2 text-[12px]">
-                <span className="text-violet-400/60 font-mono">Service Description</span>
+                <span className="text-white/50/60 font-mono">Service Description</span>
                 <span className="text-white/40">— Put everything here: what they do, ICP, differentiators, case studies. The system uses this for intros.</span>
               </div>
               <div className="flex items-start gap-2 text-[12px]">
-                <span className="text-violet-400/60 font-mono">Email</span>
+                <span className="text-white/50/60 font-mono">Email</span>
                 <span className="text-white/40">— Leave blank. They're your client. You don't send to them via Instantly.</span>
               </div>
               <div className="flex items-start gap-2 text-[12px]">
-                <span className="text-violet-400/60 font-mono">Domain</span>
+                <span className="text-white/50/60 font-mono">Domain</span>
                 <span className="text-white/40">— Their real domain. Used for matching and deduplication.</span>
               </div>
             </div>
           </div>
 
-          <div className="p-3 rounded-lg bg-amber-500/[0.06] border border-amber-500/20">
-            <p className="text-[11px] text-amber-200/70 m-0">
-              <strong className="text-amber-300/90">Key insight:</strong> The more detail you put in Service Description, the better the intros. Include ICP, differentiators, proof points. This is what the system uses to pitch them.
+          <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06]">
+            <p className="text-[11px] text-white/40 m-0">
+              <strong className="text-white/50/90">Key insight:</strong> The more detail you put in Service Description, the better the intros. Include ICP, differentiators, proof points. This is what the system uses to pitch them.
             </p>
           </div>
         </div>
 
         {/* Step 2 */}
-        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-[14px] font-semibold text-blue-400">2</div>
+            <div className="w-8 h-8 rounded-full bg-white/[0.04] flex items-center justify-center text-[14px] font-medium text-white/50">2</div>
             <div className="text-[15px] font-medium text-white/90">Load demand signals</div>
           </div>
           <p className="text-[13px] text-white/60 mb-3">
             Two options:
           </p>
           <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06]">
+            <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="text-[12px] font-medium text-white/70 mb-1">Apify Dataset</div>
               <div className="text-[11px] text-white/40">Paste your dataset ID. Thousands of companies with live signals.</div>
             </div>
-            <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.06]">
+            <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="text-[12px] font-medium text-white/70 mb-1">CSV Upload</div>
               <div className="text-[11px] text-white/40">Your own list. Companies you've researched. Warm leads.</div>
             </div>
@@ -4047,9 +3767,9 @@ const sections: DocSection[] = [
         </div>
 
         {/* Step 3 */}
-        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-[14px] font-semibold text-cyan-400">3</div>
+            <div className="w-8 h-8 rounded-full bg-white/[0.04] flex items-center justify-center text-[14px] font-medium text-white/50">3</div>
             <div className="text-[15px] font-medium text-white/90">Go to Flow</div>
           </div>
           <p className="text-[13px] text-white/60">
@@ -4058,15 +3778,15 @@ const sections: DocSection[] = [
         </div>
 
         {/* Step 4 */}
-        <div className="p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] my-6">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-[14px] font-semibold text-emerald-400">4</div>
+            <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-[14px] font-medium text-emerald-400/60">4</div>
             <div className="text-[15px] font-medium text-white/90">Generate and send</div>
           </div>
           <p className="text-[13px] text-white/60 mb-3">
             Enrich contacts. Generate intros. Every intro pitches your partner to a company that needs them right now:
           </p>
-          <div className="p-4 rounded-lg bg-emerald-500/[0.04] border border-emerald-500/20">
+          <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/20">
             <p className="text-[12px] text-white/50 italic m-0">
               "Hey [Name] — noticed [Company] is scaling the engineering team. I know someone who places senior engineers in Series B+ companies. Worth an intro?"
             </p>
@@ -4078,46 +3798,46 @@ const sections: DocSection[] = [
           Works both directions. If you land a client who needs help, flip the model:
         </p>
 
-        <div className="p-5 rounded-xl bg-blue-500/[0.06] border border-blue-500/20 my-6">
+        <div className="p-5 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="grid grid-cols-4 gap-2 text-center text-[12px]">
-            <div className="p-3 rounded-lg bg-white/[0.04]">
-              <div className="text-blue-400 font-medium">1. Upload client</div>
+            <div className="p-3 rounded bg-white/[0.04]">
+              <div className="text-white/50 font-medium">1. Upload client</div>
               <div className="text-[10px] text-white/40 mt-1">as Demand (1 row)</div>
             </div>
-            <div className="p-3 rounded-lg bg-white/[0.04]">
-              <div className="text-blue-400 font-medium">2. Load providers</div>
+            <div className="p-3 rounded bg-white/[0.04]">
+              <div className="text-white/50 font-medium">2. Load providers</div>
               <div className="text-[10px] text-white/40 mt-1">as Supply (many)</div>
             </div>
-            <div className="p-3 rounded-lg bg-white/[0.04]">
-              <div className="text-blue-400 font-medium">3. Match</div>
+            <div className="p-3 rounded bg-white/[0.04]">
+              <div className="text-white/50 font-medium">3. Match</div>
               <div className="text-[10px] text-white/40 mt-1">all to your client</div>
             </div>
-            <div className="p-3 rounded-lg bg-white/[0.04]">
-              <div className="text-blue-400 font-medium">4. Send</div>
+            <div className="p-3 rounded bg-white/[0.04]">
+              <div className="text-white/50 font-medium">4. Send</div>
               <div className="text-[10px] text-white/40 mt-1">pitch each provider</div>
             </div>
           </div>
         </div>
 
         <h3>Why this prints money</h3>
-        <div className="p-6 rounded-xl bg-gradient-to-br from-amber-500/[0.08] to-transparent border border-amber-500/20 my-6">
+        <div className="p-6 rounded bg-white/[0.02] border border-white/[0.06] my-6">
           <div className="space-y-4">
             <div className="flex items-start gap-3">
-              <div className="text-amber-400">→</div>
+              <div className="text-white/50">→</div>
               <div>
                 <div className="text-[13px] text-white/80 font-medium">Speed</div>
                 <div className="text-[12px] text-white/50">500 intros in the time it takes to write 5 manually</div>
               </div>
             </div>
             <div className="flex items-start gap-3">
-              <div className="text-amber-400">→</div>
+              <div className="text-white/50">→</div>
               <div>
                 <div className="text-[13px] text-white/80 font-medium">Timing</div>
                 <div className="text-[12px] text-white/50">Every intro hits companies showing live signals — they need help now</div>
               </div>
             </div>
             <div className="flex items-start gap-3">
-              <div className="text-amber-400">→</div>
+              <div className="text-white/50">→</div>
               <div>
                 <div className="text-[13px] text-white/80 font-medium">Leverage</div>
                 <div className="text-[12px] text-white/50">Your partner pays you for access. Demand pays you for the intro. Both sides.</div>
@@ -4131,16 +3851,16 @@ const sections: DocSection[] = [
           You sign a recruiting agency for $15K upfront (access fee to your deal flow). You load 500 companies hiring. Generate 500 intros. 2% reply. 10 conversations. 3 close. Each placement: $50K fee. Your cut: 20%.
         </p>
 
-        <div className="p-6 rounded-xl bg-white/[0.03] border border-white/[0.08] my-6">
+        <div className="p-6 rounded bg-white/[0.03] border border-white/[0.08] my-6">
           <div className="grid grid-cols-2 gap-6 text-center">
             <div>
               <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2">You collected</div>
-              <div className="text-[28px] font-bold text-emerald-400">$45K</div>
+              <div className="text-[28px] font-medium text-emerald-400/60">$45K</div>
               <div className="text-[11px] text-white/40 mt-1">$15K access + $30K (20% of 3 × $50K)</div>
             </div>
             <div>
               <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2">Time spent</div>
-              <div className="text-[28px] font-bold text-white/80">&lt;1hr</div>
+              <div className="text-[28px] font-medium text-white/80">&lt;1hr</div>
               <div className="text-[11px] text-white/40 mt-1">Upload, load, generate, send</div>
             </div>
           </div>
@@ -4149,7 +3869,7 @@ const sections: DocSection[] = [
         <p className="text-center my-8">
           <a
             href="/flow"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white text-black font-medium text-[14px] hover:bg-white/90 transition-colors no-underline"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded bg-white text-black font-medium text-[14px] hover:bg-white/90 transition-colors no-underline"
           >
             Open Flow →
           </a>
@@ -4189,21 +3909,20 @@ export default function Library() {
         <div className="p-4 border-b border-white/[0.06]">
           <button
             onClick={() => navigate('/launcher')}
-            className="flex items-center gap-2 text-white/40 hover:text-white/70 transition-colors text-[13px]"
+            className="flex items-center gap-1.5 font-mono text-[10px] text-white/25 hover:text-white/50 transition-colors"
           >
-            <ArrowLeft size={14} />
-            Back
+            ← Back
           </button>
         </div>
 
         <div className="px-4 py-6 border-b border-white/[0.06]">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
-              <BookOpen size={16} className="text-white/60" />
+            <div className="w-8 h-8 rounded bg-white/[0.03] border border-white/[0.06] flex items-center justify-center">
+              <BookOpen size={14} className="text-white/40" />
             </div>
             <div>
-              <div className="text-[14px] font-medium text-white">OS Library</div>
-              <div className="text-[11px] text-white/35">Docs & Philosophy</div>
+              <div className="font-mono text-[12px] font-medium text-white/80">OS Library</div>
+              <div className="font-mono text-[9px] text-white/25 uppercase tracking-widest">Docs & Philosophy</div>
             </div>
           </div>
         </div>
@@ -4211,20 +3930,20 @@ export default function Library() {
         <nav className="library-sidebar flex-1 overflow-y-auto py-4">
           {getstartedSections.length > 0 && (
             <div className="px-4 mb-6">
-              <div className="text-[10px] font-medium text-emerald-400/60 uppercase tracking-wider mb-3">
+              <div className="font-mono text-[9px] font-medium text-emerald-400/60/50 uppercase tracking-widest mb-3">
                 Get Started
               </div>
               {getstartedSections.map(section => (
                 <button
                   key={section.id}
                   onClick={() => setActiveSection(section.id)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-colors mb-0.5 ${
+                  className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded font-mono text-[11px] transition-colors mb-0.5 ${
                     activeSection === section.id
-                      ? 'bg-emerald-500/[0.12] text-emerald-300'
-                      : 'text-white/50 hover:text-white/80 hover:bg-white/[0.04]'
+                      ? 'bg-white/[0.06] text-white/80'
+                      : 'text-white/40 hover:text-white/60 hover:bg-white/[0.03]'
                   }`}
                 >
-                  <span className={activeSection === section.id ? 'text-emerald-400/70' : 'text-white/35'}>
+                  <span className={activeSection === section.id ? 'text-white/60' : 'text-white/25'}>
                     {section.icon}
                   </span>
                   {section.title}
@@ -4234,20 +3953,20 @@ export default function Library() {
           )}
 
           <div className="px-4 mb-6">
-            <div className="text-[10px] font-medium text-white/25 uppercase tracking-wider mb-3">
+            <div className="font-mono text-[9px] font-medium text-white/20 uppercase tracking-widest mb-3">
               Philosophy
             </div>
             {philosophySections.map(section => (
               <button
                 key={section.id}
                 onClick={() => setActiveSection(section.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-colors mb-0.5 ${
+                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded font-mono text-[11px] transition-colors mb-0.5 ${
                   activeSection === section.id
-                    ? 'bg-white/[0.08] text-white'
-                    : 'text-white/50 hover:text-white/80 hover:bg-white/[0.04]'
+                    ? 'bg-white/[0.06] text-white/80'
+                    : 'text-white/40 hover:text-white/60 hover:bg-white/[0.03]'
                 }`}
               >
-                <span className={activeSection === section.id ? 'text-white/70' : 'text-white/35'}>
+                <span className={activeSection === section.id ? 'text-white/60' : 'text-white/25'}>
                   {section.icon}
                 </span>
                 {section.title}
@@ -4256,20 +3975,20 @@ export default function Library() {
           </div>
 
           <div className="px-4">
-            <div className="text-[10px] font-medium text-white/25 uppercase tracking-wider mb-3">
+            <div className="font-mono text-[9px] font-medium text-white/20 uppercase tracking-widest mb-3">
               System
             </div>
             {systemSections.map(section => (
               <button
                 key={section.id}
                 onClick={() => setActiveSection(section.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-[13px] transition-colors mb-0.5 ${
+                className={`w-full flex items-center gap-2.5 px-3 py-1.5 rounded font-mono text-[11px] transition-colors mb-0.5 ${
                   activeSection === section.id
-                    ? 'bg-white/[0.08] text-white'
-                    : 'text-white/50 hover:text-white/80 hover:bg-white/[0.04]'
+                    ? 'bg-white/[0.06] text-white/80'
+                    : 'text-white/40 hover:text-white/60 hover:bg-white/[0.03]'
                 }`}
               >
-                <span className={activeSection === section.id ? 'text-white/70' : 'text-white/35'}>
+                <span className={activeSection === section.id ? 'text-white/60' : 'text-white/25'}>
                   {section.icon}
                 </span>
                 {section.title}
@@ -4285,8 +4004,8 @@ export default function Library() {
             rel="noopener noreferrer"
             className="flex items-center gap-2 opacity-40 hover:opacity-70 transition-opacity"
           >
-            <img src="/ssm-logo.png" alt="SSM" className="w-5 h-5 rounded" />
-            <span className="text-[11px] text-white/60">SSM Community</span>
+            <img src="/ssm-logo.png" alt="SSM" className="w-5 h-5" style={{ borderRadius: '2px' }} />
+            <span className="font-mono text-[10px] text-white/30">SSM Community</span>
           </a>
         </div>
       </aside>
@@ -4296,15 +4015,15 @@ export default function Library() {
         <div className="max-w-[640px] px-12 py-12">
           {currentSection && (
             <>
-              <div className="flex items-center gap-1.5 text-[11px] text-white/30 mb-6">
-                <span className={currentSection.category === 'getstarted' ? 'text-emerald-400/60' : ''}>
+              <div className="flex items-center gap-1.5 font-mono text-[9px] text-white/25 uppercase tracking-widest mb-6">
+                <span>
                   {currentSection.category === 'philosophy' ? 'Philosophy' : currentSection.category === 'getstarted' ? 'Get Started' : 'System'}
                 </span>
-                <ChevronRight size={10} />
-                <span className={currentSection.category === 'getstarted' ? 'text-emerald-300/70' : 'text-white/45'}>{currentSection.title}</span>
+                <span className="text-white/10">{'>'}</span>
+                <span className="text-white/40">{currentSection.title}</span>
               </div>
 
-              <h1 className="text-[28px] font-bold text-white tracking-[-0.02em] mb-8">
+              <h1 className="font-mono text-[22px] font-medium text-white/90 tracking-[-0.02em] mb-8">
                 {currentSection.title}
               </h1>
 
@@ -4352,44 +4071,48 @@ export default function Library() {
         }
 
         .docs-content article {
-          color: rgba(255, 255, 255, 0.55);
-          font-size: 13px;
-          line-height: 1.7;
+          color: rgba(255, 255, 255, 0.45);
+          font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+          font-size: 11px;
+          line-height: 1.8;
         }
 
         .docs-content .lead {
-          font-size: 14px;
-          color: rgba(255, 255, 255, 0.65);
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.50);
           margin-bottom: 24px;
-          line-height: 1.6;
+          line-height: 1.7;
         }
 
         .docs-content .placeholder {
           padding: 16px;
           background: rgba(255, 255, 255, 0.02);
-          border: 1px dashed rgba(255, 255, 255, 0.08);
-          border-radius: 6px;
-          color: rgba(255, 255, 255, 0.25);
+          border: 1px dashed rgba(255, 255, 255, 0.06);
+          border-radius: 2px;
+          color: rgba(255, 255, 255, 0.20);
           font-style: italic;
           margin: 16px 0;
-          font-size: 12px;
+          font-size: 10px;
         }
 
         .docs-content h3 {
-          font-size: 17px;
-          font-weight: 700;
-          color: rgba(255, 255, 255, 0.95);
+          font-size: 13px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.80);
           margin-top: 32px;
           margin-bottom: 12px;
-          letter-spacing: -0.01em;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
         }
 
         .docs-content h4 {
-          font-size: 14px;
-          font-weight: 600;
-          color: rgba(255, 255, 255, 0.8);
+          font-size: 11px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.60);
           margin-top: 24px;
           margin-bottom: 10px;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
         }
 
         .docs-content p {
@@ -4406,28 +4129,27 @@ export default function Library() {
         }
 
         .docs-content strong {
-          color: rgba(255, 255, 255, 0.8);
+          color: rgba(255, 255, 255, 0.65);
           font-weight: 500;
         }
 
         .docs-content em {
-          color: rgba(255, 255, 255, 0.6);
+          color: rgba(255, 255, 255, 0.50);
         }
 
         .docs-content code {
-          background: rgba(255, 255, 255, 0.04);
+          background: rgba(255, 255, 255, 0.03);
           padding: 1px 5px;
-          border-radius: 3px;
-          font-size: 11px;
-          font-family: 'SF Mono', 'Fira Code', monospace;
-          color: rgba(255, 255, 255, 0.6);
+          border-radius: 2px;
+          font-size: 10px;
+          color: rgba(255, 255, 255, 0.50);
         }
 
         .docs-content table {
           width: 100%;
           border-collapse: collapse;
           margin: 16px 0;
-          font-size: 12px;
+          font-size: 10px;
         }
 
         .docs-content th {
@@ -4435,28 +4157,27 @@ export default function Library() {
           padding: 8px 12px;
           background: rgba(255, 255, 255, 0.02);
           border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-          color: rgba(255, 255, 255, 0.35);
+          color: rgba(255, 255, 255, 0.25);
           font-weight: 500;
-          font-size: 10px;
+          font-size: 9px;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.08em;
         }
 
         .docs-content td {
           padding: 8px 12px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-          color: rgba(255, 255, 255, 0.55);
+          color: rgba(255, 255, 255, 0.40);
         }
 
         .docs-content pre {
           background: rgba(255, 255, 255, 0.02);
-          border: 1px solid rgba(255, 255, 255, 0.04);
-          border-radius: 6px;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 2px;
           padding: 12px 16px;
-          font-family: 'SF Mono', 'Fira Code', monospace;
-          font-size: 11px;
-          line-height: 1.5;
-          color: rgba(255, 255, 255, 0.55);
+          font-size: 10px;
+          line-height: 1.6;
+          color: rgba(255, 255, 255, 0.40);
           overflow-x: auto;
           margin: 16px 0;
           white-space: pre;
@@ -4471,41 +4192,41 @@ export default function Library() {
 
         .docs-content .card-red, .docs-content .card-green {
           padding: 12px;
-          border-radius: 6px;
+          border-radius: 2px;
         }
 
         .docs-content .card-red {
-          background: rgba(239, 68, 68, 0.06);
-          border: 1px solid rgba(239, 68, 68, 0.15);
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .docs-content .card-green {
-          background: rgba(34, 197, 94, 0.06);
-          border: 1px solid rgba(34, 197, 94, 0.15);
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .docs-content .card-title {
-          font-size: 10px;
-          font-weight: 600;
-          color: rgba(255, 255, 255, 0.4);
+          font-size: 9px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.25);
           margin-bottom: 8px;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.08em;
         }
 
         .docs-content .card-red ul, .docs-content .card-green ul {
           margin: 0;
           padding-left: 14px;
-          font-size: 12px;
+          font-size: 10px;
         }
 
         .docs-content .card-red li {
-          color: rgba(239, 68, 68, 0.7);
+          color: rgba(255, 255, 255, 0.35);
           margin-bottom: 4px;
         }
 
         .docs-content .card-green li {
-          color: rgba(34, 197, 94, 0.7);
+          color: rgba(255, 255, 255, 0.45);
           margin-bottom: 4px;
         }
 
@@ -4519,48 +4240,50 @@ export default function Library() {
         .docs-content .feature-card {
           background: rgba(255, 255, 255, 0.02);
           border: 1px solid rgba(255, 255, 255, 0.06);
-          border-radius: 10px;
-          padding: 24px 20px;
+          border-radius: 2px;
+          padding: 20px 16px;
           text-align: center;
         }
 
         .docs-content .feature-icon {
-          color: rgba(255, 255, 255, 0.4);
-          margin-bottom: 16px;
+          color: rgba(255, 255, 255, 0.30);
+          margin-bottom: 12px;
           display: flex;
           justify-content: center;
         }
 
         .docs-content .feature-title {
-          font-size: 13px;
-          font-weight: 600;
-          color: rgba(255, 255, 255, 0.9);
+          font-size: 11px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.60);
           margin-bottom: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
         }
 
         .docs-content .feature-desc {
-          font-size: 12px;
-          color: rgba(255, 255, 255, 0.4);
-          line-height: 1.5;
+          font-size: 10px;
+          color: rgba(255, 255, 255, 0.30);
+          line-height: 1.6;
         }
 
         .docs-content .highlight-box {
-          background: rgba(255, 255, 255, 0.03);
-          border-left: 3px solid rgba(255, 255, 255, 0.3);
-          padding: 16px 20px;
+          background: rgba(255, 255, 255, 0.02);
+          border-left: 2px solid rgba(255, 255, 255, 0.12);
+          padding: 12px 16px;
           margin: 20px 0;
-          border-radius: 0 6px 6px 0;
+          border-radius: 0;
         }
 
         .docs-content .highlight-box p {
           margin: 0;
-          font-size: 14px;
-          color: rgba(255, 255, 255, 0.8);
+          font-size: 11px;
+          color: rgba(255, 255, 255, 0.60);
         }
 
         .docs-content .closing {
           margin-top: 28px;
-          color: rgba(255, 255, 255, 0.5);
+          color: rgba(255, 255, 255, 0.35);
           font-style: italic;
         }
       `}</style>

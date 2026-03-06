@@ -437,20 +437,21 @@ async function findPersonWithConnectorAgent(
   domain: string,
   firstName: string,
   lastName: string,
-  config: RouterConfig
+  config: RouterConfig,
+  companyName?: string
 ): Promise<{ email: string | null; error?: any }> {
   try {
+    const payload: any = { firstName, lastName };
+    if (domain) payload.domain = domain;
+    if (companyName) payload.companyName = companyName;
+
     const response = await fetch('https://api.connector-os.com/api/email/v2/find', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.connectorAgentApiKey}`,
       },
-      body: JSON.stringify({
-        domain,
-        firstName,
-        lastName,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -941,7 +942,7 @@ function parseHttpError(error: any): 'AUTH_ERROR' | 'CREDITS_EXHAUSTED' | 'RATE_
   const status = error?.status || error?.response?.status;
   const message = (error?.message || String(error)).toLowerCase();
 
-  if (status === 401 || message.includes('401') || message.includes('unauthorized')) {
+  if (status === 401 || status === 403 || message.includes('401') || message.includes('403') || message.includes('unauthorized') || message.includes('payment')) {
     return 'AUTH_ERROR';
   }
   if (status === 422 || message.includes('422') || message.includes('credit') || message.includes('quota') || message.includes('limit exceeded')) {

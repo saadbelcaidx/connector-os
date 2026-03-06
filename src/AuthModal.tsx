@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, Loader2, CheckCircle, ArrowRight, X, Clock, Send, RefreshCw, MessageSquare, Network, Key, Eye, EyeOff } from 'lucide-react';
+import { Loader2, CheckCircle, ArrowRight, X, Clock, Send, RefreshCw, Mail, Key, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import { supabase } from './lib/supabase';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
@@ -25,7 +24,6 @@ async function checkSSMStatus(email: string): Promise<{ status: 'approved' | 'pe
     const data = await response.json();
     const status = data.status as string;
 
-    // Map to our enum (handle 'revoked' as 'none' - they can re-request)
     if (status === 'approved') {
       console.log('[SSM Gate] Status check:', normalizedEmail, '→ approved');
       return { status: 'approved' };
@@ -50,22 +48,67 @@ interface AuthModalProps {
 }
 
 type ModalState =
-  | 'loading'          // Initial check
-  | 'email_input'      // Enter email
-  | 'sending'          // Sending magic link
-  | 'email_sent'       // Check your email
-  | 'request_access'   // User logged in but needs to request access
-  | 'requesting'       // Sending access request
-  | 'pending'          // Access request pending
-  | 'success';         // Access granted
+  | 'loading'
+  | 'email_input'
+  | 'sending'
+  | 'email_sent'
+  | 'request_access'
+  | 'requesting'
+  | 'pending'
+  | 'success';
 
 const RESEND_COOLDOWN = 60;
 
-// Feature icons mapping
-const featureIcons: Record<string, typeof Mail> = {
-  'Msg Simulator': Mail,
-  'Inbound': MessageSquare,
-  'Matching Engine': Network,
+// Station input style
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  height: '36px',
+  padding: '0 12px',
+  fontFamily: 'monospace',
+  fontSize: '11px',
+  color: 'rgba(255,255,255,0.8)',
+  background: 'rgba(255,255,255,0.02)',
+  border: '1px solid rgba(255,255,255,0.06)',
+  borderRadius: '2px',
+  outline: 'none',
+  transition: 'border-color 0.2s',
+};
+
+// Station primary button style
+const btnPrimaryStyle: React.CSSProperties = {
+  width: '100%',
+  height: '36px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+  fontFamily: 'monospace',
+  fontSize: '11px',
+  fontWeight: 500,
+  color: '#000',
+  background: '#fff',
+  border: 'none',
+  borderRadius: '2px',
+  cursor: 'pointer',
+  transition: 'opacity 0.2s',
+};
+
+// Station secondary button style
+const btnSecondaryStyle: React.CSSProperties = {
+  width: '100%',
+  height: '36px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+  fontFamily: 'monospace',
+  fontSize: '11px',
+  color: 'rgba(255,255,255,0.5)',
+  background: 'rgba(255,255,255,0.03)',
+  border: '1px solid rgba(255,255,255,0.06)',
+  borderRadius: '2px',
+  cursor: 'pointer',
+  transition: 'border-color 0.2s',
 };
 
 export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: AuthModalProps) {
@@ -76,14 +119,11 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
   const [fullName, setFullName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [usePassword, setUsePassword] = useState(false);
-  const [isLoginMode, setIsLoginMode] = useState(false); // true = "Already in SSM" flow
-  const [isResetMode, setIsResetMode] = useState(false); // true = "Forgot password" flow
+  const [isLoginMode, setIsLoginMode] = useState(false);
+  const [isResetMode, setIsResetMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resendTimer, setResendTimer] = useState(0);
 
-  const FeatureIcon = featureIcons[featureName] || Mail;
-
-  // Check access when modal opens or user changes
   useEffect(() => {
     if (!isOpen) return;
 
@@ -99,14 +139,11 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
     }
   }, [user, authLoading, isOpen]);
 
-  // Resend countdown timer
   useEffect(() => {
     if (resendTimer <= 0) return;
-
     const interval = setInterval(() => {
       setResendTimer(t => t - 1);
     }, 1000);
-
     return () => clearInterval(interval);
   }, [resendTimer]);
 
@@ -122,11 +159,9 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
     } else if (result.status === 'pending') {
       setState('pending');
     } else if (result.status === 'error') {
-      // Network failure - do NOT auto-request, show error
       setError(result.error || 'Failed to check access');
       setState('request_access');
     } else {
-      // status === 'none'
       setState('request_access');
     }
   };
@@ -140,11 +175,9 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Check status via edge function (bypasses RLS, works regardless of auth state)
     const checkResult = await checkSSMStatus(normalizedEmail);
     console.log('[SSM Gate] handleEmailSubmit decision:', normalizedEmail, '→', checkResult.status);
 
-    // Guard: Network failure - never fall through to request
     if (checkResult.status === 'error') {
       setError(checkResult.error || 'Failed to check access status');
       setState('email_input');
@@ -152,9 +185,7 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
     }
 
     if (isLoginMode) {
-      // LOGIN MODE: User claims they're already in SSM
       if (checkResult.status === 'approved') {
-        // Verified - send magic link
         sessionStorage.setItem('auth_return_to', window.location.pathname);
         const result = await signInWithEmail(normalizedEmail);
         if (result.error) {
@@ -174,8 +205,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
         setUsePassword(false);
       }
     } else {
-      // REQUEST MODE: User wants to request access
-      // Guard: Approved emails NEVER hit ssm-request
       if (checkResult.status === 'approved') {
         console.log('[SSM Gate] Blocked ssm-request for approved email:', normalizedEmail);
         setError("You're already in SSM! Click 'Already in SSM?' below to sign in.");
@@ -188,7 +217,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
         return;
       }
 
-      // status === 'none' - allow new request
       console.log('[SSM Gate] Allowing ssm-request for new email:', normalizedEmail);
       try {
         const response = await fetch(
@@ -205,7 +233,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
         const result = await response.json();
         if (response.ok) {
-          // If auto-approved (SSM member), show success and redirect to email_sent
           if (result.status === 'approved' && result.auto_approved) {
             setState('email_sent');
             setResendTimer(RESEND_COOLDOWN);
@@ -234,15 +261,12 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
     const normalizedEmail = email.toLowerCase().trim();
 
     try {
-      // Try to sign in with password
       const result = await signInWithPassword(normalizedEmail, password);
 
       if (result.error) {
-        // Wrong password or no account
         setError('Invalid email or password');
         setState('email_input');
       } else {
-        // Auth succeeded
         setState('success');
         setTimeout(onSuccess, 600);
       }
@@ -313,18 +337,15 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
     const normalizedEmail = user.email.toLowerCase().trim();
 
-    // Check status first - guard against approved emails hitting ssm-request
     const checkResult = await checkSSMStatus(normalizedEmail);
     console.log('[SSM Gate] handleRequestAccess decision:', normalizedEmail, '→', checkResult.status);
 
-    // Guard: Network failure - don't auto-request
     if (checkResult.status === 'error') {
       setError(checkResult.error || 'Failed to check access status');
       setState('request_access');
       return;
     }
 
-    // Guard: Approved emails NEVER hit ssm-request
     if (checkResult.status === 'approved') {
       console.log('[SSM Gate] Blocked ssm-request for approved email:', normalizedEmail);
       setState('success');
@@ -337,7 +358,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
       return;
     }
 
-    // status === 'none' - allow new request
     console.log('[SSM Gate] Allowing ssm-request for new email:', normalizedEmail);
     try {
       const response = await fetch(
@@ -354,7 +374,6 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
       const result = await response.json();
       if (response.ok) {
-        // If auto-approved (SSM member), show success
         if (result.status === 'approved' && result.auto_approved) {
           setState('success');
           setTimeout(onSuccess, 600);
@@ -382,30 +401,27 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-md"
+        className="absolute inset-0 bg-black/70"
         onClick={handleClose}
-        style={{ animation: 'fadeIn 0.2s ease-out' }}
+        style={{ animation: 'authFadeIn 0.2s ease-out' }}
       />
 
       {/* Modal */}
       <div
-        className="relative w-full max-w-[400px] bg-[#0C0C0C] rounded-2xl border border-white/[0.08] overflow-hidden"
+        className="relative w-full max-w-[380px] bg-[#09090b] border border-white/[0.06] overflow-hidden"
         style={{
-          animation: 'scaleIn 0.25s ease-out',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+          borderRadius: '2px',
+          animation: 'authScaleIn 0.25s ease-out',
         }}
       >
-        {/* Header with feature icon - minimal like Linear */}
+        {/* Header */}
         <div className="pt-6 pb-4 px-6 text-center">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3"
-            style={{
-              background: 'rgba(255, 255, 255, 0.04)',
-            }}
+            className="w-10 h-10 rounded flex items-center justify-center mx-auto mb-3 bg-white/[0.03] border border-white/[0.06]"
           >
-            <FeatureIcon size={18} style={{ color: 'rgba(255, 255, 255, 0.6)', strokeWidth: 1.5 }} />
+            <Mail size={16} style={{ color: 'rgba(255, 255, 255, 0.4)', strokeWidth: 1.5 }} />
           </div>
-          <h2 className="text-[15px] font-medium text-white/90">
+          <h2 className="font-mono text-[12px] font-medium text-white/70 uppercase tracking-wider">
             {featureName}
           </h2>
         </div>
@@ -413,24 +429,24 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
         {/* Close button */}
         <button
           onClick={handleClose}
-          className="absolute top-4 right-4 p-2 text-white/30 hover:text-white/60 transition-colors"
+          className="absolute top-4 right-4 p-1.5 text-white/20 hover:text-white/50 transition-colors"
         >
-          <X size={18} />
+          <X size={14} />
         </button>
 
-        <div className="p-6">
+        <div className="px-6 pb-6">
           {/* Loading State */}
           {state === 'loading' && (
             <div className="py-6 text-center">
-              <Loader2 size={22} className="text-white/40 animate-spin mx-auto mb-3" />
-              <p className="text-[13px] text-white/40">Checking access...</p>
+              <Loader2 size={18} className="text-white/30 animate-spin mx-auto mb-3" />
+              <p className="font-mono text-[10px] text-white/30">Checking access...</p>
             </div>
           )}
 
           {/* Email Input State */}
           {state === 'email_input' && (
-            <div style={{ animation: 'fadeIn 0.2s ease-out' }}>
-              <p className="text-[12px] text-white/40 text-center mb-5">
+            <div style={{ animation: 'authFadeIn 0.2s ease-out' }}>
+              <p className="font-mono text-[10px] text-white/30 text-center mb-5">
                 {isResetMode
                   ? 'Enter your email to reset password'
                   : isLoginMode
@@ -446,10 +462,11 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
                   placeholder="you@company.com"
                   autoFocus
                   required
-                  className="input-field h-[44px] text-[14px] mb-2.5"
+                  style={{ ...inputStyle, marginBottom: '8px' }}
+                  onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                  onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
                 />
 
-                {/* Full name - required when requesting access (not login/reset) */}
                 {!isLoginMode && !isResetMode && (
                   <input
                     type="text"
@@ -457,72 +474,77 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="Full name"
                     required
-                    className="input-field h-[44px] text-[14px] mb-2.5"
+                    style={{ ...inputStyle, marginBottom: '8px' }}
+                    onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                    onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
                   />
                 )}
 
                 {usePassword && !isResetMode && (
-                  <div className="relative mb-2.5">
+                  <div className="relative" style={{ marginBottom: '8px' }}>
                     <input
                       type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Password"
                       required
-                      className="input-field h-[44px] text-[14px] pr-11"
+                      style={{ ...inputStyle, paddingRight: '36px' }}
+                      onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                      onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-white/30 hover:text-white/50 transition-colors"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-white/20 hover:text-white/40 transition-colors"
                     >
-                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
                   </div>
                 )}
 
                 {error && (
-                  <p className="text-[12px] text-red-400/90 mb-2.5 text-center">{error}</p>
+                  <p className="font-mono text-[10px] text-white/30 mb-2 text-center">{error}</p>
                 )}
 
                 <button
                   type="submit"
                   disabled={!email.includes('@') || (usePassword && !isResetMode && !password) || (!isLoginMode && !isResetMode && !fullName.trim())}
-                  className="w-full h-[44px] btn-primary text-[14px]"
+                  style={{
+                    ...btnPrimaryStyle,
+                    opacity: (!email.includes('@') || (usePassword && !isResetMode && !password) || (!isLoginMode && !isResetMode && !fullName.trim())) ? 0.3 : 1,
+                  }}
                 >
                   {isResetMode
                     ? 'Send Reset Link'
                     : usePassword
                       ? 'Sign In'
                       : (isLoginMode ? 'Send Magic Link' : 'Request Access')}
-                  <ArrowRight size={15} />
+                  <ArrowRight size={12} />
                 </button>
               </form>
 
-              {/* Reset mode: just show back link */}
               {isResetMode ? (
-                <div className="mt-5 pt-3 border-t border-white/[0.04] text-center">
+                <div className="mt-4 pt-3 border-t border-white/[0.04] text-center">
                   <button
                     type="button"
                     onClick={() => {
                       setIsResetMode(false);
                       setError(null);
                     }}
-                    className="text-[11px] text-white/25 hover:text-white/45 transition-colors"
+                    className="font-mono text-[10px] text-white/20 hover:text-white/40 transition-colors"
                   >
-                    ← Back to Sign In
+                    Back to Sign In
                   </button>
                 </div>
               ) : (
                 <>
-                  {/* Auth method options */}
                   <div className="mt-4 pt-4 border-t border-white/[0.06]">
                     {isLoginMode ? (
-                      <p className="text-[10px] text-white/25 text-center uppercase tracking-wider mb-2.5">
+                      <p className="font-mono text-[9px] text-white/20 text-center uppercase tracking-widest mb-2.5">
                         Or sign in with
                       </p>
                     ) : (
-                      <p className="text-[11px] text-white/35 text-center mb-2.5">
+                      <p className="font-mono text-[10px] text-white/30 text-center mb-2.5">
                         Already in SSM?
                       </p>
                     )}
@@ -530,32 +552,30 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
                       type="button"
                       onClick={() => {
                         if (!isLoginMode) {
-                          // Entering login mode
                           setIsLoginMode(true);
                           setUsePassword(true);
                         } else {
-                          // Toggle between password and magic link
                           setUsePassword(!usePassword);
                         }
                         setError(null);
                       }}
-                      className="w-full h-[40px] btn-secondary text-[12px]"
+                      style={btnSecondaryStyle}
                     >
                       {isLoginMode ? (
                         usePassword ? (
                           <>
-                            <Mail size={14} />
+                            <Mail size={12} />
                             Magic Link
                           </>
                         ) : (
                           <>
-                            <Key size={14} />
+                            <Key size={12} />
                             Password
                           </>
                         )
                       ) : (
                         <>
-                          <Key size={14} />
+                          <Key size={12} />
                           Login with Password
                         </>
                       )}
@@ -570,15 +590,14 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
                           setPassword('');
                           setError(null);
                         }}
-                        className="w-full mt-2.5 text-[11px] text-white/35 hover:text-white/55 transition-colors"
+                        className="w-full mt-2.5 font-mono text-[10px] text-white/25 hover:text-white/40 transition-colors"
                       >
                         Forgot password?
                       </button>
                     )}
                   </div>
 
-                  {/* Back links */}
-                  <div className="mt-5 pt-3 border-t border-white/[0.04] flex justify-between">
+                  <div className="mt-4 pt-3 border-t border-white/[0.04] flex justify-between">
                     {isLoginMode && (
                       <button
                         type="button"
@@ -587,17 +606,17 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
                           setUsePassword(false);
                           setError(null);
                         }}
-                        className="text-[11px] text-white/25 hover:text-white/45 transition-colors"
+                        className="font-mono text-[10px] text-white/20 hover:text-white/40 transition-colors"
                       >
-                        ← Request Access
+                        Request Access
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={handleClose}
-                      className={`text-[11px] text-white/25 hover:text-white/45 transition-colors ${!isLoginMode ? 'w-full text-center' : 'ml-auto'}`}
+                      className={`font-mono text-[10px] text-white/20 hover:text-white/40 transition-colors ${!isLoginMode ? 'w-full text-center' : 'ml-auto'}`}
                     >
-                      {isLoginMode ? 'Back to Console' : '← Back to Console'}
+                      Back
                     </button>
                   </div>
                 </>
@@ -607,30 +626,30 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
           {/* Sending State */}
           {state === 'sending' && (
-            <div className="py-6 text-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
-              <Loader2 size={24} className="text-white/50 animate-spin mx-auto mb-3" />
-              <p className="text-[14px] text-white/50">One moment...</p>
+            <div className="py-6 text-center" style={{ animation: 'authFadeIn 0.2s ease-out' }}>
+              <Loader2 size={18} className="text-white/30 animate-spin mx-auto mb-3" />
+              <p className="font-mono text-[10px] text-white/30">One moment...</p>
             </div>
           )}
 
           {/* Email Sent State */}
           {state === 'email_sent' && (
-            <div className="text-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
-              <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-4">
-                <CheckCircle size={22} className="text-emerald-400" />
+            <div className="text-center" style={{ animation: 'authFadeIn 0.2s ease-out' }}>
+              <div className="w-10 h-10 rounded bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center mx-auto mb-4">
+                <CheckCircle size={18} className="text-emerald-400/70" />
               </div>
-              <p className="text-[15px] text-white/80 font-medium mb-1">
+              <p className="font-mono text-[11px] text-white/60 font-medium mb-1">
                 Check your inbox
               </p>
-              <p className="text-[13px] text-white/40 mb-5">
+              <p className="font-mono text-[10px] text-white/30 mb-5">
                 {isResetMode
-                  ? <>We sent a reset link to <span className="text-white/60">{email}</span></>
-                  : <>We sent a login link to <span className="text-white/60">{email}</span></>
+                  ? <>Reset link sent to <span className="text-white/50">{email}</span></>
+                  : <>Login link sent to <span className="text-white/50">{email}</span></>
                 }
               </p>
 
-              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] mb-5">
-                <p className="text-[12px] text-white/40">
+              <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] mb-5">
+                <p className="font-mono text-[10px] text-white/30">
                   {isResetMode ? "Click the link to reset your password" : "Click the link to sign in"}
                 </p>
               </div>
@@ -638,16 +657,16 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
               <button
                 onClick={handleResend}
                 disabled={resendTimer > 0}
-                className="inline-flex items-center gap-2 text-[13px] text-white/40 hover:text-white/60 disabled:text-white/25 disabled:cursor-not-allowed transition-colors"
+                className="inline-flex items-center gap-2 font-mono text-[10px] text-white/30 hover:text-white/50 disabled:text-white/15 disabled:cursor-not-allowed transition-colors"
               >
                 {resendTimer > 0 ? (
                   <>
-                    <Clock size={14} />
+                    <Clock size={12} />
                     Resend in {resendTimer}s
                   </>
                 ) : (
                   <>
-                    <RefreshCw size={14} />
+                    <RefreshCw size={12} />
                     Resend link
                   </>
                 )}
@@ -657,30 +676,30 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
           {/* Request Access State */}
           {state === 'request_access' && (
-            <div style={{ animation: 'fadeIn 0.2s ease-out' }}>
-              <p className="text-[14px] text-white/50 text-center mb-6">
+            <div style={{ animation: 'authFadeIn 0.2s ease-out' }}>
+              <p className="font-mono text-[10px] text-white/30 text-center mb-5">
                 This feature requires approval
               </p>
 
-              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] mb-4">
-                <p className="text-[13px] text-white/50">
-                  Signed in as <span className="text-white/70">{user?.email}</span>
+              <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] mb-4">
+                <p className="font-mono text-[10px] text-white/40">
+                  Signed in as <span className="text-white/60">{user?.email}</span>
                 </p>
               </div>
 
               {error && (
-                <p className="text-[13px] text-red-400 mb-4 text-center">{error}</p>
+                <p className="font-mono text-[10px] text-white/30 mb-4 text-center">{error}</p>
               )}
 
               <button
                 onClick={handleRequestAccess}
-                className="w-full h-[48px] btn-primary text-[15px]"
+                style={btnPrimaryStyle}
               >
-                <Send size={16} />
+                <Send size={12} />
                 Request Access
               </button>
 
-              <p className="text-[12px] text-white/25 text-center mt-4">
+              <p className="font-mono text-[9px] text-white/20 text-center mt-4">
                 Your request will be reviewed shortly
               </p>
             </div>
@@ -688,40 +707,40 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
           {/* Requesting State */}
           {state === 'requesting' && (
-            <div className="py-6 text-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
-              <Loader2 size={24} className="text-white/50 animate-spin mx-auto mb-3" />
-              <p className="text-[14px] text-white/50">Submitting request...</p>
+            <div className="py-6 text-center" style={{ animation: 'authFadeIn 0.2s ease-out' }}>
+              <Loader2 size={18} className="text-white/30 animate-spin mx-auto mb-3" />
+              <p className="font-mono text-[10px] text-white/30">Submitting request...</p>
             </div>
           )}
 
           {/* Pending State */}
           {state === 'pending' && (
-            <div className="text-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
-              <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-4">
-                <Clock size={20} className="text-amber-400" />
+            <div className="text-center" style={{ animation: 'authFadeIn 0.2s ease-out' }}>
+              <div className="w-10 h-10 rounded bg-white/[0.04] border border-white/[0.06] flex items-center justify-center mx-auto mb-4">
+                <Clock size={16} className="text-white/40" />
               </div>
-              <p className="text-[15px] text-white/80 font-medium mb-1">
+              <p className="font-mono text-[11px] text-white/60 font-medium mb-1">
                 Request submitted
               </p>
-              <p className="text-[13px] text-white/40 mb-5">
+              <p className="font-mono text-[10px] text-white/30 mb-5">
                 We're reviewing your request for access
               </p>
 
               {email && (
-                <p className="text-[12px] text-white/50 mb-4">
-                  <span className="text-white/70">{email}</span>
+                <p className="font-mono text-[10px] text-white/40 mb-4">
+                  <span className="text-white/60">{email}</span>
                 </p>
               )}
 
-              <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04] mb-5">
-                <p className="text-[12px] text-white/40">
+              <div className="p-3 rounded bg-white/[0.02] border border-white/[0.06] mb-5">
+                <p className="font-mono text-[10px] text-white/30">
                   Once approved, you'll receive a sign-in link via email
                 </p>
               </div>
 
               <button
                 onClick={handleClose}
-                className="text-[13px] text-white/40 hover:text-white/60 transition-colors"
+                className="font-mono text-[10px] text-white/30 hover:text-white/50 transition-colors"
               >
                 Got it
               </button>
@@ -730,14 +749,14 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
 
           {/* Success State */}
           {state === 'success' && (
-            <div className="py-6 text-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
+            <div className="py-6 text-center" style={{ animation: 'authFadeIn 0.2s ease-out' }}>
               <div
-                className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-4"
-                style={{ animation: 'successPop 0.3s ease-out' }}
+                className="w-10 h-10 rounded bg-emerald-500/10 border border-emerald-500/15 flex items-center justify-center mx-auto mb-4"
+                style={{ animation: 'authSuccessPop 0.3s ease-out' }}
               >
-                <CheckCircle size={24} className="text-emerald-400" />
+                <CheckCircle size={18} className="text-emerald-400/70" />
               </div>
-              <p className="text-[15px] text-white/80 font-medium">
+              <p className="font-mono text-[11px] text-white/60 font-medium">
                 Access granted
               </p>
             </div>
@@ -746,17 +765,17 @@ export default function AuthModal({ isOpen, onClose, onSuccess, featureName }: A
       </div>
 
       <style>{`
-        @keyframes fadeIn {
+        @keyframes authFadeIn {
           from { opacity: 0; }
           to { opacity: 1; }
         }
-        @keyframes scaleIn {
-          from { opacity: 0; transform: scale(0.96); }
-          to { opacity: 1; transform: scale(1); }
+        @keyframes authScaleIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes successPop {
+        @keyframes authSuccessPop {
           0% { transform: scale(0.8); }
-          50% { transform: scale(1.1); }
+          50% { transform: scale(1.05); }
           100% { transform: scale(1); }
         }
       `}</style>

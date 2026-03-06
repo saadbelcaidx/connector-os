@@ -36,6 +36,7 @@ import Station from './Station';
 import RunsPage from './station/pages/RunsPage';
 import RunDetailPage from './station/pages/RunDetailPageV2';
 import SendPage from './station/pages/SendPage';
+import LeaderboardPage from './station/pages/LeaderboardPage';
 import TestComposeV2 from './station/pages/TestComposeV2';
 import TestFulfillment from './station/pages/TestFulfillment';
 import Privacy from './Privacy';
@@ -85,7 +86,7 @@ function LandingRoute() {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/flow" replace />;
+    return <Navigate to="/launcher" replace />;
   }
 
   return <Landing />;
@@ -131,17 +132,18 @@ function AppRoutes() {
       {/* Debug page for reply brain testing */}
       <Route path="/debug/reply-brain" element={<div className="page-fade"><DebugReplyBrain /></div>} />
 
-      {/* Flow - Main product */}
-      <Route path="/flow" element={<div className="page-fade"><Flow /></div>} />
+      {/* Flow - Deprecated, redirect to Station */}
+      <Route path="/flow" element={<Navigate to="/station" replace />} />
 
       {/* Operator Console - Hidden pipeline dashboard */}
       <Route path="/operator" element={<div className="page-fade"><Operator /></div>} />
 
-      {/* Station - Market evaluation pipeline */}
+      {/* Station - Market evaluation pipeline (open — prebuilt markets gated inside) */}
       <Route path="/station" element={<div className="page-fade"><Station /></div>} />
       <Route path="/station/runs" element={<div className="page-fade"><RunsPage /></div>} />
       <Route path="/station/run/:jobId" element={<div className="page-fade"><RunDetailPage /></div>} />
       <Route path="/station/run/:jobId/send" element={<div className="page-fade"><SendPage /></div>} />
+      <Route path="/station/leaderboard" element={<div className="page-fade"><LeaderboardPage /></div>} />
       <Route path="/station/test-v2" element={<div className="page-fade"><TestComposeV2 /></div>} />
       <Route path="/station/test-fulfillment" element={<div className="page-fade"><TestFulfillment /></div>} />
 

@@ -110,17 +110,22 @@ export async function connectorAgentFind(
   firstName: string,
   lastName: string,
   domain: string,
-  correlationId?: string
+  correlationId?: string,
+  companyName?: string
 ): Promise<ConnectorAgentFindResult> {
   const startMs = Date.now();
   const cid = correlationId || `find-${Date.now()}`;
 
-  if (!apiKey || !firstName || !lastName || !domain) {
+  if (!apiKey || !firstName || !lastName || (!domain && !companyName)) {
     console.log(`[Enrichment] cid=${cid} step=FIND provider=connectorAgent ms=0 ok=0 code=MISSING_PARAMS`);
     return { success: false };
   }
 
   try {
+    const payload: any = { firstName, lastName };
+    if (domain) payload.domain = domain;
+    if (companyName) payload.companyName = companyName;
+
     const data = await fetchJson<FindResponse>(
       `${CONNECTOR_AGENT_API}/api/email/v2/find`,
       {
@@ -129,7 +134,7 @@ export async function connectorAgentFind(
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ firstName, lastName, domain }),
+        body: JSON.stringify(payload),
         timeoutMs: FIND_TIMEOUT_MS,
         retries: RETRIES,
         correlationId: cid,

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, Lock, Workflow, Eye, Globe } from 'lucide-react';
+import { TrendingUp, Filter, Mail, Network, Radar, BookOpen, Zap, Lock, Eye, Globe, Radio } from 'lucide-react';
 import { FEATURES } from './config/features';
 
 import Dock from './Dock';
@@ -18,30 +18,13 @@ interface AppCard {
 }
 
 const apps: AppCard[] = [
-  // 1. Start here
+  // 0. Station — the operator cockpit (core product)
   {
-    id: 'quick-start',
-    title: 'Setup Wizard',
-    description: 'Get configured in 5 minutes',
-    icon: Zap,
-    route: '/setup',
-  },
-  // 2. Find matches (core product)
-  {
-    id: 'matching',
-    title: 'Flow',
-    description: 'Who needs who — instantly.',
-    icon: Workflow,
-    route: '/flow',
-  },
-  // 2.5. Signal-based lead search (SSM only)
-  {
-    id: 'hub',
-    title: 'Prebuilt Markets',
-    description: 'Signal-based lead search. Add to Demand or Supply.',
-    icon: Radar,
-    route: '/hub',
-    ssmOnly: true,
+    id: 'station',
+    title: 'Station',
+    description: 'Signal → Syndicate → Match → Route → Print',
+    icon: Radio,
+    route: '/station',
   },
   // 3. Send intros (convert matches)
   {
@@ -58,8 +41,8 @@ const apps: AppCard[] = [
     title: 'Introductions',
     description: 'Track intros from match to deal.',
     icon: Network,
-    route: '/introductions',
     ssmOnly: true,
+    comingSoon: true,
   },
   // 5. See the money
   {
@@ -185,7 +168,7 @@ function Launcher() {
         <QuickStartModal onClose={() => setShowQuickStart(false)} navigate={navigate} />
       )}
 
-      <div className="min-h-screen bg-black relative overflow-hidden">
+      <div className="min-h-screen bg-[#09090b] relative overflow-hidden">
       {/* Subtle gradient orb - Apple style */}
       <div
         className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden"
@@ -221,7 +204,7 @@ function Launcher() {
           {/* Badge */}
           <button
             onClick={() => navigate('/site')}
-            className="px-3 py-1 rounded-full text-[9px] font-medium tracking-[0.12em] uppercase hover:bg-white/[0.06] transition-colors cursor-pointer"
+            className="px-3 py-1 rounded-full text-[9px] font-mono tracking-[0.12em] uppercase hover:bg-white/[0.06] transition-colors cursor-pointer"
             style={{
               color: 'rgba(255, 255, 255, 0.45)',
               backgroundColor: 'rgba(255, 255, 255, 0.03)',
@@ -347,12 +330,13 @@ function AppCardComponent({
       }}
     >
       <div
-        className="relative p-5 rounded-2xl"
+        className="relative p-5"
         style={{
           background: isHovered && isClickable
             ? 'rgba(255, 255, 255, 0.05)'
             : 'rgba(255, 255, 255, 0.02)',
-          border: `1px solid ${isHovered && isClickable ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.06)'}`,
+          borderRadius: '10px',
+          border: `1px solid ${isHovered && isClickable ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.04)'}`,
           transform: `scale(${isPressed ? 0.97 : 1}) translateY(${isHovered && isClickable ? -2 : 0}px) rotateX(${tilt.x * 0.3}deg) rotateY(${tilt.y * 0.3}deg)`,
           transition: 'all 400ms cubic-bezier(0.16, 1, 0.3, 1)',
           boxShadow: isHovered && isClickable ? '0 8px 32px rgba(0, 0, 0, 0.15)' : 'none',
@@ -360,7 +344,7 @@ function AppCardComponent({
       >
         <div className="flex items-start justify-between mb-4">
           <div
-            className="p-2 rounded-xl"
+            className="p-2 rounded-lg"
             style={{
               background: 'rgba(255, 255, 255, 0.04)',
             }}
@@ -375,7 +359,7 @@ function AppCardComponent({
           </div>
           {app.comingSoon && (
             <span
-              className="text-[9px] font-medium tracking-wide uppercase px-2 py-0.5 rounded-full"
+              className="text-[9px] font-mono tracking-wide uppercase px-2 py-0.5 rounded-full"
               style={{
                 background: 'rgba(255, 255, 255, 0.04)',
                 color: 'rgba(255, 255, 255, 0.3)',
@@ -386,7 +370,7 @@ function AppCardComponent({
           )}
           {app.ssmOnly && !app.comingSoon && (
             <span
-              className="flex items-center gap-1 text-[9px] font-medium tracking-wide uppercase px-2 py-0.5 rounded-full"
+              className="flex items-center gap-1 text-[9px] font-mono tracking-wide uppercase px-2 py-0.5 rounded-full"
               style={{
                 background: 'rgba(251, 191, 36, 0.1)',
                 color: 'rgba(251, 191, 36, 0.8)',
@@ -399,7 +383,7 @@ function AppCardComponent({
         </div>
 
         <h3
-          className="text-[15px] font-medium mb-1.5 tracking-tight"
+          className="text-[13px] font-mono mb-1.5"
           style={{
             color: isDisabled ? 'rgba(255, 255, 255, 0.4)' : 'rgba(255, 255, 255, 0.85)',
           }}
@@ -408,7 +392,7 @@ function AppCardComponent({
         </h3>
 
         <p
-          className="text-[13px] leading-relaxed"
+          className="text-[11px] font-mono leading-relaxed"
           style={{
             color: isDisabled ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.45)',
           }}
@@ -446,32 +430,33 @@ function QuickStartModal({ onClose, navigate }: { onClose: () => void; navigate:
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(0,0,0,0.60)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }}>
       <div
-        className="relative max-w-md w-full rounded-2xl p-6"
+        className="relative max-w-md w-full p-6"
         style={{
-          background: 'rgba(12, 12, 12, 0.95)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 24px 48px rgba(0, 0, 0, 0.4)',
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          borderRadius: '12px',
         }}
       >
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 w-6 h-6 flex items-center justify-center text-white/30 hover:text-white/60 transition-colors text-lg"
+          className="absolute top-4 right-4 w-6 h-6 flex items-center justify-center font-mono text-white/20 hover:text-white/40 transition-colors text-lg"
+          style={{ background: 'none', border: 'none', outline: 'none', cursor: 'pointer' }}
         >
           ×
         </button>
 
         <div className="flex items-center gap-3 mb-6">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ background: 'rgba(255, 255, 255, 0.06)' }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.04)' }}
           >
             <Zap size={20} className="text-white/70" />
           </div>
           <div>
-            <h2 className="text-[15px] font-medium text-white/90">Quick Start</h2>
-            <p className="text-[12px] text-white/40">3 steps to your first match</p>
+            <h2 className="text-[13px] font-mono text-white/70">Quick Start</h2>
+            <p className="text-[10px] font-mono text-white/25">3 steps to your first match</p>
           </div>
         </div>
 
@@ -479,39 +464,48 @@ function QuickStartModal({ onClose, navigate }: { onClose: () => void; navigate:
           {steps.map((step) => (
             <div
               key={step.number}
-              className="p-4 rounded-xl border border-white/[0.06] hover:border-white/[0.12] transition-colors"
-              style={{ background: 'rgba(255, 255, 255, 0.02)' }}
+              className="p-4 border border-white/[0.04] hover:border-white/[0.08] transition-colors"
+              style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}
             >
               <div className="flex items-start gap-3">
                 <div
-                  className="flex-shrink-0 w-6 h-6 rounded-lg flex items-center justify-center text-[11px] font-medium"
+                  className="flex-shrink-0 w-6 h-6 rounded flex items-center justify-center text-[10px] font-mono"
                   style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    color: 'rgba(255, 255, 255, 0.5)',
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'rgba(255,255,255,0.40)',
                   }}
                 >
                   {step.number}
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-[13px] text-white/80 font-medium mb-0.5">{step.title}</h3>
-                  <p className="text-[12px] text-white/40 mb-2">{step.description}</p>
+                  <h3 className="text-[12px] font-mono text-white/70 mb-0.5">{step.title}</h3>
+                  <p className="text-[10px] font-mono text-white/30 mb-2">{step.description}</p>
 
                   <button
                     onClick={step.action}
-                    className="text-[11px] px-3 py-1.5 rounded-lg font-medium transition-colors"
+                    className="text-[10px] font-mono px-3 py-1.5 transition-all"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.06)',
-                      color: 'rgba(255, 255, 255, 0.6)',
+                      background: 'rgba(255,255,255,0.04)',
+                      color: 'rgba(255,255,255,0.50)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      borderRadius: '6px',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      transform: 'scale(1)',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
-                      e.currentTarget.style.color = 'rgba(255, 255, 255, 0.8)';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+                      e.currentTarget.style.color = 'rgba(255,255,255,0.70)';
+                      e.currentTarget.style.transform = 'scale(1.02)';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
-                      e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)';
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                      e.currentTarget.style.color = 'rgba(255,255,255,0.50)';
+                      e.currentTarget.style.transform = 'scale(1)';
                     }}
+                    onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.97)'; }}
+                    onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1.02)'; }}
                   >
                     {step.buttonText} →
                   </button>

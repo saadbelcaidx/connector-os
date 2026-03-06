@@ -22,7 +22,6 @@ import {
   Loader2,
   ThumbsUp,
   ThumbsDown,
-  Sparkles,
   RotateCcw,
 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
@@ -65,9 +64,9 @@ You operate in TWO modes. Detect automatically based on user question:
 → Use THE CONNECTOR FRAMEWORK below
 
 **PLATFORM MODE** — Questions about:
-- How to upload CSV, what columns
-- Settings, API keys, integrations
-- Flow steps (Load, Match, Enrich, Send)
+- How to run evaluations, select markets
+- Settings, API keys, enrichment, Instantly
+- Station pipeline, compose, send, fulfillment
 - Errors, troubleshooting, "how do I..."
 → Use PLATFORM DOCUMENTATION below
 
@@ -188,66 +187,78 @@ Which approach fits your situation?"
 # PLATFORM MODE
 
 ## Overview
-Connector OS is a CSV-only matching platform. Upload two CSVs (Demand + Supply), system matches them, enriches contacts, generates intros, sends to campaigns.
+Connector OS is a market evaluation engine. No CSV uploads. Data comes from Pre-Built Markets (curated market packs) or Apify datasets (scraped data). The system evaluates demand-supply pairs using AI, scores them, and lets you compose + send intros.
 
-**The 4-Step Flow:** LOAD → MATCH → ENRICH → SEND
+**The Station Flow:** SELECT SOURCES → ANALYZE → RUN → RESULTS → COMPOSE → SEND
 
-## CSV Upload
+## Station (/station)
 
-**Path:** Settings → Data → Upload CSV
+This is the main workspace. Everything starts here.
 
-**Required columns:** Company Name, Signal
-**Optional:** Full Name, Email, Domain, Context, Title, LinkedIn URL
+**Source Selection:**
+- **Pre-Built Markets**: Curated demand + supply packs organized by industry/signal. Click to select.
+- **Apify Datasets**: Paste an Apify dataset URL. System fetches and normalizes the data automatically.
+- No CSV upload. All data comes from markets or Apify.
 
-**If user has Email in CSV:** System skips enrichment (saves API credits)
+**Running an Evaluation:**
+1. Select your sources (demand + supply)
+2. Click **Analyze** → modal shows diagnostics (pair count, data quality)
+3. Click **Run** → AI evaluation pipeline starts
+4. Navigates to /station/runs → see all runs with live status
+5. Run completes → click it → /station/run/:jobId
+6. See scored matches with classification, reasoning, and framing
 
-**Column Mapper (auto-detection):**
-- CSVs with non-standard headers (Apollo, LinkedIn, WellFound) are auto-detected
-- Common aliases mapped automatically: organization → Company Name, job_title → Signal, company_url → Domain, email_address → Email
-- If ALL required fields auto-detect → mapper is skipped silently (same as before)
-- If some columns can't be detected → mapper UI appears with dropdowns to assign columns manually
-- Each dropdown excludes columns already mapped elsewhere (no double-mapping)
-- Sample data preview shows first non-empty value per column to help you decide
+**Match Results:**
+- Each match shows: demand company, supply company, relevance score, classification (PASS/MARGINAL/QUARANTINE), and reasoning
+- Matches are scored by AI on multiple dimensions (alignment, timing, capability fit)
+- Export matches with reasoning via Export button (CSV)
 
-**Signal Prefix (optional):**
-- Prepends text to every Signal value (e.g. prefix "Hiring" turns "Engineer" into "Hiring Engineer")
-- Shows how many rows will be affected
-- Leave blank to keep signals unchanged
+## Fulfillment Mode
 
-**Validation:**
-- File must be .csv (not .xlsx)
-- Max 10MB
-- Download template from Settings if unsure
+When you activate a **client lens** on a run, the view changes based on the client's economic side.
 
-**Common errors:**
-- "Add a demand CSV" → Upload in Settings → Data
-- "CSV has errors" → Download errors.csv, fix, re-upload
-- Mapper shows but columns look wrong → Use dropdowns to manually assign, or re-export CSV with standard headers
+**Client Fulfillment** (client is supply side, economicSide = 'supply'):
+- View flips to a flat **contact list** (demand-only, deduped by company)
+- Your client IS the supply — so you only see potential demand contacts
+- Compose generates demand-only intros (client name never appears in AI output)
+- Send targets demand contacts only
+
+**Client Overlay** (client is demand side):
+- Filters matches to show only those relevant to your client
+- Standard pair view with supply contacts
+
+**Setting up clients:**
+- Add fulfillment clients in Station with name, profile, and economic side
+- Each client gets an overlay that filters runs to show relevant matches
 
 ## Settings Sections
 
-| Section | What to configure |
-|---------|-------------------|
-| Data | CSV uploads (demand + supply) |
-| Sending | Apollo key, Anymail key, Instantly key + campaign IDs |
-| Personalization | OpenAI/Azure/Anthropic API key |
-| Profile | Sender name, calendar link |
+| Section | Path | What to configure |
+|---------|------|-------------------|
+| Routing | Settings → Routing | Instantly API key + campaign IDs (demand + supply) |
+| Enrichment | Settings → Enrichment | Apollo API key, Anymail API key |
+| Reasoning | Settings → Reasoning | AI provider (Azure/OpenAI/Anthropic) + API key |
+| Profile | Settings → Profile | Operator name, calendar link, target industries, reply style, answer pack |
+| Account | Settings → Account | Password, sign out |
 
 ## Enrichment
 
+Enrichment finds decision-maker emails for matched companies. Triggered per-match from the run detail page.
+
 **How it works:**
-1. CSV has email → use it (no API call)
-2. Check cache (90-day TTL)
-3. Apollo lookup
+1. Click a match → click Enrich
+2. Check cache first (if contact already known → green toast, no API charge)
+3. Apollo lookup (primary)
 4. Anymail fallback if Apollo misses
 
 **Troubleshooting:**
-- "NO_CONTACT" everywhere → Check Apollo API key in Settings → Sending
-- Slow enrichment → Rate limited, system auto-retries
+- No enrich button → Configure Apollo or Anymail key in Settings → Enrichment
+- "NO_CONTACT" → Company not in Apollo database, try different match
+- Green "Already known" toast → Contact was cached from a previous enrichment (free)
 
 ## Instantly Setup
 
-**Required in Settings → Sending:**
+**Required in Settings → Routing:**
 1. Instantly API Key (from Instantly dashboard)
 2. Demand Campaign ID (UUID format)
 3. Supply Campaign ID (UUID format)
@@ -259,31 +270,42 @@ Connector OS is a CSV-only matching platform. Upload two CSVs (Demand + Supply),
 - "Check your Instantly API key" → Regenerate in Instantly dashboard
 - "existing" status → Normal, lead already in campaign
 
-## Flow Steps
+## Compose + Send
 
-**Step 1 - LOAD (Blue):** Reads CSVs, validates, dedupes
-**Step 2 - MATCH (Purple):** Matches demand signals to supply capabilities
-**Step 3 - ENRICH (Cyan):** Finds decision-maker emails via Apollo/Anymail
-**Step 4 - SEND (Emerald):** Generates intros, routes to Instantly campaigns
+After enrichment, compose intros for your matches:
+1. From run detail → click "Send Intros" (or "Compose" in fulfillment mode)
+2. AI generates personalized intro drafts per match
+3. Review each draft, edit if needed
+4. Send → routes to Instantly campaigns
 
-**"Safe to leave" message:** You can navigate away, progress is saved.
+**Fulfillment compose:** Only generates demand-side intros. Client name never appears in output.
 
-## Quick Checklist (Before Running Flow)
+## Leaderboard (/station/leaderboard)
 
-1. Demand CSV uploaded (Settings → Data)
-2. Supply CSV uploaded (Settings → Data)
-3. Apollo API key (Settings → Sending)
-4. Instantly API key (Settings → Sending)
-5. Campaign IDs for both demand and supply
-6. AI configured (Settings → Personalization) — optional
+Ranks all operators by total intros sent. See your position, tier, and send velocity (7d/30d). Updated in real-time from send data.
+
+## Msg Simulator (/msg-sim)
+
+Reply generation tool. Paste an inbound reply, system classifies the stage (INTEREST, SCHEDULING, PRICING, etc.) and generates a suggested response.
+
+**Setup:** Add your outbound message as context for better replies. Configure AI key in Settings → Reasoning.
+
+## Quick Checklist (Before Running Station)
+
+1. Go to /station → select market sources
+2. Apollo key configured (Settings → Enrichment) — for contact lookup
+3. Instantly key + campaign IDs (Settings → Routing) — for sending
+4. AI configured (Settings → Reasoning) — for intro generation
+5. Operator name set (Settings → Profile) — personalizes intros
 
 ## Platform Response Style
 
 When answering platform questions:
-- Give exact UI paths: "Settings → Sending → Apollo API key"
+- Give exact UI paths: "Settings → Enrichment → Apollo API key"
 - Be specific about formats: "Campaign ID must be UUID format"
 - Link cause to fix: "Error X means Y, fix by doing Z"
-- Keep answers under 150 words — users want quick fixes`;
+- Keep answers under 150 words — users want quick fixes
+- NEVER mention CSV uploads, the Flow page, or "Load → Match → Enrich → Send" — those are deprecated`;
 
 // =============================================================================
 // STORAGE
@@ -362,8 +384,9 @@ async function callAI(
   );
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || 'AI request failed');
+    const errorBody = await response.text();
+    console.warn('[ConnectorAssistant] AI error:', response.status, errorBody.slice(0, 200));
+    throw new Error('provider_error');
   }
 
   const data = await response.json();
@@ -379,10 +402,10 @@ const markdownComponents = {
     <p className="mb-3 last:mb-0">{children}</p>
   ),
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="text-white font-semibold">{children}</strong>
+    <strong className="text-white/90 font-medium">{children}</strong>
   ),
   em: ({ children }: { children?: React.ReactNode }) => (
-    <em className="text-white/80 italic">{children}</em>
+    <em className="text-white/60 italic">{children}</em>
   ),
   ul: ({ children }: { children?: React.ReactNode }) => (
     <ul className="list-disc list-inside mb-3 space-y-1 pl-1">{children}</ul>
@@ -391,29 +414,29 @@ const markdownComponents = {
     <ol className="list-decimal list-inside mb-3 space-y-1 pl-1">{children}</ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="text-white/80">{children}</li>
+    <li className="text-white/60">{children}</li>
   ),
   h1: ({ children }: { children?: React.ReactNode }) => (
-    <h1 className="text-[15px] font-semibold text-white mb-2">{children}</h1>
+    <h1 className="font-mono text-[12px] font-medium text-white/70 uppercase tracking-wider mb-2">{children}</h1>
   ),
   h2: ({ children }: { children?: React.ReactNode }) => (
-    <h2 className="text-[14px] font-semibold text-white mb-2">{children}</h2>
+    <h2 className="font-mono text-[11px] font-medium text-white/60 uppercase tracking-wider mb-2">{children}</h2>
   ),
   h3: ({ children }: { children?: React.ReactNode }) => (
-    <h3 className="text-[13px] font-semibold text-white mb-2">{children}</h3>
+    <h3 className="font-mono text-[11px] font-medium text-white/50 mb-2">{children}</h3>
   ),
-  hr: () => <hr className="border-white/[0.08] my-4" />,
+  hr: () => <hr className="border-white/[0.04] my-4" />,
   code: ({ children }: { children?: React.ReactNode }) => (
-    <code className="bg-white/[0.08] px-1.5 py-0.5 rounded text-[12px] text-violet-300">{children}</code>
+    <code className="bg-white/[0.06] px-1.5 py-0.5 rounded text-[11px] font-mono text-white/60">{children}</code>
   ),
   pre: ({ children }: { children?: React.ReactNode }) => (
-    <pre className="bg-white/[0.04] border border-white/[0.08] rounded-lg p-3 mb-3 overflow-x-auto text-[12px]">{children}</pre>
+    <pre className="bg-white/[0.02] border border-white/[0.06] rounded p-3 mb-3 overflow-x-auto font-mono text-[11px]">{children}</pre>
   ),
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="border-l-2 border-violet-500/40 pl-3 my-3 text-white/70 italic">{children}</blockquote>
+    <blockquote className="border-l border-white/[0.08] pl-3 my-3 text-white/40 italic">{children}</blockquote>
   ),
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-300 underline underline-offset-2">{children}</a>
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-white/50 hover:text-white/70 underline underline-offset-2">{children}</a>
   ),
 };
 
@@ -438,13 +461,13 @@ function ChatMessage({
       className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
     >
       <div
-        className={`max-w-[88%] rounded-2xl px-4 py-3 ${
+        className={`max-w-[88%] rounded px-4 py-3 ${
           isUser
-            ? 'bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-[0_4px_12px_rgba(139,92,246,0.2)]'
-            : 'bg-white/[0.04] border border-white/[0.08] text-white/90'
+            ? 'bg-white/[0.06] border border-white/[0.08]'
+            : 'bg-white/[0.02] border border-white/[0.06]'
         }`}
       >
-        <div className={`text-[13px] leading-relaxed ${isUser ? 'text-white' : 'text-white/80'}`}>
+        <div className={`font-mono text-[12px] leading-relaxed ${isUser ? 'text-white/80' : 'text-white/60'}`}>
           {isUser ? message.content : (
             <ReactMarkdown components={markdownComponents}>
               {message.content}
@@ -454,27 +477,27 @@ function ChatMessage({
 
         {/* Feedback buttons for assistant messages */}
         {!isUser && onFeedback && (
-          <div className="flex items-center gap-1 mt-3 pt-2 border-t border-white/[0.06]">
-            <span className="text-[10px] text-white/25 mr-2">Helpful?</span>
+          <div className="flex items-center gap-1 mt-3 pt-2 border-t border-white/[0.04]">
+            <span className="font-mono text-[9px] text-white/20 mr-2">Helpful?</span>
             <button
               onClick={() => onFeedback(message.id, 'up')}
-              className={`p-1.5 rounded-lg transition-all ${
+              className={`p-1.5 rounded transition-all ${
                 message.feedback === 'up'
-                  ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'hover:bg-white/[0.06] text-white/25 hover:text-white/50'
+                  ? 'bg-emerald-500/10 text-emerald-400'
+                  : 'hover:bg-white/[0.04] text-white/20 hover:text-white/40'
               }`}
             >
-              <ThumbsUp size={11} />
+              <ThumbsUp size={10} />
             </button>
             <button
               onClick={() => onFeedback(message.id, 'down')}
-              className={`p-1.5 rounded-lg transition-all ${
+              className={`p-1.5 rounded transition-all ${
                 message.feedback === 'down'
-                  ? 'bg-red-500/20 text-red-400'
-                  : 'hover:bg-white/[0.06] text-white/25 hover:text-white/50'
+                  ? 'bg-white/[0.06] text-white/40'
+                  : 'hover:bg-white/[0.04] text-white/20 hover:text-white/40'
               }`}
             >
-              <ThumbsDown size={11} />
+              <ThumbsDown size={10} />
             </button>
           </div>
         )}
@@ -741,11 +764,11 @@ export function ConnectorAssistant() {
           if (error) console.warn('[ConnectorAssistant] Log failed:', error.message);
         });
       }
-    } catch (err) {
+    } catch {
       setState(prev => ({
         ...prev,
         isLoading: false,
-        error: err instanceof Error ? err.message : 'Failed to get response',
+        error: 'Check your billing with your AI provider.',
       }));
     }
   }, [input, state.messages, state.isLoading, aiConfig, user]);
@@ -799,23 +822,29 @@ export function ConnectorAssistant() {
 
   return (
     <>
-      {/* Floating Button — Premium glow effect */}
+      {/* Floating Button */}
       <AnimatePresence>
         {!isOpen && (
           <motion.button
-            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            initial={{ opacity: 0, scale: 0.9, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.8, y: 20 }}
-            transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+            exit={{ opacity: 0, scale: 0.9, y: 10 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
             onClick={() => setIsOpen(true)}
-            className="fixed bottom-6 right-6 z-50 group"
+            className="fixed bottom-20 right-6 z-50"
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '2px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+            }}
           >
-            {/* Glow effect */}
-            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-violet-500/30 to-fuchsia-500/30 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            {/* Button */}
-            <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-white to-white/90 text-black flex items-center justify-center shadow-[0_8px_32px_rgba(0,0,0,0.4)] hover:shadow-[0_8px_40px_rgba(139,92,246,0.3)] hover:scale-105 active:scale-95 transition-all duration-300">
-              <Sparkles size={20} className="text-violet-600" />
-            </div>
+            <MessageCircle size={16} style={{ color: 'rgba(255,255,255,0.40)' }} />
           </motion.button>
         )}
       </AnimatePresence>
@@ -840,41 +869,32 @@ export function ConnectorAssistant() {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-md bg-[#0a0a0a] border-l border-white/[0.08] flex flex-col"
+              className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-md bg-[#09090b] border-l border-white/[0.06] flex flex-col"
             >
-              {/* Header — Premium gradient */}
-              <div className="relative px-5 py-4 border-b border-white/[0.06]">
-                {/* Subtle gradient glow */}
-                <div className="absolute inset-0 bg-gradient-to-r from-violet-500/[0.03] via-transparent to-fuchsia-500/[0.03]" />
-
-                <div className="relative flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {/* Gradient icon */}
-                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 border border-violet-500/20 flex items-center justify-center">
-                      <Sparkles size={16} className="text-violet-400" />
-                    </div>
-                    <div>
-                      <h2 className="text-[14px] font-medium text-white/90 tracking-[-0.01em]">
-                        Ask Connector
-                      </h2>
-                      <p className="text-[11px] text-white/40">
-                        Strategy · Platform · Tactics
-                      </p>
-                    </div>
+              {/* Header */}
+              <div className="px-5 py-4 border-b border-white/[0.04]">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-mono text-[13px] font-medium text-white/80">
+                      Ask Connector
+                    </h2>
+                    <p className="font-mono text-[10px] text-white/25 mt-0.5">
+                      Strategy · Platform · Tactics
+                    </p>
                   </div>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={clearConversation}
-                      className="p-2 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-all"
+                      className="p-2 rounded text-white/20 hover:text-white/40 hover:bg-white/[0.04] transition-all"
                       title="Clear conversation"
                     >
-                      <RotateCcw size={14} />
+                      <RotateCcw size={13} />
                     </button>
                     <button
                       onClick={() => setIsOpen(false)}
-                      className="p-2 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-all"
+                      className="p-2 rounded text-white/20 hover:text-white/40 hover:bg-white/[0.04] transition-all"
                     >
-                      <X size={16} />
+                      <X size={14} />
                     </button>
                   </div>
                 </div>
@@ -884,24 +904,21 @@ export function ConnectorAssistant() {
               <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
                 {state.messages.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-full text-center px-6">
-                    {/* Gradient icon */}
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/10 to-fuchsia-500/10 border border-violet-500/10 flex items-center justify-center mb-5">
-                      <MessageCircle size={24} className="text-violet-400/60" />
-                    </div>
-                    <p className="text-[14px] text-white/60 mb-2 font-medium">
+                    <MessageCircle size={20} style={{ color: 'rgba(255,255,255,0.15)' }} className="mb-4" />
+                    <p className="font-mono text-[12px] text-white/40 mb-1">
                       What can I help you find?
                     </p>
-                    <p className="text-[12px] text-white/30 max-w-[240px]">
-                      Ask about signals, niches, demand/supply gaps, or how to structure deals
+                    <p className="font-mono text-[10px] text-white/20 max-w-[240px]">
+                      Signals, niches, demand/supply gaps, deal structure, or platform help
                     </p>
 
                     {/* Quick prompts */}
                     <div className="flex flex-wrap justify-center gap-2 mt-6">
-                      {['Biotech signals', 'Upload CSV', 'How to pitch'].map((prompt) => (
+                      {['Biotech signals', 'Run a market', 'How to pitch'].map((prompt) => (
                         <button
                           key={prompt}
-                          onClick={() => setInput(prompt === 'Upload CSV' ? 'How do I upload a CSV?' : `How do I find ${prompt.toLowerCase()}?`)}
-                          className="px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-white/50 hover:bg-white/[0.08] hover:text-white/70 transition-all"
+                          onClick={() => setInput(prompt === 'Run a market' ? 'How do I run a market evaluation in Station?' : `How do I find ${prompt.toLowerCase()}?`)}
+                          className="font-mono px-3 py-1.5 rounded bg-white/[0.02] border border-white/[0.06] text-[10px] text-white/30 hover:bg-white/[0.04] hover:text-white/50 transition-all"
                         >
                           {prompt}
                         </button>
@@ -924,23 +941,22 @@ export function ConnectorAssistant() {
                     animate={{ opacity: 1, y: 0 }}
                     className="flex justify-start"
                   >
-                    <div className="bg-white/[0.06] border border-white/[0.08] rounded-2xl px-5 py-4">
-                      {/* Typing indicator — bouncing dots */}
+                    <div className="bg-white/[0.02] border border-white/[0.06] rounded px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         <motion.div
-                          animate={{ y: [0, -6, 0] }}
-                          transition={{ duration: 0.6, repeat: Infinity, delay: 0 }}
-                          className="w-2 h-2 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-400"
+                          animate={{ opacity: [0.2, 0.6, 0.2] }}
+                          transition={{ duration: 1, repeat: Infinity, delay: 0 }}
+                          className="w-1.5 h-1.5 rounded-full bg-white/40"
                         />
                         <motion.div
-                          animate={{ y: [0, -6, 0] }}
-                          transition={{ duration: 0.6, repeat: Infinity, delay: 0.15 }}
-                          className="w-2 h-2 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-400"
+                          animate={{ opacity: [0.2, 0.6, 0.2] }}
+                          transition={{ duration: 1, repeat: Infinity, delay: 0.2 }}
+                          className="w-1.5 h-1.5 rounded-full bg-white/40"
                         />
                         <motion.div
-                          animate={{ y: [0, -6, 0] }}
-                          transition={{ duration: 0.6, repeat: Infinity, delay: 0.3 }}
-                          className="w-2 h-2 rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-400"
+                          animate={{ opacity: [0.2, 0.6, 0.2] }}
+                          transition={{ duration: 1, repeat: Infinity, delay: 0.4 }}
+                          className="w-1.5 h-1.5 rounded-full bg-white/40"
                         />
                       </div>
                     </div>
@@ -951,24 +967,21 @@ export function ConnectorAssistant() {
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="text-center text-[12px] text-red-400/80 py-2"
+                    className="text-center font-mono text-[11px] text-white/30 py-2"
                   >
-                    {state.error}
+                    {state.error} Try again.
                   </motion.div>
                 )}
 
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Input — Premium styling */}
-              <div className="relative px-4 py-4 border-t border-white/[0.06]">
-                {/* Subtle top gradient */}
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-500/20 to-transparent" />
-
+              {/* Input */}
+              <div className="px-4 py-4 border-t border-white/[0.04]">
                 {!aiConfig ? (
                   <div className="text-center py-3">
-                    <p className="text-[12px] text-white/40">
-                      Configure AI in Settings to use the assistant
+                    <p className="font-mono text-[11px] text-white/25">
+                      Configure AI in Settings → Reasoning
                     </p>
                   </div>
                 ) : (
@@ -980,18 +993,27 @@ export function ConnectorAssistant() {
                       onKeyDown={handleKeyDown}
                       placeholder="Ask anything..."
                       rows={1}
-                      className="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-3 text-[13px] text-white/90 placeholder:text-white/30 resize-none focus:outline-none focus:border-violet-500/30 focus:bg-white/[0.06] transition-all"
-                      style={{ minHeight: '44px', maxHeight: '120px' }}
+                      className="flex-1 bg-white/[0.02] border border-white/[0.06] rounded font-mono px-3 py-2.5 text-[12px] text-white/70 placeholder:text-white/20 resize-none focus:outline-none focus:border-white/[0.12] transition-all"
+                      style={{ minHeight: '40px', maxHeight: '120px' }}
                     />
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
+                    <button
                       onClick={sendMessage}
                       disabled={!input.trim() || state.isLoading}
-                      className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(139,92,246,0.3)] hover:shadow-[0_6px_20px_rgba(139,92,246,0.4)] transition-shadow"
+                      style={{
+                        width: '36px',
+                        height: '36px',
+                        borderRadius: '2px',
+                        background: !input.trim() || state.isLoading ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.08)',
+                        border: `1px solid ${!input.trim() || state.isLoading ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.12)'}`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: !input.trim() || state.isLoading ? 'not-allowed' : 'pointer',
+                        flexShrink: 0,
+                      }}
                     >
-                      <Send size={16} />
-                    </motion.button>
+                      <Send size={13} style={{ color: !input.trim() || state.isLoading ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.50)' }} />
+                    </button>
                   </div>
                 )}
               </div>

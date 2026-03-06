@@ -270,6 +270,21 @@ export default function RunsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/station/leaderboard')}
+              className="font-mono text-[11px] text-white/40 hover:text-white/60 transition-colors cursor-pointer"
+              style={{
+                height: '28px',
+                padding: '0 14px',
+                background: 'transparent',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: '2px',
+                outline: 'none',
+                boxShadow: 'none',
+              }}
+            >
+              Leaderboard
+            </button>
             {jobs.length > 0 && (
               <button
                 onClick={() => { setBulkDelete(b => !b); setSelected(new Set()); }}

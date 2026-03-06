@@ -173,31 +173,28 @@ function TelemetryPanel({ telemetry, signals }: { telemetry?: ReplyAnalysis['tel
   if (!telemetry) return null;
 
   return (
-    <div className="mt-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+    <div className="mt-4 p-3 rounded border border-white/[0.06] bg-white/[0.02]">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {/* AI Generated Status */}
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${
+          <div className={`flex items-center gap-2 px-2.5 py-1 rounded ${
             telemetry.aiGenerated
               ? 'bg-emerald-500/10 border border-emerald-500/20'
-              : 'bg-amber-500/10 border border-amber-500/20'
+              : 'bg-white/[0.04] border border-white/[0.06]'
           }`}>
             <div className={`w-1.5 h-1.5 rounded-full ${
-              telemetry.aiGenerated ? 'bg-emerald-400' : 'bg-amber-400'
+              telemetry.aiGenerated ? 'bg-emerald-400' : 'bg-white/40'
             }`} />
-            <span className={`text-[11px] font-medium ${
-              telemetry.aiGenerated ? 'text-emerald-400' : 'text-amber-400'
+            <span className={`text-[10px] font-mono font-medium ${
+              telemetry.aiGenerated ? 'text-emerald-400' : 'text-white/40'
             }`}>
               {telemetry.aiGenerated ? 'AI reply generated' : 'Fallback reply'}
             </span>
           </div>
 
-          {/* Version */}
-          <span className="text-[10px] text-white/30 font-mono">{telemetry.version || 'v21'}</span>
+          <span className="text-[10px] text-white/20 font-mono">{telemetry.version || 'v21'}</span>
 
-          {/* Latency */}
           {telemetry.latencyMs !== undefined && (
-            <span className="text-[10px] text-white/30 font-mono">{telemetry.latencyMs}ms</span>
+            <span className="text-[10px] text-white/20 font-mono">{telemetry.latencyMs}ms</span>
           )}
         </div>
       </div>
@@ -260,54 +257,46 @@ function ResultCard({
   const style = variants[variant];
 
   return (
-    <div className="group relative rounded-2xl bg-gradient-to-b from-white/[0.03] to-transparent border border-white/[0.06] p-5 transition-all duration-300 hover:border-white/[0.10] hover:bg-white/[0.02]">
-      {/* Subtle glow effect on hover */}
-      <div className="absolute inset-0 rounded-2xl bg-gradient-to-b from-white/[0.02] to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-
-      <div className="relative">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 rounded-lg ${style.iconBg} flex items-center justify-center`}>
-              <Icon size={14} className={style.iconColor} />
-            </div>
-            <h3 className="text-[13px] font-semibold text-white/80">{title}</h3>
-          </div>
-
-          {showCopy && content && (
-            <button
-              onClick={() => onCopy?.(content)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium rounded-lg transition-all ${
-                copied
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                  : 'bg-white/[0.04] hover:bg-white/[0.08] text-white/50 hover:text-white/80 border border-transparent'
-              }`}
-            >
-              {copied ? <Check size={12} /> : <Copy size={12} />}
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          )}
+    <div className="rounded border border-white/[0.06] bg-white/[0.02] p-4 transition-all hover:bg-white/[0.03]">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Icon size={13} className="text-white/30" />
+          <h3 className="text-[11px] font-mono font-medium text-white/50 uppercase tracking-wider">{title}</h3>
         </div>
 
-        <div className={`text-[14px] leading-relaxed ${content ? 'text-white/80' : 'text-white/25 italic'}`}>
-          {isLoading ? (
-            <div className="flex items-center gap-2.5 text-white/40">
-              <div className="relative">
-                <Loader2 size={14} className="animate-spin" />
-                <div className="absolute inset-0 animate-ping">
-                  <Loader2 size={14} className="text-white/20" />
-                </div>
-              </div>
-              <span className="text-[13px]">Analyzing...</span>
-            </div>
-          ) : content ? (
-            <p className="whitespace-pre-wrap">{content}</p>
-          ) : (
-            placeholder
-          )}
-        </div>
-
-        {children}
+        {showCopy && content && (
+          <button
+            onClick={() => onCopy?.(content)}
+            className="font-mono text-[10px] text-white/40 hover:text-white/60 transition-colors cursor-pointer flex items-center gap-1.5"
+            style={{
+              height: '24px',
+              padding: '0 8px',
+              background: copied ? 'rgba(52,211,153,0.08)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${copied ? 'rgba(52,211,153,0.2)' : 'rgba(255,255,255,0.06)'}`,
+              borderRadius: '2px',
+              color: copied ? 'rgba(52,211,153,0.8)' : undefined,
+            }}
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        )}
       </div>
+
+      <div className={`font-mono text-[12px] leading-relaxed ${content ? 'text-white/70' : 'text-white/20'}`}>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-white/30">
+            <Loader2 size={13} className="animate-spin" />
+            <span className="text-[11px]">Analyzing...</span>
+          </div>
+        ) : content ? (
+          <p className="whitespace-pre-wrap">{content}</p>
+        ) : (
+          placeholder
+        )}
+      </div>
+
+      {children}
     </div>
   );
 }
@@ -673,51 +662,40 @@ export default function ReplyBrainV1() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#09090b]">
-      {/* Premium Header */}
-      <div className="border-b border-white/[0.06]">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/launcher')}
-                className="p-2 -ml-2 rounded-lg hover:bg-white/[0.04] transition-colors"
-              >
-                <ArrowLeft size={18} className="text-white/40" />
-              </button>
+    <div className="min-h-screen bg-[#09090b] text-white" style={{ animation: 'pageIn 0.25s ease-out' }}>
+      {/* Header */}
+      <div className="max-w-6xl mx-auto px-6 pt-8">
+        <nav className="flex items-center gap-1.5 font-mono text-[10px] text-white/30 mb-4">
+          <button onClick={() => navigate('/launcher')} className="hover:text-white/50 transition-colors">
+            Home
+          </button>
+          <span className="text-white/15">{'>'}</span>
+          <span className="text-white/50">Msg Simulator</span>
+        </nav>
 
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 border border-violet-500/20 flex items-center justify-center">
-                  <Mail size={18} className="text-violet-400" />
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="font-mono text-[15px] text-white/90 font-medium">Msg Simulator</h1>
+            <p className="font-mono text-[11px] text-white/30 mt-0.5">Reply generation</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {(() => {
+              const hasOutbound = thread.some(m => m.role === 'me');
+              const mode = hasOutbound ? 'full' : 'limited';
+              return (
+                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded font-mono text-[10px] font-medium ${
+                  mode === 'full'
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : 'bg-white/[0.04] text-white/40 border border-white/[0.06]'
+                }`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${mode === 'full' ? 'bg-emerald-400' : 'bg-white/40'}`} />
+                  {mode === 'full' ? 'Full context' : 'Limited context'}
                 </div>
-                <div>
-                  <h1 className="text-[15px] font-semibold text-white/90 tracking-[-0.01em]">Msg Simulator</h1>
-                  <p className="text-[11px] text-white/40">Reply generation</p>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
-            {/* Mode indicator */}
-            <div className="flex items-center gap-3">
-              {(() => {
-                const hasOutbound = thread.some(m => m.role === 'me');
-                const mode = hasOutbound ? 'full' : 'limited';
-                return (
-                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium ${
-                    mode === 'full'
-                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                  }`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${mode === 'full' ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-                    {mode === 'full' ? 'Full context' : 'Limited context'}
-                  </div>
-                );
-              })()}
-
-              <div className="h-4 w-px bg-white/[0.08]" />
-
-              <span className="text-[10px] text-white/30 font-mono">v21</span>
-            </div>
+            <span className="text-[10px] text-white/20 font-mono">v21</span>
           </div>
         </div>
       </div>
@@ -725,11 +703,11 @@ export default function ReplyBrainV1() {
       {/* Setup Hint - Subtle, not scary (only show after settings loaded) */}
       {settingsLoaded && (replyConfig.senderName === 'Operator' || !targeting.industries?.length || !replyConfig.calendarLink) && (
         <div className="max-w-6xl mx-auto px-6 pt-4">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center gap-3 px-4 py-3 rounded bg-white/[0.02] border border-white/[0.06]">
             <div className="flex items-center gap-2 text-[12px] text-white/40">
               {/* Mode context - read from existing state */}
               {!thread.some(m => m.role === 'me') && (
-                <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400/80 border border-amber-500/20">Limited context</span>
+                <span className="px-2 py-0.5 rounded bg-white/[0.04] text-white/40 border border-white/[0.06]">Limited context</span>
               )}
               <span className="text-white/30">·</span>
               <span>Missing:</span>
@@ -763,7 +741,7 @@ export default function ReplyBrainV1() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <MessageSquare size={14} className="text-white/30" />
-                  <span className="text-[12px] font-semibold text-white/40 uppercase tracking-wider">Conversation</span>
+                  <span className="text-[9px] font-mono font-medium text-white/25 uppercase tracking-widest">Conversation</span>
                 </div>
                 {thread.length > 0 && (
                   <button
@@ -781,7 +759,7 @@ export default function ReplyBrainV1() {
                 <button
                   key={option.value}
                   onClick={() => setReplyType(option.value)}
-                  className={`relative p-3 rounded-xl border text-left transition-all duration-200 ${
+                  className={`relative p-3 rounded border text-left transition-all duration-200 ${
                     replyType === option.value
                       ? 'bg-white/[0.06] border-white/[0.12]'
                       : 'bg-white/[0.02] border-white/[0.06] hover:bg-white/[0.04] hover:border-white/[0.08]'
@@ -792,10 +770,10 @@ export default function ReplyBrainV1() {
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                     </div>
                   )}
-                  <div className={`text-[13px] font-medium ${replyType === option.value ? 'text-white/90' : 'text-white/60'}`}>
+                  <div className={`text-[11px] font-mono font-medium ${replyType === option.value ? 'text-white/90' : 'text-white/60'}`}>
                     {option.label}
                   </div>
-                  <div className="text-[10px] text-white/30 mt-0.5">{option.desc}</div>
+                  <div className="text-[10px] font-mono text-white/30 mt-0.5">{option.desc}</div>
                 </button>
               ))}
             </div>
@@ -806,7 +784,7 @@ export default function ReplyBrainV1() {
                 {thread.map((msg, index) => (
                   <div
                     key={index}
-                    className={`group flex items-start gap-3 p-3 rounded-xl transition-all ${
+                    className={`group flex items-start gap-3 p-3 rounded transition-all ${
                       msg.role === 'me'
                         ? 'bg-blue-500/[0.06] border border-blue-500/10'
                         : 'bg-white/[0.02] border border-white/[0.04]'
@@ -819,7 +797,7 @@ export default function ReplyBrainV1() {
                     }`}>
                       {msg.role === 'me' ? 'ME' : 'TH'}
                     </div>
-                    <p className="flex-1 text-[12px] text-white/70 leading-relaxed line-clamp-2">
+                    <p className="flex-1 font-mono text-[11px] text-white/70 leading-relaxed line-clamp-2">
                       {msg.content}
                     </p>
                     <button
@@ -834,22 +812,22 @@ export default function ReplyBrainV1() {
             )}
 
             {/* Quick Add */}
-            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+            <div className="p-4 rounded bg-white/[0.02] border border-white/[0.06]">
               <div className="flex items-center gap-2 mb-3">
                 <Plus size={12} className="text-white/30" />
-                <span className="text-[11px] font-medium text-white/40">Add context</span>
+                <span className="text-[9px] font-mono font-medium text-white/25 uppercase tracking-widest">Add context</span>
                 {/* Context hint - read from existing state */}
                 {!thread.some(m => m.role === 'me') ? (
-                  <span className="text-[9px] text-amber-400/60 ml-auto">Add your outbound for personalized replies</span>
+                  <span className="text-[9px] text-white/30 ml-auto">Add your outbound for personalized replies</span>
                 ) : (
                   <span className="text-[9px] text-white/20 ml-auto">Optional</span>
                 )}
               </div>
               <div className="flex gap-2">
-                <div className="flex rounded-lg border border-white/[0.08] overflow-hidden">
+                <div className="flex rounded border border-white/[0.08] overflow-hidden">
                   <button
                     onClick={() => setQuickAddRole('me')}
-                    className={`px-3 py-2 text-[10px] font-semibold transition-all ${
+                    className={`px-3 py-2 text-[10px] font-mono font-medium transition-all ${
                       quickAddRole === 'me'
                         ? 'bg-blue-500/20 text-blue-400'
                         : 'bg-white/[0.02] text-white/40 hover:text-white/60'
@@ -859,7 +837,7 @@ export default function ReplyBrainV1() {
                   </button>
                   <button
                     onClick={() => setQuickAddRole('them')}
-                    className={`px-3 py-2 text-[10px] font-semibold transition-all ${
+                    className={`px-3 py-2 text-[10px] font-mono font-medium transition-all ${
                       quickAddRole === 'them'
                         ? 'bg-white/[0.08] text-white/80'
                         : 'bg-white/[0.02] text-white/40 hover:text-white/60'
@@ -873,13 +851,13 @@ export default function ReplyBrainV1() {
                   value={quickAddContent}
                   onChange={(e) => setQuickAddContent(e.target.value)}
                   placeholder="Prior message..."
-                  className="flex-1 bg-white/[0.02] text-white/90 text-[12px] px-3 py-2 rounded-lg border border-white/[0.06] focus:border-white/[0.15] focus:outline-none transition-colors placeholder:text-white/20"
+                  className="flex-1 bg-white/[0.02] text-white/90 font-mono text-[11px] px-3 py-2 rounded border border-white/[0.06] focus:border-white/[0.15] focus:outline-none transition-colors placeholder:text-white/20"
                   onKeyDown={(e) => e.key === 'Enter' && addToThread()}
                 />
                 <button
                   onClick={addToThread}
                   disabled={!quickAddContent.trim()}
-                  className={`p-2 rounded-lg transition-all ${
+                  className={`p-2 rounded transition-all ${
                     quickAddContent.trim()
                       ? 'bg-white/[0.06] text-white/70 hover:bg-white/[0.10]'
                       : 'bg-white/[0.02] text-white/20 cursor-not-allowed'
@@ -893,9 +871,9 @@ export default function ReplyBrainV1() {
             {/* Latest Reply Input */}
             <div className="relative">
               <div className="flex items-center gap-2 mb-3">
-                <Zap size={12} className="text-amber-400" />
-                <span className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">Their reply</span>
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 ml-1">Required</span>
+                <Zap size={12} className="text-white/30" />
+                <span className="text-[9px] font-mono font-medium text-white/25 uppercase tracking-widest">Their reply</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/[0.04] text-white/40 border border-white/[0.06] ml-1">Required</span>
               </div>
               <textarea
                 value={latestReply}
@@ -904,7 +882,7 @@ export default function ReplyBrainV1() {
                   ? "Paste their latest message here..."
                   : "Paste their reply. Add your outbound above for personalized responses."
                 }
-                className="w-full h-32 bg-white/[0.02] text-white/90 text-[13px] leading-relaxed px-4 py-3 rounded-xl border border-white/[0.06] hover:border-white/[0.10] focus:border-white/20 focus:outline-none focus:ring-2 focus:ring-white/5 transition-all resize-none placeholder:text-white/20"
+                className="w-full h-32 bg-white/[0.02] text-white/90 font-mono text-[12px] leading-relaxed px-4 py-3 rounded border border-white/[0.06] hover:border-white/[0.10] focus:border-white/20 focus:outline-none transition-all resize-none placeholder:text-white/20"
               />
               <div className="absolute bottom-3 right-3 text-[10px] text-white/20">
                 {latestReply.length} chars
@@ -915,20 +893,24 @@ export default function ReplyBrainV1() {
             <button
               onClick={handleGenerate}
               disabled={!latestReply.trim() || isLoading}
-              className={`w-full py-4 rounded-xl text-[14px] font-semibold transition-all duration-300 flex items-center justify-center gap-2.5 ${
-                !latestReply.trim() || isLoading
-                  ? 'bg-white/[0.03] text-white/25 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-white to-white/90 text-[#0A0A0A] hover:shadow-[0_0_30px_rgba(255,255,255,0.15)] hover:scale-[1.01] active:scale-[0.99]'
-              }`}
+              className="w-full flex items-center justify-center gap-2 font-mono text-[11px] transition-all"
+              style={{
+                height: '36px',
+                borderRadius: '2px',
+                background: !latestReply.trim() || isLoading ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.08)',
+                border: `1px solid ${!latestReply.trim() || isLoading ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.12)'}`,
+                color: !latestReply.trim() || isLoading ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.7)',
+                cursor: !latestReply.trim() || isLoading ? 'not-allowed' : 'pointer',
+              }}
             >
               {isLoading ? (
                 <>
-                  <Loader2 size={16} className="animate-spin" />
+                  <Loader2 size={13} className="animate-spin" />
                   Analyzing...
                 </>
               ) : (
                 <>
-                  <Sparkles size={16} />
+                  <Send size={13} />
                   Generate Reply
                 </>
               )}
@@ -977,7 +959,7 @@ export default function ReplyBrainV1() {
               {/* Annotations - truthful notes only */}
               {result && !result.telemetry?.aiGenerated && (
                 <div className="mt-3 pt-3 border-t border-white/[0.04]">
-                  <p className="text-[11px] text-amber-400/60">
+                  <p className="text-[11px] text-white/30">
                     Fallback reply — configure AI in Settings for generated responses.
                   </p>
                 </div>
@@ -996,9 +978,9 @@ export default function ReplyBrainV1() {
 
             {/* Error */}
             {error && (
-              <div className="flex items-start gap-3 p-4 rounded-xl bg-red-500/[0.08] border border-red-500/20">
-                <AlertCircle size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
-                <p className="text-[13px] text-red-400/80">{error}</p>
+              <div className="flex items-start gap-3 p-4 rounded border border-red-400/20 bg-red-400/[0.04]">
+                <AlertCircle size={13} className="text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="font-mono text-[11px] text-red-400/80">{error}</p>
               </div>
             )}
           </div>
@@ -1006,6 +988,13 @@ export default function ReplyBrainV1() {
       </div>
 
       <Dock />
+
+      <style>{`
+        @keyframes pageIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }

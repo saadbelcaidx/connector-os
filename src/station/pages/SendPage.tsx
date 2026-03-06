@@ -55,25 +55,74 @@ function loadAIConfig(): IntroAIConfig | null {
   }
 }
 
-function loadSenderConfig(): { apiKey: string; supplyCampaignId: string } | null {
+type SenderId = 'instantly' | 'plusvibe';
+
+interface LoadedSenderConfig {
+  senderId: SenderId;
+  apiKey: string;
+  supplyCampaignId: string;
+  demandCampaignId: string;
+  workspaceId?: string;
+}
+
+interface JobCampaignPair {
+  provider: string;
+  demandCampaignId: string;
+  supplyCampaignId: string;
+  operatorId?: string;
+  providerWorkspaceId?: string | null;
+}
+
+function loadSenderConfig(jobCampaignPair?: JobCampaignPair | null): LoadedSenderConfig | null {
   try {
-    // Check guest_settings first
     const gs = localStorage.getItem('guest_settings');
-    if (gs) {
-      const { settings } = JSON.parse(gs);
-      if (settings?.instantlyApiKey) {
-        return {
-          apiKey: settings.instantlyApiKey,
-          supplyCampaignId: settings.instantlyCampaignSupply || '',
-        };
-      }
+    const settings = gs ? JSON.parse(gs)?.settings : null;
+
+    // Priority 1: Job-stamped campaign pair (immutable snapshot from run time)
+    if (jobCampaignPair?.demandCampaignId && jobCampaignPair?.supplyCampaignId) {
+      const provider = jobCampaignPair.provider as SenderId;
+      const apiKey = provider === 'plusvibe'
+        ? settings?.plusvibeApiKey
+        : settings?.instantlyApiKey;
+      if (!apiKey) return null;
+      return {
+        senderId: provider,
+        apiKey,
+        demandCampaignId: jobCampaignPair.demandCampaignId,
+        supplyCampaignId: jobCampaignPair.supplyCampaignId,
+        workspaceId: provider === 'plusvibe' ? settings?.plusvibeWorkspaceId : undefined,
+      };
     }
-    // Check standalone key
+
+    // Priority 2: Global settings (existing behavior)
+    if (!gs) {
+      const apiKey = localStorage.getItem('outreach_api_key');
+      return apiKey ? { senderId: 'instantly', apiKey, supplyCampaignId: '', demandCampaignId: '' } : null;
+    }
+
+    const provider: SenderId = settings?.sendingProvider === 'plusvibe' ? 'plusvibe' : 'instantly';
+
+    if (provider === 'plusvibe' && settings?.plusvibeApiKey) {
+      return {
+        senderId: 'plusvibe',
+        apiKey: settings.plusvibeApiKey,
+        supplyCampaignId: settings.plusvibeCampaignSupply || '',
+        demandCampaignId: settings.plusvibeCampaignDemand || '',
+        workspaceId: settings.plusvibeWorkspaceId || '',
+      };
+    }
+
+    if (settings?.instantlyApiKey) {
+      return {
+        senderId: 'instantly',
+        apiKey: settings.instantlyApiKey,
+        supplyCampaignId: settings.instantlyCampaignSupply || '',
+        demandCampaignId: settings.instantlyCampaignDemand || '',
+      };
+    }
+
     const apiKey = localStorage.getItem('outreach_api_key');
-    if (apiKey) {
-      return { apiKey, supplyCampaignId: '' };
-    }
-    return null;
+    return apiKey ? { senderId: 'instantly', apiKey, supplyCampaignId: '', demandCampaignId: '' } : null;
   } catch {
     return null;
   }
@@ -134,8 +183,51 @@ export default function SendPage() {
   }, [jobId]);
 
   const aiConfig = useMemo(() => loadAIConfig(), []);
-  const senderConfig = useMemo(() => loadSenderConfig(), []);
   const operatorId = useMemo(() => loadOperatorId(), []);
+
+  // Campaign pair from job config (immutable snapshot stamped at run time)
+  const jobCampaignPair = useMemo((): JobCampaignPair | null => {
+    const pair = job.jobConfig?.campaignPair;
+    if (!pair || typeof pair !== 'object') return null;
+    const p = pair as Record<string, unknown>;
+    if (!p.demandCampaignId || !p.supplyCampaignId) return null;
+    return {
+      provider: String(p.provider || 'instantly'),
+      demandCampaignId: String(p.demandCampaignId),
+      supplyCampaignId: String(p.supplyCampaignId),
+      operatorId: p.operatorId ? String(p.operatorId) : undefined,
+      providerWorkspaceId: p.providerWorkspaceId ? String(p.providerWorkspaceId) : null,
+    };
+  }, [job.jobConfig]);
+
+  const senderConfig = useMemo(() => loadSenderConfig(jobCampaignPair), [jobCampaignPair]);
+
+  // Safety guards — block send if provider/operator/workspace mismatch
+  const sendBlockReason = useMemo((): string | null => {
+    if (!jobCampaignPair) return null; // No stamped pair → global settings (existing behavior)
+    try {
+      const gs = localStorage.getItem('guest_settings');
+      if (!gs) return null;
+      const { settings } = JSON.parse(gs);
+      const currentProvider = settings?.sendingProvider || 'instantly';
+      if (jobCampaignPair.provider !== currentProvider) {
+        return `Provider mismatch: run stamped with "${jobCampaignPair.provider}" but current provider is "${currentProvider}". Update Settings or re-run.`;
+      }
+      if (jobCampaignPair.operatorId && jobCampaignPair.operatorId !== 'guest') {
+        const currentOp = settings?.operatorId || 'guest';
+        if (currentOp !== 'guest' && jobCampaignPair.operatorId !== currentOp) {
+          return `Operator mismatch: run created by "${jobCampaignPair.operatorId}" but current operator is "${currentOp}".`;
+        }
+      }
+      if (jobCampaignPair.provider === 'plusvibe' && jobCampaignPair.providerWorkspaceId) {
+        const currentWs = settings?.plusvibeWorkspaceId || '';
+        if (currentWs && jobCampaignPair.providerWorkspaceId !== currentWs) {
+          return `PlusVibe workspace mismatch: run stamped with "${jobCampaignPair.providerWorkspaceId}" but current is "${currentWs}".`;
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [jobCampaignPair]);
 
   // Overlay context — read from localStorage (same keys Station.tsx uses)
   const overlayContext = useMemo(() => {
@@ -229,13 +321,8 @@ export default function SendPage() {
               Lens: {overlayContext.overlayClientName}
             </span>
           )}
-          {effectiveMatches.filter(m => m.evalStatus === 'curated').length > 0 && (
-            <span style={{ color: '#34d399' }}>
-              {effectiveMatches.filter(m => m.evalStatus === 'curated').length} vetted
-            </span>
-          )}
           <span className="text-white/20">
-            {effectiveMatches.length} total
+            {effectiveMatches.length} pairs
           </span>
           <button
             onClick={() => navigate('/settings')}
@@ -252,21 +339,39 @@ export default function SendPage() {
         <ExecutionBadge mode="global" />
       </div>
 
+      {/* ── SEND BLOCK BANNER ── */}
+      {sendBlockReason && (
+        <div className="px-5 py-2 border-b border-red-500/20 bg-red-500/[0.04]">
+          <p className="font-mono text-red-400/80" style={{ fontSize: '11px' }}>
+            {sendBlockReason}
+          </p>
+        </div>
+      )}
+
       {/* ── COMPOSE PANEL (full-width) ── */}
       <div className="flex-1 min-h-0">
-        <ComposePanel
-          matches={effectiveMatches}
-          canonicals={job.canonicals}
-          enrichResults={enrichResults}
-          aiConfig={aiConfig}
-          senderConfig={senderConfig}
-          operatorId={operatorId}
-          overlayClientId={overlayContext?.overlayClientId}
-          overlayVersion={overlayContext?.overlayVersion}
-          overlayClientName={overlayContext?.overlayClientName}
-          overlayHash={overlayContext?.overlayHash}
-          fulfillmentClient={fulfillmentClient}
-        />
+        {sendBlockReason ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="font-mono text-white/20" style={{ fontSize: '12px' }}>
+              Sending blocked — resolve the configuration mismatch above.
+            </p>
+          </div>
+        ) : (
+          <ComposePanel
+            matches={effectiveMatches}
+            canonicals={job.canonicals}
+            enrichResults={enrichResults}
+            aiConfig={aiConfig}
+            senderConfig={senderConfig}
+            senderId={senderConfig?.senderId}
+            operatorId={operatorId}
+            overlayClientId={overlayContext?.overlayClientId}
+            overlayVersion={overlayContext?.overlayVersion}
+            overlayClientName={overlayContext?.overlayClientName}
+            overlayHash={overlayContext?.overlayHash}
+            fulfillmentClient={fulfillmentClient}
+          />
+        )}
       </div>
 
       <style>{`

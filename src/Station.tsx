@@ -57,16 +57,59 @@ import { classifyFromPack, classifySignal } from './dmcb/classifySignal';
 import type { SignalClassification } from './dmcb/classifySignal';
 import { buildEventMeta } from './dmcb/normalizedToCanonical';
 import ExecutionBadge from './station/components/ExecutionBadge';
+import AuthModal from './AuthModal';
 import { OverlayAuditPanel } from './station/components/OverlayAuditPanel';
 import { useOverlayPerformance } from './station/hooks/useOverlayPerformance';
 import { useOverlaySuggestions } from './station/hooks/useOverlaySuggestions';
 import { hashOverlaySpecSync } from './station/lib/overlayHash';
 import type { OverlaySuggestion } from './telemetry/overlaySuggestions';
 import ClientProfileModal from './station/components/ClientProfileModal';
+import { patchGuestSettings } from './utils/settingsCache';
 
 // =============================================================================
 // HELPERS — outside component to avoid re-creation
 // =============================================================================
+
+// Pack ID → Market ID lookup (MARKETS is a module-level constant — never changes)
+const PACK_TO_MARKET = new Map<string, string>();
+for (const m of MARKETS) {
+  for (const p of m.packs) PACK_TO_MARKET.set(p.id, m.id);
+}
+
+// Market ID → Market display name
+const MARKET_NAME_OF = new Map<string, string>();
+for (const m of MARKETS) MARKET_NAME_OF.set(m.id, m.name);
+
+/** Read current sending provider config from guest_settings localStorage cache. */
+function readCurrentSendConfig(): {
+  provider: string;
+  workspaceId?: string;
+  operatorId: string;
+  demandCampaignId?: string;
+  supplyCampaignId?: string;
+} | null {
+  try {
+    const gs = localStorage.getItem('guest_settings');
+    if (!gs) return null;
+    const { settings: s } = JSON.parse(gs);
+    const provider = s?.sendingProvider || 'instantly';
+    if (provider === 'plusvibe' && s?.plusvibeApiKey) {
+      return {
+        provider: 'plusvibe',
+        workspaceId: s.plusvibeWorkspaceId || '',
+        operatorId: s.operatorId || 'guest',
+        demandCampaignId: s.plusvibeCampaignDemand || s.instantlyCampaignDemand || '',
+        supplyCampaignId: s.plusvibeCampaignSupply || s.instantlyCampaignSupply || '',
+      };
+    }
+    return {
+      provider: 'instantly',
+      operatorId: s.operatorId || 'guest',
+      demandCampaignId: s.instantlyCampaignDemand || '',
+      supplyCampaignId: s.instantlyCampaignSupply || '',
+    };
+  } catch { return null; }
+}
 
 function tierLabel(tier: ConfidenceTier): string {
   return tier === 'strong' ? 'A' : tier === 'good' ? 'B' : 'C';
@@ -585,7 +628,7 @@ export default function Station() {
   // Client manager modal state
   const [clientManagerOpen, setClientManagerOpen] = useState(false);
   const [newClientName, setNewClientName] = useState('');
-  const [newClientSide, setNewClientSide] = useState<'demand' | 'supply' | 'both'>('demand');
+  const [newClientSide, setNewClientSide] = useState<'demand' | 'supply'>('demand');
 
   // Client profile modal state
   const [profileClientId, setProfileClientId] = useState<string | null>(null);
@@ -596,8 +639,34 @@ export default function Station() {
   // Delete confirmation in filters modal
   const [confirmDeleteClient, setConfirmDeleteClient] = useState(false);
 
-  // Source tab — 'market' (Prebuilt Markets) vs 'yourdata' (CSV/URL)
-  const [sourceTab, setSourceTab] = useState<'market' | 'yourdata'>('market');
+  // Source tab — 'market' (Prebuilt Markets, SSM gated) vs 'yourdata' (Apify, open)
+  const [sourceTab, setSourceTab] = useState<'market' | 'yourdata'>('yourdata');
+
+  // SSM gate for prebuilt markets
+  const [ssmApproved, setSsmApproved] = useState(false);
+  const [showSsmModal, setShowSsmModal] = useState(false);
+
+  useEffect(() => {
+    // Dev bypass — match SSMGate behavior on localhost
+    if (window.location.hostname === 'localhost') {
+      setSsmApproved(true);
+      setSourceTab('market');
+      return;
+    }
+    if (!user?.email) return;
+    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ssm-access/check?email=${encodeURIComponent(user.email.toLowerCase().trim())}`;
+    fetch(url).then(r => r.json()).then(d => {
+      if (d.status === 'approved') { setSsmApproved(true); setSourceTab('market'); }
+    }).catch(() => {});
+  }, [user?.email]);
+
+  const handleSourceTabChange = (mode: 'market' | 'yourdata') => {
+    if (mode === 'market' && !ssmApproved) {
+      setShowSsmModal(true);
+      return;
+    }
+    setSourceTab(mode);
+  };
 
   // Your Data tab state
   const [yourDemandInput, setYourDemandInput] = useState('');
@@ -613,7 +682,15 @@ export default function Station() {
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<{ done: number; total: number } | null>(null);
-  const analyzeCacheRef = useRef<{ canonicalMap: Map<string, DMCBCanonical>; rawRecords: RawRecord[]; timestamp: number } | null>(null);
+  const analyzeCacheRef = useRef<{ canonicalMap: Map<string, DMCBCanonical>; rawRecords: RawRecord[]; timestamp: number; marketName?: string; marketId?: string } | null>(null);
+
+  // Market campaign config — per-market campaign IDs for prebuilt markets (localStorage-backed)
+  const [marketCampaigns, setMarketCampaigns] = useState<Record<string, { demandCampaignId: string; supplyCampaignId: string }>>(() => {
+    try {
+      const raw = localStorage.getItem('market_campaigns');
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
 
   // Clear analyze cache when URLs change
   useEffect(() => {
@@ -669,6 +746,22 @@ export default function Station() {
             apifyToken: data?.apify_token || '',
             aiConfig,
           });
+          // Load market_campaigns from DB (overrides localStorage init)
+          if (data?.market_campaigns && typeof data.market_campaigns === 'object') {
+            setMarketCampaigns(data.market_campaigns as Record<string, { demandCampaignId: string; supplyCampaignId: string }>);
+          }
+          // Cache sending config for readCurrentSendConfig() / SendPage
+          patchGuestSettings({
+            sendingProvider: data?.sending_provider || 'instantly',
+            instantlyApiKey: data?.instantly_api_key || '',
+            instantlyCampaignDemand: data?.instantly_campaign_demand || '',
+            instantlyCampaignSupply: data?.instantly_campaign_supply || '',
+            plusvibeApiKey: data?.plusvibe_api_key || '',
+            plusvibeWorkspaceId: data?.plusvibe_workspace_id || '',
+            plusvibeCampaignDemand: data?.plusvibe_campaign_demand || '',
+            plusvibeCampaignSupply: data?.plusvibe_campaign_supply || '',
+            operatorId: user?.id || 'guest',
+          });
           return;
         }
 
@@ -688,6 +781,10 @@ export default function Station() {
           apifyToken: s.apifyToken || s.apify_token || '',
           aiConfig,
         });
+        // Load market_campaigns from guest_settings (overrides localStorage init)
+        if (s.marketCampaigns && typeof s.marketCampaigns === 'object') {
+          setMarketCampaigns(s.marketCampaigns as Record<string, { demandCampaignId: string; supplyCampaignId: string }>);
+        }
       } catch (e) {
         console.error('[Station] Settings load error:', e);
         setSettings({ aiConfig: null });
@@ -1051,11 +1148,18 @@ export default function Station() {
         const demandPack = allPacks.find(p => p.id === demandPackId);
         const supplyPack = allPacks.find(p => p.id === supplyPackId);
         if (!demandPack || !supplyPack) return;
+        // Same-market guard — demand and supply must be from the same market
+        const demandMarketId = PACK_TO_MARKET.get(demandPackId);
+        const supplyMarketId = PACK_TO_MARKET.get(supplyPackId);
+        if (demandMarketId !== supplyMarketId) {
+          setError('Demand and supply packs must be from the same market.');
+          return;
+        }
         demandOptions = { ...packToSearchOptions(demandPack), targetCount: batchSize };
         supplyOptions = { ...packToSearchOptions(supplyPack), targetCount: batchSize };
         demandLabel = demandPack.name;
         supplyLabel = supplyPack.name;
-        market = demandPack.id.split('.')[0];
+        market = demandMarketId || demandPack.id.split('.')[0];
       } else {
         // Demand: watch signals for trigger events + job posting filter
         demandOptions = buildCustomOptions(
@@ -1214,40 +1318,24 @@ export default function Station() {
         return;
       }
 
-      setLoadingPhase('launching evaluation…');
-      const jobId = `v5-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      await persistCanonicals(canonicalMap, jobId);
+      // Compute diagnostics and show AnalyzeModal — same gate as Apify path.
+      // User clicks Run in the modal → handleAnalyzeRun() fires the orchestrator.
+      const computeDiag = (recs: typeof demandRecords) => {
+        let companyFound = 0, domainFound = 0, totalConf = 0, extracted = 0;
+        for (const r of recs) {
+          const c = canonicalMap.get(r.recordKey);
+          if (c) { extracted++; if (c.company) companyFound++; if (c.domain) domainFound++; totalConf += c.confidence ?? 0; }
+        }
+        return { total: recs.length, extracted, errors: recs.length - extracted, companyFound, domainFound, avgConfidence: extracted > 0 ? totalConf / extracted : 0, missingFields: [] as string[] };
+      };
+      const demandDiag = computeDiag(demandRecords);
+      const supplyDiag = computeDiag(supplyRecords);
+      const canRun = (demandDiag.companyFound > 0 || demandDiag.domainFound > 0)
+        && (supplyDiag.companyFound > 0 || supplyDiag.domainFound > 0);
 
-      const { error: jobError } = await supabase.from('mcp_jobs').upsert({
-        job_id: jobId,
-        status: 'pending',
-        market_name: marketsMode === 'pack' ? market : 'Custom Market',
-        started_at: new Date().toISOString(),
-        config: { demandCount: demandKeys.length, supplyCount: supplyKeys.length },
-      }, { onConflict: 'job_id' });
-      if (jobError) throw new Error(`Failed to create job: ${jobError.message}`);
-
-      // Fire orchestrator — don't await. Job row exists, RunsPage shows live status.
-      // SPA navigation doesn't cancel in-flight fetches.
-      const orchBase = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mcp-orchestrate`;
-      fetch(orchBase, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
-          jobId,
-          demandKeys,
-          supplyKeys,
-          aiConfig: dmcbAiConfig,
-          topK: 10,
-        }),
-      }).catch((err) => console.error('[station] orchestrate POST failed:', err));
-
-      setLoading(false);
-      setLoadingPhase(null);
-      navigate('/station/runs');
+      analyzeCacheRef.current = { canonicalMap, rawRecords, timestamp: Date.now(), marketName: marketsMode === 'pack' ? market : 'Custom Market', marketId: marketsMode === 'pack' ? market : 'custom' };
+      setAnalyzeDiagnostics({ demand: demandDiag, supply: supplyDiag, canRun });
+      setAnalyzeModalOpen(true);
       return;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Markets search failed');
@@ -1373,6 +1461,37 @@ export default function Station() {
   }
 
   // ==========================================================================
+  // YOUR DATA — Export CSV (from analyze modal, uses cached raw records)
+  // ==========================================================================
+
+  const handleAnalyzeExport = useCallback(() => {
+    const cache = analyzeCacheRef.current;
+    if (!cache) return;
+
+    const CSV_COLS = ['fullName','firstName','lastName','email','title','company','domain','industry','signal','city','state','country','linkedin','companyDescription'] as const;
+    const escape = (v: any) => {
+      if (v == null || v === '') return '';
+      const s = String(v).replace(/"/g, '""');
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s}"` : s;
+    };
+
+    const rows = cache.rawRecords.map(r => {
+      const p = r.payload as any;
+      // NormalizedRecord payloads have direct fields; Apify payloads have nested JSON
+      return CSV_COLS.map(col => escape(p?.[col])).join(',');
+    });
+
+    const csv = [CSV_COLS.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `leads_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  // ==========================================================================
   // YOUR DATA — Run (from modal, uses cached extraction, zero AI re-calls)
   // ==========================================================================
 
@@ -1395,9 +1514,68 @@ export default function Station() {
     const { canonicalMap, rawRecords } = cache;
     const demandKeys = rawRecords.filter(r => r.side === 'demand').map(r => r.recordKey);
     const supplyKeys = rawRecords.filter(r => r.side === 'supply').map(r => r.recordKey);
-    if (demandKeys.length === 0 || supplyKeys.length === 0) {
-      setAnalyzeError('Need both demand and supply records.');
-      return;
+
+    // =========================================================================
+    // FULFILLMENT: promote client into a canonical if active
+    // =========================================================================
+    const client = activeFulfillmentClient;
+    let fulfillmentKey: string | undefined;
+    let fulfillmentSide: 'demand' | 'supply' | undefined;
+
+    if (client) {
+      if (!client.profile?.companyDescription) {
+        setAnalyzeError('Fill in client profile (company description) before running fulfillment.');
+        return;
+      }
+      // Stable record_key from client ID — fc_ prefix never collides with d_/s_
+      fulfillmentKey = client.canonicalKey || `fc_${client.id.replace(/-/g, '').slice(0, 8)}`;
+      fulfillmentSide = client.economicSide;
+
+      // Persist canonicalKey back to client so RunDetailPageV2 can read it
+      if (!client.canonicalKey) {
+        client.canonicalKey = fulfillmentKey;
+        const allClients: typeof client[] = JSON.parse(localStorage.getItem('station_fulfillment_clients') || '[]');
+        const idx = allClients.findIndex(c => c.id === client.id);
+        if (idx >= 0) { allClients[idx] = { ...allClients[idx], canonicalKey: fulfillmentKey }; }
+        localStorage.setItem('station_fulfillment_clients', JSON.stringify(allClients));
+      }
+
+      // Build canonical from client profile
+      const p = client.profile;
+      const clientCanonical: DMCBCanonical = {
+        role: client.economicSide,
+        company: client.name,
+        who: client.name,
+        wants: client.economicSide === 'demand' ? (p.companyDescription || '') : '',
+        offers: client.economicSide === 'supply' ? (p.companyDescription || '') : '',
+        why_now: '',
+        constraints: [],
+        proof: p.caseStudy || '',
+        confidence: 1.0,
+        domain: null,
+        industry: p.specialization || null,
+        keywords: [...(p.differentiators || []), ...(p.painPoints || [])].slice(0, 10),
+        entity_type: 'organization',
+      };
+      canonicalMap.set(fulfillmentKey, clientCanonical);
+    }
+
+    // Validate sides — in fulfillment, only the OTHER side is required from the dataset
+    if (client && fulfillmentSide === 'supply') {
+      if (demandKeys.length === 0) {
+        setAnalyzeError('Fulfillment client is supply — need demand records in the dataset.');
+        return;
+      }
+    } else if (client && fulfillmentSide === 'demand') {
+      if (supplyKeys.length === 0) {
+        setAnalyzeError('Fulfillment client is demand — need supply records in the dataset.');
+        return;
+      }
+    } else if (!client) {
+      if (demandKeys.length === 0 || supplyKeys.length === 0) {
+        setAnalyzeError('Need both demand and supply records.');
+        return;
+      }
     }
 
     try {
@@ -1423,12 +1601,39 @@ export default function Station() {
       const jobId = `v5-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await persistCanonicals(canonicalMap, jobId);
 
+      // Resolve market + campaign pair for immutable snapshot
+      const marketId = cache.marketId || 'custom';
+      const mktCampaigns = marketCampaigns[marketId];
+      const sendCfg = readCurrentSendConfig();
+      let campaignPair: Record<string, unknown> | null = null;
+
+      if (mktCampaigns?.demandCampaignId && mktCampaigns?.supplyCampaignId) {
+        // market_campaigns is the sole source for new jobs
+        campaignPair = {
+          marketId,
+          marketName: cache.marketName || 'Custom',
+          provider: sendCfg?.provider || 'instantly',
+          demandCampaignId: mktCampaigns.demandCampaignId,
+          supplyCampaignId: mktCampaigns.supplyCampaignId,
+          operatorId: sendCfg?.operatorId || stationOperatorId || 'guest',
+          providerWorkspaceId: sendCfg?.provider === 'plusvibe' ? sendCfg.workspaceId || null : null,
+        };
+      }
+      // No fallback to global Settings — market_campaigns is the sole source for new jobs.
+      // If no campaigns configured, campaignPair stays null → SendPage won't allow sending.
+
       const { error: jobError } = await supabase.from('mcp_jobs').upsert({
         job_id: jobId,
         status: 'pending',
-        market_name: 'Apify Dataset',
+        market_name: client ? `Fulfillment: ${client.name}` : (cache.marketName || 'Apify Dataset'),
+        market_id: marketId,
         started_at: new Date().toISOString(),
-        config: { demandCount: demandKeys.length, supplyCount: supplyKeys.length },
+        config: {
+          demandCount: demandKeys.length,
+          supplyCount: supplyKeys.length,
+          ...(campaignPair ? { campaignPair } : {}),
+          ...(client ? { fulfillment: { key: fulfillmentKey, side: fulfillmentSide, clientName: client.name } } : {}),
+        },
       }, { onConflict: 'job_id' });
       if (jobError) throw new Error(`Failed to create job: ${jobError.message}`);
 
@@ -1443,6 +1648,7 @@ export default function Station() {
           jobId,
           demandKeys,
           supplyKeys,
+          ...(fulfillmentKey ? { clientKey: fulfillmentKey, clientSide: fulfillmentSide } : {}),
           aiConfig: dmcbAiConfig,
           topK: 10,
         }),
@@ -1783,10 +1989,72 @@ export default function Station() {
   const allDemandPacks = MARKETS.flatMap(m => m.packs.filter(p => p.side === 'demand'));
   const allSupplyPacks = MARKETS.flatMap(m => m.packs.filter(p => p.side === 'supply'));
 
+  // Pack ID → parent market name (uses PACK_TO_MARKET, no string parsing)
+  const marketNameOf = (packId: string) => {
+    const mid = PACK_TO_MARKET.get(packId);
+    return (mid && MARKET_NAME_OF.get(mid)) ?? mid ?? packId;
+  };
+
+  // Resolved market ID from current pack selection (null if packs not from same market)
+  const resolvedMarketId = useMemo((): string | null => {
+    if (!demandPackId || !supplyPackId) return null;
+    const dMid = PACK_TO_MARKET.get(demandPackId);
+    const sMid = PACK_TO_MARKET.get(supplyPackId);
+    if (!dMid || !sMid || dMid !== sMid) return null;
+    return dMid;
+  }, [demandPackId, supplyPackId]);
+
+  // Save market campaigns on change — DB for auth, localStorage for guests
+  const updateMarketCampaign = useCallback((marketId: string, field: 'demandCampaignId' | 'supplyCampaignId', value: string) => {
+    setMarketCampaigns(prev => {
+      const next = { ...prev, [marketId]: { ...prev[marketId], [field]: value } };
+      // Ensure both fields exist
+      if (!next[marketId].demandCampaignId) next[marketId].demandCampaignId = '';
+      if (!next[marketId].supplyCampaignId) next[marketId].supplyCampaignId = '';
+      // Always write to localStorage (fast cache)
+      localStorage.setItem('market_campaigns', JSON.stringify(next));
+      // Persist to DB for auth users
+      if (isAuthenticated && user?.id) {
+        supabase.from('operator_settings').upsert({
+          user_id: user.id,
+          market_campaigns: next,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' }).then(({ error }) => {
+          if (error) console.error('[Station] market_campaigns DB save failed:', error);
+        });
+        // Register campaign to user_campaigns for webhook routing (same pattern as Settings)
+        if (value) {
+          const sendCfg = readCurrentSendConfig();
+          const provider = sendCfg?.provider || 'instantly';
+          const side = field === 'demandCampaignId' ? 'Demand' : 'Supply';
+          supabase.from('user_campaigns').upsert({
+            user_id: user.id,
+            campaign_id: value,
+            provider,
+            campaign_name: `${side} Campaign (${marketId})`,
+          }, { onConflict: 'campaign_id' }).catch(err => {
+            console.warn('[Station] campaign registration failed (non-blocking):', err);
+          });
+        }
+      } else {
+        // Guest: also persist into guest_settings so Settings round-trip works
+        try {
+          const gs = localStorage.getItem('guest_settings');
+          const parsed = gs ? JSON.parse(gs) : { settings: {} };
+          const s = parsed.settings || parsed;
+          s.marketCampaigns = next;
+          localStorage.setItem('guest_settings', JSON.stringify({ settings: s }));
+        } catch { /* non-critical */ }
+      }
+      return next;
+    });
+  }, [isAuthenticated, user?.id]);
+
   const renderLoadScreen = () => {
     const demandPack = allDemandPacks.find(p => p.id === demandPackId);
     const supplyPack = allSupplyPacks.find(p => p.id === supplyPackId);
-    const packCanLoad = !!settings.instantlyApiKey && !!demandPackId && !!supplyPackId;
+    const sameMarket = !demandPackId || !supplyPackId || PACK_TO_MARKET.get(demandPackId) === PACK_TO_MARKET.get(supplyPackId);
+    const packCanLoad = !!settings.instantlyApiKey && !!demandPackId && !!supplyPackId && sameMarket;
     const customCanLoad = !!settings.instantlyApiKey && customSignals.length > 0;
 
     // Loading phase index: 0=scanning, 1=enriching, 2=interpreting, 3=launching
@@ -1820,11 +2088,21 @@ export default function Station() {
 
     return (
       <div className="min-h-screen bg-[#09090b] flex flex-col">
-        {/* Header bar — canonical loop + lens bar */}
+        {/* Header bar — back + canonical loop + lens bar */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-white/[0.06]">
-          <p className="text-[10px] font-mono text-white/20 tracking-widest uppercase whitespace-nowrap">
-            Signal → Syndicate → Match → Route → Print
-          </p>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              onClick={() => navigate('/launcher')}
+              className="font-mono text-white/25 hover:text-white/50 transition-colors"
+              style={{ background: 'none', border: 'none', outline: 'none', cursor: 'pointer', fontSize: '12px', padding: 0 }}
+            >
+              ← Launcher
+            </button>
+            <span className="text-white/[0.08]">|</span>
+            <p className="text-[10px] font-mono text-white/20 tracking-widest uppercase whitespace-nowrap">
+              Signal → Syndicate → Match → Route → Print
+            </p>
+          </div>
           <div className="flex items-center gap-2 shrink-0">
             {/* Lens selector — custom dropdown (matches prebuilt markets pattern) */}
             <span className="text-[10px] font-mono text-white/30 shrink-0">Lens:</span>
@@ -1962,11 +2240,26 @@ export default function Station() {
                   from { opacity: 0; transform: translateY(8px) }
                   to   { opacity: 1; transform: translateY(0) }
                 }
+                @keyframes overlayFadeIn {
+                  from { opacity: 0 } to { opacity: 1 }
+                }
+                @keyframes cardFloat {
+                  from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) }
+                }
+                @keyframes dropReveal {
+                  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+                  to   { opacity: 1; transform: translateY(0) scale(1); }
+                }
+                @keyframes itemFadeIn {
+                  from { opacity: 0; transform: translateX(-4px); }
+                  to   { opacity: 1; transform: translateX(0); }
+                }
               `}</style>
 
               <StationSourcePanel
                 mode={sourceTab}
-                onModeChange={setSourceTab}
+                onModeChange={handleSourceTabChange}
+                marketLocked={!ssmApproved}
               >
               {sourceTab === 'market' && (
               <div style={{ animation: 'stSlideIn 200ms ease both' }}>
@@ -1994,7 +2287,7 @@ export default function Station() {
               {marketsMode === 'pack' && (
                 <div
                   className="space-y-3 mx-auto"
-                  style={{ maxWidth: '280px', animation: 'stSlideIn 200ms ease both', marginBottom: '32px' }}
+                  style={{ maxWidth: '340px', animation: 'stSlideIn 200ms ease both', marginBottom: '32px' }}
                 >
                   {/* Demand Pack */}
                   <div>
@@ -2002,23 +2295,29 @@ export default function Station() {
                     <div className="relative">
                       <button
                         onClick={() => { setDemandDropdownOpen(v => !v); setSupplyDropdownOpen(false); }}
-                        className="w-full font-mono text-[11px] text-left bg-white/[0.03] border border-white/[0.06] rounded hover:border-white/[0.12] transition-colors flex items-center justify-between px-3"
-                        style={{ height: '28px', border: '1px solid rgba(255,255,255,0.06)', outline: 'none', boxShadow: 'none' }}
+                        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+                        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        className="w-full font-mono text-[11px] text-left bg-white/[0.03] border border-white/[0.06] rounded hover:border-white/[0.12] flex items-center justify-between px-3"
+                        style={{ height: '28px', border: '1px solid rgba(255,255,255,0.06)', outline: 'none', boxShadow: 'none', transition: 'transform 150ms ease, border-color 200ms ease' }}
                       >
-                        <span className={demandPackId ? 'text-white/70' : 'text-white/20'}>
-                          {demandPack ? `${demandPack.id.split('.')[0].replace(/^\w/, c => c.toUpperCase())} / ${demandPack.name.toLowerCase()}` : '— select —'}
+                        <span className={`truncate ${demandPackId ? 'text-white/70' : 'text-white/20'}`}>
+                          {demandPack ? `${marketNameOf(demandPack.id)} / ${demandPack.name}` : '— select —'}
                         </span>
-                        <span className="text-white/20 ml-2">▾</span>
+                        <span className="text-white/20 ml-2 flex-shrink-0" style={{ transition: 'transform 200ms ease', transform: demandDropdownOpen ? 'rotate(180deg)' : 'rotate(0)' }}>▾</span>
                       </button>
                       {demandDropdownOpen && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => setDemandDropdownOpen(false)} />
-                          <div className="absolute top-full left-0 right-0 mt-0.5 bg-[#09090b] border border-white/[0.06] rounded z-50 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                            {allDemandPacks.map(p => (
+                          <div
+                            className="absolute top-full left-0 right-0 mt-0.5 bg-[#09090b] border border-white/[0.06] rounded z-50 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:hidden"
+                            style={{ scrollbarWidth: 'none', animation: 'dropReveal 200ms cubic-bezier(0.16,1,0.3,1) both' }}
+                          >
+                            {allDemandPacks.map((p, i) => (
                               <button key={p.id} onClick={() => { setDemandPackId(p.id); setDemandDropdownOpen(false); }}
-                                className={`w-full text-left px-2.5 py-1.5 font-mono text-[11px] transition-colors ${demandPackId === p.id ? 'text-white/90 bg-white/[0.06]' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
-                                style={{ border: 'none', outline: 'none' }}>
-                                {p.id.split('.')[0].replace(/^\w/, c => c.toUpperCase())} / {p.name.toLowerCase()}
+                                className={`w-full text-left px-2.5 py-1.5 font-mono text-[11px] truncate transition-colors ${demandPackId === p.id ? 'text-white/90 bg-white/[0.06]' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
+                                style={{ border: 'none', outline: 'none', animation: `itemFadeIn 250ms cubic-bezier(0.16,1,0.3,1) ${30 * i}ms both` }}>
+                                {marketNameOf(p.id)} / {p.name}
                               </button>
                             ))}
                           </div>
@@ -2033,23 +2332,29 @@ export default function Station() {
                     <div className="relative">
                       <button
                         onClick={() => { setSupplyDropdownOpen(v => !v); setDemandDropdownOpen(false); }}
-                        className="w-full font-mono text-[11px] text-left bg-white/[0.03] border border-white/[0.06] rounded hover:border-white/[0.12] transition-colors flex items-center justify-between px-3"
-                        style={{ height: '28px', border: '1px solid rgba(255,255,255,0.06)', outline: 'none', boxShadow: 'none' }}
+                        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+                        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        className="w-full font-mono text-[11px] text-left bg-white/[0.03] border border-white/[0.06] rounded hover:border-white/[0.12] flex items-center justify-between px-3"
+                        style={{ height: '28px', border: '1px solid rgba(255,255,255,0.06)', outline: 'none', boxShadow: 'none', transition: 'transform 150ms ease, border-color 200ms ease' }}
                       >
-                        <span className={supplyPackId ? 'text-white/70' : 'text-white/20'}>
-                          {supplyPack ? `${supplyPack.id.split('.')[0].replace(/^\w/, c => c.toUpperCase())} / ${supplyPack.name.toLowerCase()}` : '— select —'}
+                        <span className={`truncate ${supplyPackId ? 'text-white/70' : 'text-white/20'}`}>
+                          {supplyPack ? `${marketNameOf(supplyPack.id)} / ${supplyPack.name}` : '— select —'}
                         </span>
-                        <span className="text-white/20 ml-2">▾</span>
+                        <span className="text-white/20 ml-2 flex-shrink-0" style={{ transition: 'transform 200ms ease', transform: supplyDropdownOpen ? 'rotate(180deg)' : 'rotate(0)' }}>▾</span>
                       </button>
                       {supplyDropdownOpen && (
                         <>
                           <div className="fixed inset-0 z-40" onClick={() => setSupplyDropdownOpen(false)} />
-                          <div className="absolute top-full left-0 right-0 mt-0.5 bg-[#09090b] border border-white/[0.06] rounded z-50 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                            {allSupplyPacks.map(p => (
+                          <div
+                            className="absolute top-full left-0 right-0 mt-0.5 bg-[#09090b] border border-white/[0.06] rounded z-50 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:hidden"
+                            style={{ scrollbarWidth: 'none', animation: 'dropReveal 200ms cubic-bezier(0.16,1,0.3,1) both' }}
+                          >
+                            {allSupplyPacks.map((p, i) => (
                               <button key={p.id} onClick={() => { setSupplyPackId(p.id); setSupplyDropdownOpen(false); }}
-                                className={`w-full text-left px-2.5 py-1.5 font-mono text-[11px] transition-colors ${supplyPackId === p.id ? 'text-white/90 bg-white/[0.06]' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
-                                style={{ border: 'none', outline: 'none' }}>
-                                {p.id.split('.')[0].replace(/^\w/, c => c.toUpperCase())} / {p.name.toLowerCase()}
+                                className={`w-full text-left px-2.5 py-1.5 font-mono text-[11px] truncate transition-colors ${supplyPackId === p.id ? 'text-white/90 bg-white/[0.06]' : 'text-white/50 hover:text-white/80 hover:bg-white/[0.02]'}`}
+                                style={{ border: 'none', outline: 'none', animation: `itemFadeIn 250ms cubic-bezier(0.16,1,0.3,1) ${30 * i}ms both` }}>
+                                {marketNameOf(p.id)} / {p.name}
                               </button>
                             ))}
                           </div>
@@ -2057,6 +2362,46 @@ export default function Station() {
                       )}
                     </div>
                   </div>
+
+                  {/* Cross-market warning */}
+                  {demandPackId && supplyPackId && !sameMarket && (
+                    <p className="font-mono text-white/30 text-center" style={{ fontSize: '10px', marginTop: '12px' }}>
+                      Select packs from the same market.
+                    </p>
+                  )}
+
+                  {/* Campaign config — shown when both packs are from the same market */}
+                  {resolvedMarketId && (
+                    <div style={{ marginTop: '20px', animation: 'stSlideIn 200ms ease both' }}>
+                      <p className="font-mono text-white/30 mb-2 tracking-widest uppercase text-center" style={{ fontSize: '10px' }}>
+                        Campaigns
+                      </p>
+                      <div className="space-y-1.5">
+                        <div>
+                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Demand Campaign</p>
+                          <input
+                            type="text"
+                            value={marketCampaigns[resolvedMarketId]?.demandCampaignId || ''}
+                            onChange={e => updateMarketCampaign(resolvedMarketId, 'demandCampaignId', e.target.value)}
+                            placeholder="Paste campaign ID"
+                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                            style={{ height: '28px' }}
+                          />
+                        </div>
+                        <div>
+                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Supply Campaign</p>
+                          <input
+                            type="text"
+                            value={marketCampaigns[resolvedMarketId]?.supplyCampaignId || ''}
+                            onChange={e => updateMarketCampaign(resolvedMarketId, 'supplyCampaignId', e.target.value)}
+                            placeholder="Paste campaign ID"
+                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                            style={{ height: '28px' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Batch size */}
                   <div className="flex flex-col items-center" style={{ marginTop: '40px', marginBottom: '16px' }}>
@@ -2085,7 +2430,7 @@ export default function Station() {
                     {settingsLoaded && !settings.instantlyApiKey && (
                       <p className="font-mono text-white/30 text-center" style={{ fontSize: '11px' }}>
                         instantly not connected —{' '}
-                        <a href="/settings" className="text-white/50 hover:text-white/70 underline underline-offset-2 transition-colors">settings</a>
+                        <a onClick={(e) => { e.preventDefault(); navigate('/settings'); }} className="text-white/50 hover:text-white/70 underline underline-offset-2 transition-colors cursor-pointer">settings</a>
                       </p>
                     )}
                     <button
@@ -2349,7 +2694,7 @@ export default function Station() {
                       {!settings.instantlyApiKey && (
                         <p className="font-mono text-white/30 mb-3" style={{ fontSize: '11px' }}>
                           instantly not connected —{' '}
-                          <a href="/settings" className="text-white/50 hover:text-white/70 underline underline-offset-2 transition-colors">settings</a>
+                          <a onClick={(e) => { e.preventDefault(); navigate('/settings'); }} className="text-white/50 hover:text-white/70 underline underline-offset-2 transition-colors cursor-pointer">settings</a>
                         </p>
                       )}
                       <button
@@ -2428,6 +2773,37 @@ export default function Station() {
                       />
                     </div>
 
+                    {/* Campaign config — for custom/Apify datasets */}
+                    <div style={{ marginTop: '20px', animation: 'stSlideIn 200ms ease both' }}>
+                      <p className="font-mono text-white/30 mb-2 tracking-widest uppercase text-center" style={{ fontSize: '10px' }}>
+                        Campaigns
+                      </p>
+                      <div className="space-y-1.5">
+                        <div>
+                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Demand Campaign</p>
+                          <input
+                            type="text"
+                            value={marketCampaigns['custom']?.demandCampaignId || ''}
+                            onChange={e => updateMarketCampaign('custom', 'demandCampaignId', e.target.value)}
+                            placeholder="Paste campaign ID"
+                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                            style={{ height: '28px' }}
+                          />
+                        </div>
+                        <div>
+                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Supply Campaign</p>
+                          <input
+                            type="text"
+                            value={marketCampaigns['custom']?.supplyCampaignId || ''}
+                            onChange={e => updateMarketCampaign('custom', 'supplyCampaignId', e.target.value)}
+                            placeholder="Paste campaign ID"
+                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                            style={{ height: '28px' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Analyze */}
                     <div className="flex flex-col items-center" style={{ marginTop: '40px' }}>
                       <button
@@ -2479,8 +2855,8 @@ export default function Station() {
                       {analyzeError && (
                         analyzeError === '__no_ai__' ? (
                           <a
-                            href="/settings?tab=ai"
-                            className="font-mono text-white/40 hover:text-white/60 underline underline-offset-2 transition-colors mt-2 block"
+                            onClick={(e) => { e.preventDefault(); navigate('/settings?tab=ai'); }}
+                            className="font-mono text-white/40 hover:text-white/60 underline underline-offset-2 transition-colors mt-2 block cursor-pointer"
                             style={{ fontSize: '10px' }}
                           >
                             set your AI key in Settings to continue
@@ -2496,12 +2872,21 @@ export default function Station() {
                 </div>
               )}
 
+              {/* SSM Auth Modal — triggered when non-member clicks Prebuilt Markets */}
+              <AuthModal
+                isOpen={showSsmModal}
+                onClose={() => setShowSsmModal(false)}
+                onSuccess={() => { setSsmApproved(true); setShowSsmModal(false); setSourceTab('market'); }}
+                featureName="Prebuilt Markets"
+              />
+
               {/* Analyze Modal */}
               {analyzeModalOpen && analyzeDiagnostics && (
                 <AnalyzeModal
                   diagnostics={analyzeDiagnostics}
                   onRun={handleAnalyzeRun}
                   onClose={() => setAnalyzeModalOpen(false)}
+                  onExport={handleAnalyzeExport}
                 />
               )}
               </StationSourcePanel>
@@ -3093,23 +3478,28 @@ export default function Station() {
     };
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-        <div className="w-[480px] max-h-[80vh] overflow-y-auto bg-[#09090b] border border-white/[0.10] rounded-sm flex flex-col">
+      <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ animation: 'overlayFadeIn 0.2s ease-out' }} onClick={() => setOverlayEditorOpen(false)}>
+        <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.60)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} />
+        <div className="relative flex flex-col" style={{ width: '100%', maxWidth: '480px', maxHeight: '80vh', margin: '0 24px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', overflow: 'hidden', animation: 'cardFloat 0.3s ease-out' }} onClick={e => e.stopPropagation()}>
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
-            <div>
-              <p className="text-[13px] text-white/90 font-medium">{client.name}</p>
-              <p className="text-[10px] font-mono text-white/30">Filters</p>
+          <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            <div className="flex items-center gap-2">
+              <span style={{ color: 'rgba(52,211,153,0.40)', fontSize: '8px', lineHeight: 1 }}>◆</span>
+              <div>
+                <p className="font-mono" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.60)' }}>{client.name}</p>
+                <p className="font-mono" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Filters</p>
+              </div>
             </div>
             <button
               onClick={() => setOverlayEditorOpen(false)}
-              className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
+              className="font-mono"
+              style={{ fontSize: '14px', color: 'rgba(255,255,255,0.20)', background: 'none', border: 'none', cursor: 'pointer', outline: 'none', padding: '0 4px' }}
             >
-              ✕
+              x
             </button>
           </div>
 
-          <div className="p-5 space-y-5">
+          <div className="flex-1 overflow-y-auto space-y-5" style={{ scrollbarWidth: 'none', padding: '16px 24px 24px' }}>
 
             {/* Show — must match at least one */}
             <div className="space-y-4">
@@ -3346,20 +3736,25 @@ export default function Station() {
     if (!clientManagerOpen) return null;
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-        <div className="w-[420px] max-h-[70vh] overflow-y-auto bg-[#09090b] border border-white/[0.10] rounded-sm flex flex-col">
+      <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ animation: 'overlayFadeIn 0.2s ease-out' }} onClick={() => setClientManagerOpen(false)}>
+        <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.60)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)' }} />
+        <div className="relative flex flex-col" style={{ width: '100%', maxWidth: '420px', maxHeight: '70vh', margin: '0 24px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', overflow: 'hidden', animation: 'cardFloat 0.3s ease-out' }} onClick={e => e.stopPropagation()}>
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
-            <p className="text-[13px] text-white/90 font-medium">Clients</p>
+          <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            <div className="flex items-center gap-2">
+              <span style={{ color: 'rgba(52,211,153,0.40)', fontSize: '8px', lineHeight: 1 }}>◆</span>
+              <p className="font-mono" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.60)' }}>Clients</p>
+            </div>
             <button
               onClick={() => setClientManagerOpen(false)}
-              className="text-[11px] text-white/30 hover:text-white/60 transition-colors"
+              className="font-mono"
+              style={{ fontSize: '14px', color: 'rgba(255,255,255,0.20)', background: 'none', border: 'none', cursor: 'pointer', outline: 'none', padding: '0 4px' }}
             >
-              ✕
+              x
             </button>
           </div>
 
-          <div className="p-5 space-y-4">
+          <div className="flex-1 overflow-y-auto space-y-4" style={{ scrollbarWidth: 'none', padding: '16px 20px 20px' }}>
 
             {/* Existing clients */}
             {fulfillmentClients.length > 0 && (
@@ -3370,22 +3765,30 @@ export default function Station() {
                   return (
                     <div
                       key={client.id}
-                      className="flex items-center justify-between px-3 py-2 border border-white/[0.06] rounded-sm"
+                      className="flex items-center justify-between px-3 py-2.5"
+                      style={{ border: '1px solid rgba(255,255,255,0.04)', borderRadius: '8px' }}
                     >
-                      <div>
-                        <p className="text-[12px] text-white/80">{client.name}</p>
-                        <p className="text-[10px] font-mono text-white/30">
-                          {client.economicSide}
-                          {client.profile?.icpTitles?.length ? ` · ${client.profile.icpTitles.join(', ')}` : ''}
-                        </p>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span style={{ color: 'rgba(52,211,153,0.35)', fontSize: '7px', lineHeight: 1, flexShrink: 0 }}>◆</span>
+                        <div className="min-w-0">
+                          <p className="font-mono text-white/80 truncate" style={{ fontSize: '12px' }}>{client.name}</p>
+                          <p className="font-mono" style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)' }}>
+                            {client.economicSide}
+                          </p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => {
                             setProfileClientId(client.id);
                             setClientManagerOpen(false);
                           }}
-                          className="text-[10px] font-mono text-white/30 hover:text-white/60 transition-colors"
+                          className="font-mono transition-all"
+                          style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', outline: 'none', transform: 'scale(1)' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; }}
+                          onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.95)'; }}
+                          onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; }}
                         >
                           profile
                         </button>
@@ -3397,7 +3800,12 @@ export default function Station() {
                             setOverlayEditorOpen(true); setConfirmDeleteClient(false);
                             setClientManagerOpen(false);
                           }}
-                          className="text-[10px] font-mono text-white/30 hover:text-white/60 transition-colors"
+                          className="font-mono transition-all"
+                          style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', outline: 'none', transform: 'scale(1)' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.55)'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)'; }}
+                          onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.95)'; }}
+                          onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; }}
                         >
                           filters
                         </button>
@@ -3407,9 +3815,12 @@ export default function Station() {
                             persistClients(fulfillmentClients.filter(c => c.id !== client.id));
                             persistOverlays(clientOverlays.filter(o => o.clientId !== client.id));
                           }}
-                          className="text-[10px] font-mono text-white/15 hover:text-red-400/60 transition-colors"
+                          className="font-mono"
+                          style={{ fontSize: '10px', color: 'rgba(255,255,255,0.12)', background: 'none', border: 'none', cursor: 'pointer', outline: 'none', padding: '0 2px' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = 'rgba(248,113,113,0.50)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.12)'; }}
                         >
-                          ✕
+                          x
                         </button>
                       </div>
                     </div>
@@ -3419,9 +3830,9 @@ export default function Station() {
             )}
 
             {/* Input section */}
-            <div className={fulfillmentClients.length > 0 ? 'border-t border-white/[0.06] pt-4' : ''}>
+            <div className={fulfillmentClients.length > 0 ? 'pt-4' : ''} style={{ borderTop: fulfillmentClients.length > 0 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
               {fulfillmentClients.length === 0 && (
-                <p className="text-[11px] text-white/30 leading-relaxed mb-4">
+                <p className="font-mono leading-relaxed mb-4" style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>
                   When someone pays you, add them here. Each client becomes a lens — matches re-rank around their profile.
                 </p>
               )}
@@ -3431,18 +3842,30 @@ export default function Station() {
                 onChange={e => setNewClientName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleCreateClient(); }}
                 placeholder="Client name…"
-                className="w-full h-8 px-3 text-[12px] bg-white/[0.04] border border-white/[0.08] rounded-sm text-white/80 placeholder-white/20 outline-none focus:border-white/20"
+                className="w-full font-mono text-white/80 placeholder-white/15 outline-none"
+                style={{ height: '32px', padding: '0 12px', fontSize: '12px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px' }}
+                onFocus={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; }}
+                onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.06)'; }}
               />
               <div className="flex items-center gap-2 mt-2">
-                {(['demand', 'supply', 'both'] as const).map(side => (
+                {(['demand', 'supply'] as const).map(side => (
                   <button
                     key={side}
                     onClick={() => setNewClientSide(side)}
-                    className={`text-[10px] font-mono px-2 py-0.5 rounded-sm border transition-colors ${
-                      newClientSide === side
-                        ? 'border-white/30 text-white/80 bg-white/[0.06]'
-                        : 'border-white/[0.08] text-white/30 hover:text-white/50'
-                    }`}
+                    className="font-mono transition-all"
+                    style={{
+                      fontSize: '10px',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      border: newClientSide === side ? '1px solid rgba(255,255,255,0.25)' : '1px solid rgba(255,255,255,0.06)',
+                      color: newClientSide === side ? 'rgba(255,255,255,0.80)' : 'rgba(255,255,255,0.25)',
+                      background: newClientSide === side ? 'rgba(255,255,255,0.05)' : 'transparent',
+                      cursor: 'pointer',
+                      outline: 'none',
+                      transform: 'scale(1)',
+                    }}
+                    onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.93)'; }}
+                    onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; }}
                   >
                     {side}
                   </button>
@@ -3450,7 +3873,24 @@ export default function Station() {
                 <button
                   onClick={handleCreateClient}
                   disabled={!newClientName.trim()}
-                  className="ml-auto h-8 px-4 text-[11px] rounded-sm bg-white/[0.08] text-white/80 hover:bg-white/[0.12] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  className="ml-auto font-mono transition-all"
+                  style={{
+                    height: '28px',
+                    padding: '0 14px',
+                    fontSize: '11px',
+                    borderRadius: '6px',
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'rgba(255,255,255,0.60)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    cursor: newClientName.trim() ? 'pointer' : 'not-allowed',
+                    opacity: newClientName.trim() ? 1 : 0.3,
+                    outline: 'none',
+                    transform: 'scale(1)',
+                  }}
+                  onMouseEnter={e => { if (newClientName.trim()) { e.currentTarget.style.background = 'rgba(255,255,255,0.10)'; e.currentTarget.style.color = 'rgba(255,255,255,0.80)'; } }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.60)'; e.currentTarget.style.transform = 'scale(1)'; }}
+                  onMouseDown={e => { if (newClientName.trim()) e.currentTarget.style.transform = 'scale(0.96)'; }}
+                  onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; }}
                 >
                   Add
                 </button>
@@ -3470,12 +3910,22 @@ export default function Station() {
     <div className="min-h-screen bg-[#09090b] flex flex-col">
       {/* Top bar — §8.2 Station Top Bar */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] gap-4">
-        {/* Left: step breadcrumb */}
-        <p className="text-[10px] font-mono text-white/20 tracking-widest uppercase whitespace-nowrap shrink-0">
-          Signal → Syndicate → Match → Route
-        </p>
+        {/* Left: back to launcher + pipeline breadcrumb */}
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={() => navigate('/launcher')}
+            className="font-mono text-white/25 hover:text-white/50 transition-colors"
+            style={{ background: 'none', border: 'none', outline: 'none', cursor: 'pointer', fontSize: '12px', padding: 0 }}
+          >
+            ← Launcher
+          </button>
+          <span className="text-white/[0.08]">|</span>
+          <p className="text-[10px] font-mono text-white/20 tracking-widest uppercase whitespace-nowrap">
+            Signal → Syndicate → Match → Route → Print
+          </p>
+        </div>
 
-        {/* Center: Lens bar — §8.2 Lens selector */}
+        {/* Center: Lens bar */}
         <div className="flex items-center gap-2 flex-1 justify-center">
           {/* Lens selector */}
           <span className="text-[10px] font-mono text-white/30 shrink-0">Lens:</span>

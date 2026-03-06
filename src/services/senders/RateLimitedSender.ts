@@ -171,6 +171,11 @@ export class RateLimitedSender {
     this.progressCallback = callback;
   }
 
+  /** Send a lead — enqueues with rate limiting. Same interface as SenderAdapter. */
+  sendLead(config: SenderConfig, params: SendLeadParams): Promise<SendResult> {
+    return this.enqueue(config, params);
+  }
+
   /** Enqueue a send request. Returns promise that resolves when sent. */
   enqueue(config: SenderConfig, params: SendLeadParams): Promise<SendResult> {
     return new Promise((resolve, reject) => {

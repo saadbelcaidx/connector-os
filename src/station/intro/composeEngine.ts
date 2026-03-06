@@ -124,17 +124,17 @@ ${reference.demandDraft}
 STEP 2 — ANALYZE IT YOURSELF:
 Look at the reference intros and figure out:
 - How many paragraphs? What role does each one play?
-- What's the tone and sentence rhythm?
 - Which parts are this operator's STYLE (reusable across any match)?
 - Which parts are SPECIFIC to the reference match's context (industry, signal, timing, capability)?
 
 STEP 3 — WRITE NEW INTROS:
+Soft language only. 3rd grade reading level. No corporate buzzwords.
+
 For each match below, write a supply intro and demand intro that:
 - Follow the SAME structure, paragraph count, and approximate length as the reference
-- Sound like the SAME person wrote them
 - Replace all match-specific content with details from the NEW match's context
-- Supply intro is sent to the supply contact
-- Demand intro is sent to the demand contact
+- Supply intro is SENT TO the supply contact — pitch DEMAND-SIDE opportunities/signals to them. NEVER pitch the supplier's own company back to them.
+- Demand intro is SENT TO the demand contact — pitch the SUPPLY company's capabilities to them.
 - NEVER copy full sentences from the reference. Reconstruct from pattern + new context.
 - If the reference names companies or contacts, do the same with the new match's real names. If it doesn't, don't.
 
@@ -279,11 +279,11 @@ ${reference.demandDraft}
 STEP 2 — ANALYZE IT YOURSELF:
 Look at the reference intros and figure out:
 - How many paragraphs? What role does each one play?
-- What's the tone and sentence rhythm?
 - Which parts are this operator's STYLE (reusable across any match)?
 - Which parts are SPECIFIC to the reference match's context (industry, signal, timing, capability)?
 
 STEP 3 — WRITE NEW INTROS:
+Soft language only. 3rd grade reading level. No corporate buzzwords.
 
 SUPPLY INTROS — Write ONE per unique supplier. Each supplier sees ALL their demand contexts so you can frame strategically around the full demand landscape (multiple segments, broader opportunity). Do NOT just pick one demand and ignore the rest.
 
@@ -295,9 +295,9 @@ ${demandBlocks}
 
 Rules:
 - Follow the SAME structure, paragraph count, and approximate length as the reference
-- Sound like the SAME person wrote them
 - Replace all match-specific content with details from the NEW context
-- Supply intro goes to the supply contact. Demand intro goes to the demand contact.
+- Supply intro is SENT TO the supply contact — it should pitch DEMAND-SIDE opportunities/signals to them. NEVER pitch the supplier's own company back to them. The supply person already knows what they do. Show them the demand landscape.
+- Demand intro is SENT TO the demand contact — it should pitch the SUPPLY company's capabilities to them. Show the demand person what the supplier can do for them.
 - NEVER copy full sentences from the reference. Reconstruct from pattern + new context.
 - If the reference names companies or contacts, do the same with the new match's real names. If it doesn't, don't.
 
@@ -613,19 +613,19 @@ ${reference.demandDraft}
 STEP 2 — ANALYZE IT YOURSELF:
 Look at the reference intro and figure out:
 - How many paragraphs? What role does each one play?
-- What's the tone and sentence rhythm?
 - Which parts are this operator's STYLE (reusable across any contact)?
 - Which parts are SPECIFIC to this demand contact's context (industry, signal, timing, framing)?
 - How does the reference USE the framing angle to open / hook?
 
 STEP 3 — WRITE NEW INTROS:
+Soft language only. 3rd grade reading level. No corporate buzzwords.
+
 For each demand contact below, write ONE intro that:
 - Opens with a hook SPECIFIC to that contact's industry/situation (not a generic opener)
 - If FRAMING is available: use it as the core angle
 - If FRAMING is "n/a": build the angle from their INDUSTRY + WANTS + WHY NOW instead
 - If REASONING is available: use it to personalize. If "n/a": personalize using their company context
 - Follows the SAME structure, paragraph count, and approximate length as the reference
-- Sounds like the SAME person wrote them
 - Replaces all contact-specific content with details from the NEW context
 - References the supply capability generically (NEVER name the client)
 - NEVER copy full sentences from the reference. Reconstruct from pattern + new context

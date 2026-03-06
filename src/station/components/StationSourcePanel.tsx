@@ -3,6 +3,7 @@ import { type ReactNode } from 'react';
 interface StationSourcePanelProps {
   mode: 'market' | 'yourdata';
   onModeChange: (mode: 'market' | 'yourdata') => void;
+  marketLocked?: boolean;
   children: ReactNode;
 }
 
@@ -11,12 +12,13 @@ const MODES = [
   { key: 'yourdata' as const, title: 'Your Data', subtitle: 'Inject your dataset ID from Apify.' },
 ] as const;
 
-export default function StationSourcePanel({ mode, onModeChange, children }: StationSourcePanelProps) {
+export default function StationSourcePanel({ mode, onModeChange, marketLocked, children }: StationSourcePanelProps) {
   return (
     <div>
       <div className="flex gap-4 mb-8">
         {MODES.map((m) => {
           const selected = mode === m.key;
+          const locked = m.key === 'market' && marketLocked;
           return (
             <button
               key={m.key}
@@ -28,11 +30,21 @@ export default function StationSourcePanel({ mode, onModeChange, children }: Sta
               }`}
               style={{ outline: 'none', boxShadow: 'none' }}
             >
-              <p className={`font-mono text-[11px] ${selected ? 'text-white/90' : 'text-white/70'}`}>
-                {m.title}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className={`font-mono text-[11px] ${selected ? 'text-white/90' : 'text-white/70'}`}>
+                  {m.title}
+                </p>
+                {locked && (
+                  <span
+                    className="font-mono text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded-full"
+                    style={{ lineHeight: 1, background: 'rgba(251, 191, 36, 0.1)', color: 'rgba(251, 191, 36, 0.8)' }}
+                  >
+                    SSM
+                  </span>
+                )}
+              </div>
               <p className="font-mono text-[10px] text-white/30 mt-1.5">
-                {m.subtitle}
+                {locked ? 'SSM members only. Click to verify access.' : m.subtitle}
               </p>
             </button>
           );

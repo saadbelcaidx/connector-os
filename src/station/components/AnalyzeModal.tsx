@@ -31,6 +31,7 @@ interface AnalyzeModalProps {
   diagnostics: AnalyzeDiagnostics;
   onRun: () => void;
   onClose: () => void;
+  onExport?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,13 +90,7 @@ function SideColumn({ label, diag }: { label: string; diag: SideDiagnostic }) {
         </span>
       </div>
 
-      {/* Confidence */}
-      <div className="flex items-baseline justify-between">
-        <span className="font-mono text-[11px] text-white/50">confidence</span>
-        <span className="font-mono text-[11px] text-white/70">
-          {diag.avgConfidence.toFixed(2)}
-        </span>
-      </div>
+{/* Confidence hidden — internal metric, not user-facing */}
     </div>
   );
 }
@@ -104,7 +99,7 @@ function SideColumn({ label, diag }: { label: string; diag: SideDiagnostic }) {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function AnalyzeModal({ diagnostics, onRun, onClose }: AnalyzeModalProps) {
+export default function AnalyzeModal({ diagnostics, onRun, onClose, onExport }: AnalyzeModalProps) {
   const { demand, supply, canRun } = diagnostics;
 
   // Guidance — always exactly one section. Factual, calm, non-defensive.
@@ -199,8 +194,25 @@ export default function AnalyzeModal({ diagnostics, onRun, onClose }: AnalyzeMod
             </div>
           )}
 
-          {/* Run button */}
-          <div className="flex justify-center mt-8 mb-2">
+          {/* Actions */}
+          <div className="flex items-center justify-center gap-3 mt-8 mb-2">
+            {onExport && (
+              <button
+                onClick={onExport}
+                style={{
+                  height: '36px',
+                  padding: '0 20px',
+                  fontSize: '11px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'transparent',
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+                className="font-mono rounded text-white/40 hover:text-white/70 hover:border-white/[0.15] transition-colors"
+              >
+                Export CSV
+              </button>
+            )}
             <button
               disabled={!canRun}
               onClick={onRun}

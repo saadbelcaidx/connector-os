@@ -1310,19 +1310,19 @@ async function fetchFromApollo(
 
       // Step 2d: CANONICAL DOMAIN RESOLUTION - Try to find company's indexed domain
       if (people.length === 0 && companyName) {
-        console.log('[PersonEnrichment] Step 2d: CANONICAL DOMAIN RESOLUTION via mixed_companies_search');
+        console.log('[PersonEnrichment] Step 2d: CANONICAL DOMAIN RESOLUTION via organizations_search');
         console.log(`[PersonEnrichment] Searching for company: "${companyName}" (input domain: ${domain})`);
 
         try {
-          const companySearchRes = await callApolloProxy('mixed_companies_search', apiKey, {
+          const companySearchRes = await callApolloProxy('organizations_search', apiKey, {
             q: companyName,
             per_page: 1,
           });
 
           if (companySearchRes.ok) {
             const companyData = await companySearchRes.json();
-            const topAccount = companyData?.accounts?.[0];
-            const canonicalDomain = topAccount?.primary_domain || topAccount?.domain;
+            const topOrg = companyData?.organizations?.[0];
+            const canonicalDomain = topOrg?.primary_domain;
 
             if (canonicalDomain) {
               // Normalize both domains for comparison
@@ -1355,10 +1355,10 @@ async function fetchFromApollo(
                 console.log(`[PersonEnrichment] ℹ️ Canonical domain matches input domain (${canonicalDomain}), skipping retry`);
               }
             } else {
-              console.log('[PersonEnrichment] ℹ️ mixed_companies_search returned no primary_domain');
+              console.log('[PersonEnrichment] ℹ️ organizations_search returned no primary_domain');
             }
           } else {
-            console.log('[PersonEnrichment] ℹ️ mixed_companies_search request failed, skipping canonical resolution');
+            console.log('[PersonEnrichment] ℹ️ organizations_search request failed, skipping canonical resolution');
           }
         } catch (canonicalError) {
           console.log('[PersonEnrichment] ℹ️ Canonical domain resolution error (non-fatal):', canonicalError);

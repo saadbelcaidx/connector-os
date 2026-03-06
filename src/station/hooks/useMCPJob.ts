@@ -14,6 +14,33 @@ import { supabase } from '../../lib/supabase';
 import { cleanCompanyName } from '../intro/engine';
 
 // =============================================================================
+// CHUNKED IN — avoid URL-too-long on large .in() queries
+// =============================================================================
+
+const CHUNK_SIZE = 50;
+
+async function chunkedIn<T>(
+  table: string,
+  select: string,
+  column: string,
+  keys: string[],
+): Promise<T[]> {
+  if (keys.length === 0) return [];
+  if (keys.length <= CHUNK_SIZE) {
+    const { data } = await supabase.from(table).select(select).in(column, keys);
+    return (data ?? []) as T[];
+  }
+  const chunks: string[][] = [];
+  for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+    chunks.push(keys.slice(i, i + CHUNK_SIZE));
+  }
+  const results = await Promise.all(
+    chunks.map((chunk) => supabase.from(table).select(select).in(column, chunk)),
+  );
+  return results.flatMap((r) => (r.data ?? [])) as T[];
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -122,6 +149,7 @@ export function useMCPJob() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [scoringStatus, setScoringStatus] = useState<'pending' | 'scoring' | 'complete'>('pending');
   const [reasoningStatus, setReasoningStatus] = useState<'pending' | 'reasoning' | 'complete'>('pending');
+  const [jobConfig, setJobConfig] = useState<Record<string, unknown> | null>(null);
 
   // Internal refs
   const startTimeRef = useRef<number>(0);
@@ -131,6 +159,15 @@ export function useMCPJob() {
   const matchMapRef = useRef<Map<string, MatchResult>>(new Map());
   const pendingCanonicalKeys = useRef<Set<string>>(new Set());
   const canonicalFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Active job guard — resume sets this synchronously, async completions check before writing state
+  const activeJobRef = useRef<string | null>(null);
+
+  // Callback refs — Realtime channel calls through these so it always hits the latest closure
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleEvalChangeRef = useRef<(payload: any) => void>(() => {});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleJobUpdateRef = useRef<(payload: any) => void>(() => {});
 
   // Derived state
   const breakdown: JobBreakdown = {
@@ -239,27 +276,23 @@ export function useMCPJob() {
           const keys = Array.from(pendingCanonicalKeys.current);
           pendingCanonicalKeys.current.clear();
           if (keys.length > 0) {
-            // Parallel fetch: dmcb_canonicals + signal_events
+            // Parallel chunked fetch: dmcb_canonicals + signal_events
             Promise.all([
-              supabase
-                .from('dmcb_canonicals')
-                .select('record_key, canonical')
-                .in('record_key', keys),
-              supabase
-                .from('signal_events')
-                .select('record_key, signal_type, signal_group, signal_label')
-                .in('record_key', keys),
-            ]).then(([canonicalResult, signalResult]) => {
-              if (canonicalResult.data && canonicalResult.data.length > 0) {
+              chunkedIn<{ record_key: string; canonical: Record<string, unknown> }>(
+                'dmcb_canonicals', 'record_key, canonical', 'record_key', keys),
+              chunkedIn<{ record_key: string; signal_type: string; signal_group: string; signal_label: string }>(
+                'signal_events', 'record_key, signal_type, signal_group, signal_label', 'record_key', keys),
+            ]).then(([canonicalData, signalData]) => {
+              if (canonicalData && canonicalData.length > 0) {
                 // Build signal lookup
                 const signalMap = new Map<string, { signal_type: string; signal_group: string; signal_label: string }>();
-                for (const row of signalResult.data ?? []) {
+                for (const row of signalData ?? []) {
                   signalMap.set(row.record_key, row);
                 }
 
                 setCanonicals((prev) => {
                   const map = new Map(prev);
-                  for (const row of canonicalResult.data) {
+                  for (const row of canonicalData) {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const c: any = row.canonical || {};
                     const sig = signalMap.get(row.record_key);
@@ -333,6 +366,10 @@ export function useMCPJob() {
     [calcEstimatedRemaining, stopTimer],
   );
 
+  // Keep callback refs in sync — every render points to the latest closure
+  handleEvalChangeRef.current = handleEvalChange;
+  handleJobUpdateRef.current = handleJobUpdate;
+
   // =========================================================================
   // SUBSCRIBE TO REALTIME
   // =========================================================================
@@ -344,6 +381,7 @@ export function useMCPJob() {
         supabase.removeChannel(channelRef.current);
       }
 
+      // Channel callbacks go through refs — never stale, always the latest closure
       const channel = supabase
         .channel(`mcp-job-${activeJobId}`)
         .on(
@@ -354,7 +392,7 @@ export function useMCPJob() {
             table: 'mcp_evaluations',
             filter: `job_id=eq.${activeJobId}`,
           },
-          handleEvalChange,
+          (payload: any) => handleEvalChangeRef.current(payload),
         )
         .on(
           'postgres_changes',
@@ -364,13 +402,13 @@ export function useMCPJob() {
             table: 'mcp_jobs',
             filter: `job_id=eq.${activeJobId}`,
           },
-          handleJobUpdate,
+          (payload: any) => handleJobUpdateRef.current(payload),
         )
         .subscribe();
 
       channelRef.current = channel;
     },
-    [handleEvalChange, handleJobUpdate],
+    [], // stable — no deps, callbacks go through refs
   );
 
   // =========================================================================
@@ -381,23 +419,19 @@ export function useMCPJob() {
     // Query by record_key (not job_id — DMCB and MCP use different job IDs)
     if (!recordKeys || recordKeys.length === 0) return;
 
-    // Parallel fetch: dmcb_canonicals + signal_events
-    const [canonicalResult, signalResult] = await Promise.all([
-      supabase
-        .from('dmcb_canonicals')
-        .select('record_key, canonical')
-        .in('record_key', recordKeys),
-      supabase
-        .from('signal_events')
-        .select('record_key, signal_type, signal_group, signal_label')
-        .in('record_key', recordKeys),
+    // Parallel chunked fetch: dmcb_canonicals + signal_events
+    const [canonicalData, signalData] = await Promise.all([
+      chunkedIn<{ record_key: string; canonical: Record<string, unknown> }>(
+        'dmcb_canonicals', 'record_key, canonical', 'record_key', recordKeys),
+      chunkedIn<{ record_key: string; signal_type: string; signal_group: string; signal_label: string }>(
+        'signal_events', 'record_key, signal_type, signal_group, signal_label', 'record_key', recordKeys),
     ]);
 
-    const data = canonicalResult.data;
+    const data = canonicalData;
     if (data && data.length > 0) {
       // Build signal lookup
       const signalMap = new Map<string, { signal_type: string; signal_group: string; signal_label: string }>();
-      for (const row of signalResult.data ?? []) {
+      for (const row of signalData ?? []) {
         signalMap.set(row.record_key, row);
       }
 
@@ -442,6 +476,9 @@ export function useMCPJob() {
       .eq('job_id', activeJobId)
       .single();
 
+    // Bail if a newer resume() was called while we awaited
+    if (activeJobRef.current !== activeJobId) return;
+
     if (jobRow) {
       const status = jobRow.status as JobPhase;
       setPhase(status);
@@ -457,6 +494,7 @@ export function useMCPJob() {
 
       if (jobRow.scoring_status) setScoringStatus(jobRow.scoring_status);
       if (jobRow.reasoning_status) setReasoningStatus(jobRow.reasoning_status);
+      if (jobRow.config) setJobConfig(jobRow.config as Record<string, unknown>);
 
       if (status === 'failed' && jobRow.error) {
         setError(jobRow.error);
@@ -469,6 +507,9 @@ export function useMCPJob() {
       .select('*')
       .eq('job_id', activeJobId)
       .order('scores->combined', { ascending: false });
+
+    // Bail if a newer resume() was called while we awaited
+    if (activeJobRef.current !== activeJobId) return;
 
     if (evals && evals.length > 0) {
       const map = new Map<string, MatchResult>();
@@ -565,10 +606,38 @@ export function useMCPJob() {
 
   const resume = useCallback(
     async (existingJobId: string) => {
+      // 0. Set active job guard SYNCHRONOUSLY — all subsequent async checks against this
+      activeJobRef.current = existingJobId;
+
+      // 1. Kill old Realtime channel FIRST — prevents stale events leaking in
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+
+      // 2. Clear all stale state from previous job
       setJobId(existingJobId);
+      setPhase('idle');
+      setError(null);
+      setMatches([]);
+      setCanonicals(new Map());
+      matchMapRef.current.clear();
+      pendingCanonicalKeys.current.clear();
+      if (canonicalFlushTimer.current) { clearTimeout(canonicalFlushTimer.current); canonicalFlushTimer.current = null; }
+      firstResultTimeRef.current = 0;
+      setProgress({ totalPairs: 0, completedPairs: 0, percentage: 0, estimatedRemainingMs: null });
+      setScoringStatus('pending');
+      setReasoningStatus('pending');
+
+      // 3. Subscribe to NEW job's channel before loading — catches any live events
+      subscribe(existingJobId);
+
+      // 4. Load existing results from DB
       startTimer();
       await loadExistingResults(existingJobId);
-      subscribe(existingJobId);
+
+      // 5. If another resume() was called while we awaited, discard — we're stale
+      if (activeJobRef.current !== existingJobId) return;
     },
     [subscribe, startTimer, loadExistingResults],
   );
@@ -612,33 +681,8 @@ export function useMCPJob() {
     };
   }, []);
 
-  // =========================================================================
-  // CHECK FOR ACTIVE/COMPLETE JOB ON MOUNT
-  // =========================================================================
-
-  useEffect(() => {
-    async function checkExisting() {
-      const { data } = await supabase
-        .from('mcp_jobs')
-        .select('job_id, status')
-        .in('status', ['embedding', 'retrieving', 'evaluating', 'complete'])
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (data && data.length > 0) {
-        const existing = data[0];
-        setJobId(existing.job_id);
-        await loadExistingResults(existing.job_id);
-
-        // If still running, subscribe for updates
-        if (['embedding', 'retrieving', 'evaluating'].includes(existing.status)) {
-          startTimer();
-          subscribe(existing.job_id);
-        }
-      }
-    }
-    checkExisting();
-  }, [loadExistingResults, subscribe, startTimer]);
+  // Auto-detect removed — callers use resume(jobId) explicitly.
+  // Auto-detect raced with resume() on keyed remounts, causing glitching.
 
   // =========================================================================
   // PUBLIC API
@@ -657,6 +701,7 @@ export function useMCPJob() {
     elapsedMs,
     scoringStatus,
     reasoningStatus,
+    jobConfig,
 
     // Actions
     start,

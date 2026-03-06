@@ -52,12 +52,23 @@ export function applyOverlayV2(
   overlay: OverlaySpec,
   profile?: ClientProfile,
   clientEconomicSide?: 'demand' | 'supply',
+  clientKey?: string,
 ): OverlayV2Result[] {
   const f = overlay.filters;
 
   const results: OverlayV2Result[] = [];
 
   for (const match of matches) {
+    // ── Layer 0: Pair Membership ──
+    // When a client key is active, only pairs where the client IS one side survive.
+    // Without this, market pairs (Talos × Tradebot) leak through when lens = TwinFocus.
+    if (clientKey) {
+      if (match.demandKey !== clientKey && match.supplyKey !== clientKey) {
+        results.push({ match, finalScore: 0, excluded: true, excludeReason: 'not a client pair' });
+        continue;
+      }
+    }
+
     const demandCanon = canonicals.get(match.demandKey);
     const supplyCanon = canonicals.get(match.supplyKey);
 
@@ -111,22 +122,28 @@ export function applyOverlayV2(
     }
 
     // Include — industries (if set, at least one side must match)
+    // null field = unknown → filter inapplicable when NEITHER side has data
     if (!excluded && f.include.industries?.length) {
-      const demandHit = fieldMatches(demandCanon.industry, f.include.industries);
-      const supplyHit = fieldMatches(supplyCanon.industry, f.include.industries);
-      if (!demandHit && !supplyHit) {
-        excluded = true;
-        reason = 'no industry match';
+      if (demandCanon.industry || supplyCanon.industry) {
+        const demandHit = fieldMatches(demandCanon.industry, f.include.industries);
+        const supplyHit = fieldMatches(supplyCanon.industry, f.include.industries);
+        if (!demandHit && !supplyHit) {
+          excluded = true;
+          reason = 'no industry match';
+        }
       }
     }
 
     // Include — titles (if set, at least one side must match)
+    // null field = unknown → filter inapplicable when NEITHER side has data
     if (!excluded && f.include.titles?.length) {
-      const demandHit = fieldMatches(demandCanon.title, f.include.titles);
-      const supplyHit = fieldMatches(supplyCanon.title, f.include.titles);
-      if (!demandHit && !supplyHit) {
-        excluded = true;
-        reason = 'no title match';
+      if (demandCanon.title || supplyCanon.title) {
+        const demandHit = fieldMatches(demandCanon.title, f.include.titles);
+        const supplyHit = fieldMatches(supplyCanon.title, f.include.titles);
+        if (!demandHit && !supplyHit) {
+          excluded = true;
+          reason = 'no title match';
+        }
       }
     }
 

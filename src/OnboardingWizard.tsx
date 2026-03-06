@@ -315,7 +315,7 @@ export default function OnboardingWizard() {
       case 'enrichment':
         return data.enrichmentApiKey;
       case 'outreach':
-        return data.instantlyApiKey && data.instantlyCampaignDemand;
+        return !!data.instantlyApiKey;
       case 'ai':
         return true; // Optional
       case 'complete':
@@ -528,26 +528,9 @@ export default function OnboardingWizard() {
               link={{ text: 'Get API key', url: 'https://app.instantly.ai/app/settings/integrations' }}
             />
 
-            <div className="grid grid-cols-2 gap-4">
-              <InputField
-                label="Demand Campaign ID"
-                hint="For companies that need help"
-                value={data.instantlyCampaignDemand}
-                onChange={(v) => setData({ ...data, instantlyCampaignDemand: v })}
-                placeholder="campaign-uuid"
-              />
-              <InputField
-                label="Supply Campaign ID"
-                hint="For service providers"
-                value={data.instantlyCampaignSupply}
-                onChange={(v) => setData({ ...data, instantlyCampaignSupply: v })}
-                placeholder="campaign-uuid"
-              />
-            </div>
-
             <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04] mt-4">
               <p className="text-[11px] text-white/40 m-0">
-                <strong className="text-white/50">Tip:</strong> Create two campaigns in Instantly first, then copy their IDs here.
+                <strong className="text-white/50">Tip:</strong> Campaign IDs are configured per-market in Station when you run your first evaluation.
               </p>
             </div>
           </div>

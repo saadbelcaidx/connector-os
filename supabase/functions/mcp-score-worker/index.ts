@@ -104,11 +104,15 @@ timing: How urgent or time-sensitive is this match? (0.00-1.00)
 vetoed: true ONLY if demand and supply are direct competitors, have a conflict of interest, or the match is nonsensical. Default false.
 vetoReason: If vetoed, one sentence explaining why. Otherwise null.
 
-reasoning: 2-3 sentences. Name both companies. Be specific about WHY they match or don't. State what demand needs, what supply offers, and why timing matters or doesn't.
+reasoning: 2-3 sentences. Name both companies. Be specific about WHY they match or don't. CONTEXT is raw background — infer the actual business need. TRIGGER is the timing event. CAPABILITY is what supply delivers.
 
 risks: Array of strings. What could go wrong with this introduction? Empty array if none.
 
-framing: One sentence an operator can paste into an intro email. Name both companies. State the specific need and the specific capability. Empty string if score too low or vetoed.
+framing: One short sentence (max 20 words). Name both companies.
+- If fit >= 0.30: name the trigger event, then the supply capability it activates. WHY NOW is the trigger, not the need — infer what demand actually needs from the supply's offering.
+- If fit >= 0.05 but < 0.30: "Light overlap: [X] does [capability], [Y] is in [area]."
+- If fit < 0.05: "Low fit."
+- Empty string ONLY if vetoed.
 
 Rules:
 - A recruiter matching to a hiring company is strong
@@ -133,8 +137,8 @@ function buildUserPrompt(pairs: EvalPair[]): string {
     const sName = p.supply.company || p.supply.who || "Unknown";
     lines.push(
       `[${i + 1}] id: ${p.evalId}`,
-      `DEMAND: "${dName}" wants "${p.demand.wants}"${p.demand.why_now ? ` WHY NOW: "${p.demand.why_now}"` : ""}${p.demand.industry ? ` [${p.demand.industry}]` : ""}`,
-      `SUPPLY: "${sName}" offers "${p.supply.offers}"${p.supply.industry ? ` [${p.supply.industry}]` : ""}`,
+      `DEMAND: "${dName}" CONTEXT: "${p.demand.wants}"${p.demand.why_now ? ` TRIGGER: "${p.demand.why_now}"` : ""}${p.demand.industry ? ` [${p.demand.industry}]` : ""}`,
+      `SUPPLY: "${sName}" CAPABILITY: "${p.supply.offers}"${p.supply.industry ? ` [${p.supply.industry}]` : ""}`,
       "",
     );
   }

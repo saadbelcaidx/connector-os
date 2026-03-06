@@ -145,9 +145,6 @@ export function MatchCard({ match, index, isNew, canonicals, onQueueIntro }: Pro
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="font-mono text-[11px] text-white/60">
-              {match.scores.combined.toFixed(2)}
-            </span>
             <span className="font-mono text-[10px] text-white/25 tracking-tight">
               {scoreBar(match.scores.combined)}
             </span>
@@ -235,16 +232,6 @@ export function MatchCard({ match, index, isNew, canonicals, onQueueIntro }: Pro
             )}
 
             <div className="grid grid-cols-2 gap-x-8 gap-y-1 font-mono text-[10px]">
-              <span className="text-white/30">Fit</span>
-              <span className="text-white/50">{match.scores.fit.toFixed(2)}</span>
-              <span className="text-white/30">Timing</span>
-              <span className="text-white/50">{match.scores.timing.toFixed(2)}</span>
-              <span className="text-white/30">Combined</span>
-              <span className="text-white/60 font-medium">{match.scores.combined.toFixed(2)}</span>
-              <span className="text-white/30">Similarity</span>
-              <span className="text-white/50">{match.similarity.toFixed(4)}</span>
-              <span className="text-white/30">Rank</span>
-              <span className="text-white/50">#{match.rank}</span>
               <span className="text-white/30">Classification</span>
               <span className={
                 match.classification === 'PASS'

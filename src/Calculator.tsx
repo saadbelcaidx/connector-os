@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, HelpCircle, ArrowLeft } from 'lucide-react';
+import { ChevronDown, ChevronUp, HelpCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Dock from './Dock';
 
@@ -39,11 +39,10 @@ function Tooltip({ text }: { text: string }) {
       </button>
       {isVisible && (
         <div
-          className="absolute left-0 top-5 z-50 w-56 rounded-xl p-2.5 text-[11px] text-white/70"
+          className="absolute left-0 top-5 z-50 w-56 rounded p-2.5 font-mono text-[10px] text-white/50"
           style={{
             background: 'rgba(20, 20, 20, 0.95)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
           }}
         >
           {text}
@@ -86,20 +85,20 @@ function InputField({
 
   return (
     <div className="mb-4">
-      <label className="flex items-center input-label">
+      <label className="flex items-center font-mono text-[10px] text-white/30 uppercase tracking-widest mb-1.5">
         {label}
         {tooltip && <Tooltip text={tooltip} />}
       </label>
       <div className="relative">
         {isDollar && (
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/50 text-[14px]">$</span>
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40 font-mono text-[11px]">$</span>
         )}
         <input
           type="text"
           value={displayValue}
           onChange={handleChange}
           onBlur={handleBlur}
-          className={`input-field text-[14px] ${isDollar ? 'pl-8' : ''}`}
+          className={`w-full h-[36px] px-3 rounded bg-white/[0.02] border border-white/[0.06] font-mono text-[11px] text-white/80 focus:border-white/[0.15] focus:outline-none transition-colors placeholder:text-white/20 ${isDollar ? 'pl-8' : ''}`}
         />
       </div>
     </div>
@@ -118,12 +117,12 @@ function CollapsibleSection({
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
   return (
-    <div className="settings-card mb-4">
+    <div className="rounded border border-white/[0.06] bg-white/[0.02] p-4 mb-4">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center justify-between mb-4"
       >
-        <h3 className="text-[14px] font-medium text-white/80">{title}</h3>
+        <h3 className="font-mono text-[11px] font-medium text-white/50 uppercase tracking-wider">{title}</h3>
         {isOpen ? (
           <ChevronUp className="w-4 h-4 text-white/40" />
         ) : (
@@ -146,8 +145,8 @@ function CollapsibleSection({
 function ResultRow({ label, value, highlight = false }: { label: string; value: number; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between py-2">
-      <span className="text-[13px] text-white/50">{label}</span>
-      <span className={`text-[15px] font-medium ${highlight ? 'text-emerald-400' : 'text-white/85'}`}>
+      <span className="font-mono text-[11px] text-white/40">{label}</span>
+      <span className={`font-mono text-[12px] font-medium ${highlight ? 'text-emerald-400' : 'text-white/70'}`}>
         {formatCurrency(value)}
       </span>
     </div>
@@ -201,32 +200,29 @@ function Calculator() {
   const monthlyAverage = totalAnnualIncome / 12;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#0E0E0E] to-[#0A0A0A]">
+    <div className="min-h-screen bg-[#09090b] text-white" style={{ animation: 'pageIn 0.25s ease-out' }}>
       {/* Header */}
-      <div className="px-8 pt-10 pb-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex items-center gap-4 mb-8">
-            <button
-              onClick={() => navigate('/launcher')}
-              className="p-2 rounded-xl hover:bg-white/[0.04] transition-colors"
-            >
-              <ArrowLeft size={18} className="text-white/50" />
-            </button>
-            <div>
-              <h1 className="text-[20px] font-semibold text-white/90 tracking-[-0.01em]">Revenue Calculator</h1>
-              <p className="text-[13px] text-white/40 mt-0.5">See how much you could earn per month</p>
-            </div>
-          </div>
+      <div className="max-w-6xl mx-auto px-6 pt-8">
+        <nav className="flex items-center gap-1.5 font-mono text-[10px] text-white/30 mb-4">
+          <button onClick={() => navigate('/launcher')} className="hover:text-white/50 transition-colors">
+            Home
+          </button>
+          <span className="text-white/15">{'>'}</span>
+          <span className="text-white/50">Revenue Calculator</span>
+        </nav>
+
+        <div className="mb-6">
+          <h1 className="font-mono text-[15px] text-white/90 font-medium">Revenue Calculator</h1>
+          <p className="font-mono text-[11px] text-white/30 mt-0.5">Model your earnings per month</p>
         </div>
       </div>
 
       {/* Content */}
-      <div className="px-8 pb-32">
-        <div className="max-w-6xl mx-auto">
+      <div className="max-w-6xl mx-auto px-6 pb-32">
           <div className="grid lg:grid-cols-2 gap-10">
             {/* Inputs */}
             <div>
-              <h2 className="section-label mb-5">Your Inputs</h2>
+              <h2 className="font-mono text-[9px] font-medium text-white/25 uppercase tracking-widest mb-5">Your Inputs</h2>
 
               <CollapsibleSection title="Stability Clients">
                 <InputField
@@ -324,16 +320,16 @@ function Calculator() {
 
             {/* Results */}
             <div>
-              <h2 className="section-label mb-5">Results</h2>
+              <h2 className="font-mono text-[9px] font-medium text-white/25 uppercase tracking-widest mb-5">Results</h2>
 
-              <div className="settings-card p-6">
+              <div className="rounded border border-white/[0.06] bg-white/[0.02] p-6">
                 {/* Total */}
                 <div className="mb-6 pb-6 border-b border-white/[0.06]">
-                  <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Total Annual Income</div>
-                  <div className="text-[36px] font-semibold text-emerald-400 tracking-tight">
+                  <div className="font-mono text-[9px] text-white/25 uppercase tracking-widest mb-2">Total Annual Income</div>
+                  <div className="font-mono text-[32px] font-medium text-emerald-400 tracking-tight">
                     {formatCurrency(totalAnnualIncome)}
                   </div>
-                  <div className="text-[13px] text-white/40 mt-1">
+                  <div className="font-mono text-[11px] text-white/30 mt-1">
                     {formatCurrency(monthlyAverage)}/mo average
                   </div>
                 </div>
@@ -341,21 +337,21 @@ function Calculator() {
                 {/* Breakdown */}
                 <div className="space-y-5">
                   <div>
-                    <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Stability</div>
+                    <div className="font-mono text-[9px] text-white/25 uppercase tracking-widest mb-2">Stability</div>
                     <ResultRow label="Retainer" value={stabilityIncome.annualRetainer} />
                     <ResultRow label="Commission" value={stabilityIncome.annualCommission} />
                     <ResultRow label="Total" value={stabilityIncome.total} highlight />
                   </div>
 
                   <div>
-                    <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Upside</div>
+                    <div className="font-mono text-[9px] text-white/25 uppercase tracking-widest mb-2">Upside</div>
                     <ResultRow label="Retainer" value={upsideIncome.annualRetainer} />
                     <ResultRow label="Commission" value={upsideIncome.annualCommission} />
                     <ResultRow label="Total" value={upsideIncome.total} highlight />
                   </div>
 
                   <div>
-                    <div className="text-[11px] text-white/40 uppercase tracking-wider mb-2">Compounding</div>
+                    <div className="font-mono text-[9px] text-white/25 uppercase tracking-widest mb-2">Compounding</div>
                     <ResultRow label="Retainer" value={compoundingIncome.annualRetainer} />
                     <ResultRow label="Commission" value={compoundingIncome.annualCommission} />
                     <ResultRow label="Total" value={compoundingIncome.total} highlight />
@@ -365,20 +361,20 @@ function Calculator() {
                 {/* Summary */}
                 <div className="mt-6 pt-6 border-t border-white/[0.06]">
                   <div className="flex items-center justify-between py-2">
-                    <span className="text-[13px] text-white/50">Total Clients</span>
-                    <span className="text-[15px] font-medium text-white/85">{totalClients}</span>
+                    <span className="font-mono text-[11px] text-white/40">Total Clients</span>
+                    <span className="font-mono text-[12px] font-medium text-white/70">{totalClients}</span>
                   </div>
                   <div className="flex items-center justify-between py-2">
-                    <span className="text-[13px] text-white/50">Avg. Per Client</span>
-                    <span className="text-[15px] font-medium text-white/85">{formatCurrency(averagePerClient)}</span>
+                    <span className="font-mono text-[11px] text-white/40">Avg. Per Client</span>
+                    <span className="font-mono text-[12px] font-medium text-white/70">{formatCurrency(averagePerClient)}</span>
                   </div>
                 </div>
               </div>
 
               {/* Revenue Mix */}
-              <div className="settings-card p-6 mt-4">
-                <div className="text-[11px] text-white/40 uppercase tracking-wider mb-3">Revenue Mix</div>
-                <div className="h-2 rounded-full overflow-hidden flex" style={{ background: 'rgba(255, 255, 255, 0.05)' }}>
+              <div className="rounded border border-white/[0.06] bg-white/[0.02] p-6 mt-4">
+                <div className="font-mono text-[9px] text-white/25 uppercase tracking-widest mb-3">Revenue Mix</div>
+                <div className="h-1.5 rounded overflow-hidden flex" style={{ background: 'rgba(255, 255, 255, 0.04)' }}>
                   {totalAnnualIncome > 0 && (
                     <>
                       <div
@@ -396,27 +392,33 @@ function Calculator() {
                     </>
                   )}
                 </div>
-                <div className="flex items-center justify-between mt-3 text-[11px]">
+                <div className="flex items-center justify-between mt-3 font-mono text-[10px]">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ opacity: 0.9 }} />
-                    <span className="text-white/40">Stability</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ opacity: 0.9 }} />
+                    <span className="text-white/30">Stability</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ opacity: 0.6 }} />
-                    <span className="text-white/40">Upside</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ opacity: 0.6 }} />
+                    <span className="text-white/30">Upside</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ opacity: 0.35 }} />
-                    <span className="text-white/40">Compounding</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ opacity: 0.35 }} />
+                    <span className="text-white/30">Compounding</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
       </div>
 
       <Dock />
+
+      <style>{`
+        @keyframes pageIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }

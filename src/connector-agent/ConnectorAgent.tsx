@@ -64,6 +64,8 @@ interface ApiKeyData {
 interface FindResult {
   email: string | null;
   hosted_at?: string;
+  resolvedDomain?: string;
+  domainSource?: string;
 }
 
 interface VerifyResult {
@@ -286,6 +288,81 @@ function assertVerifyContract(results: any[]): string | null {
 
 const API_BASE = import.meta.env.VITE_CONNECTOR_AGENT_API || 'https://api.connector-os.com';
 
+/**
+ * Client-side domain resolution: Clearbit first (free, CORS-safe), then backend fallback.
+ * Clearbit covers ~86% of companies. Backend has DNS waterfall for the rest.
+ */
+async function resolveDomainClientSide(companyName: string): Promise<{ domain: string; source: string } | null> {
+  // 1. Try Clearbit Autocomplete (free, no auth, CORS-safe)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(
+      `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const results = await res.json();
+      if (results && results.length > 0) {
+        const top = results[0];
+        // Similarity check: compare cleaned names
+        const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const a = clean(companyName);
+        const b = clean(top.name);
+
+        if (a && b) {
+          const shorter = a.length <= b.length ? a : b;
+          const longer = a.length <= b.length ? b : a;
+          let matches = 0;
+          let j = 0;
+          for (let i = 0; i < shorter.length && j < longer.length; i++) {
+            while (j < longer.length) {
+              if (shorter[i] === longer[j]) { matches++; j++; break; }
+              j++;
+            }
+          }
+          const similarity = matches / shorter.length;
+
+          if (similarity >= 0.6) {
+            console.log(`[DomainResolve] Clearbit: "${companyName}" → ${top.domain} (${top.name}, sim=${similarity.toFixed(2)})`);
+            return { domain: top.domain, source: 'clearbit' };
+          }
+          console.log(`[DomainResolve] Clearbit rejected: "${companyName}" → "${top.name}" (sim=${similarity.toFixed(2)})`);
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`[DomainResolve] Clearbit error:`, e);
+  }
+
+  // 2. Fallback: backend /api/domain/resolve (has DNS waterfall + Apollo)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(`${API_BASE}/api/domain/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyName }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.domain) {
+        console.log(`[DomainResolve] Backend: "${companyName}" → ${data.domain} (${data.source})`);
+        return { domain: data.domain, source: data.source };
+      }
+    }
+  } catch (e) {
+    console.log(`[DomainResolve] Backend fallback error:`, e);
+  }
+
+  return null;
+}
+
 const containerVariants = {
   hidden: { opacity: 0 },
   visible: {
@@ -441,12 +518,38 @@ class ConnectorAgentAPI {
     return this.fetchWithAuth('/api/email/v2/quota');
   }
 
-  async findEmail(firstName: string, lastName: string, domain: string): Promise<FindResult> {
+  async findEmail(firstName: string, lastName: string, domain?: string, companyName?: string): Promise<FindResult> {
     // API key optional - backend accepts x-user-id header
-    return this.fetchWithAuth('/api/email/v2/find', {
+    let resolvedDomain: string | undefined;
+    let domainSource: string | undefined;
+
+    if (domain) {
+      resolvedDomain = domain.trim().toLowerCase();
+    } else if (companyName) {
+      // Resolve company name to domain client-side via Clearbit (free, no auth, CORS-safe)
+      const resolved = await resolveDomainClientSide(companyName);
+      if (!resolved) {
+        return { email: null, error: `Could not resolve domain for "${companyName}"` } as any;
+      }
+      resolvedDomain = resolved.domain;
+      domainSource = resolved.source;
+    }
+
+    if (!resolvedDomain) {
+      return { email: null, error: 'domain or companyName required' } as any;
+    }
+
+    const result = await this.fetchWithAuth('/api/email/v2/find', {
       method: 'POST',
-      body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), domain: domain.trim().toLowerCase() }),
+      body: JSON.stringify({ firstName: firstName.trim(), lastName: lastName.trim(), domain: resolvedDomain }),
     });
+
+    // Attach resolution info to result
+    if (domainSource) {
+      result.resolvedDomain = resolvedDomain;
+      result.domainSource = domainSource;
+    }
+    return result;
   }
 
   async verifyEmail(email: string): Promise<VerifyResult> {
@@ -457,10 +560,29 @@ class ConnectorAgentAPI {
     });
   }
 
-  async findBulk(items: { firstName: string; lastName: string; domain: string }[]) {
+  async findBulk(items: { firstName: string; lastName: string; domain?: string; companyName?: string }[]) {
+    // Pre-resolve company names client-side via Clearbit before sending to backend
+    const needsResolution = items.filter(i => i.companyName && !i.domain);
+    if (needsResolution.length > 0) {
+      const uniqueNames = [...new Set(needsResolution.map(i => i.companyName!.toLowerCase().trim()))];
+      const resolutions = new Map<string, string>();
+      for (const cn of uniqueNames) {
+        const resolved = await resolveDomainClientSide(cn);
+        if (resolved) resolutions.set(cn, resolved.domain);
+      }
+      // Fill in resolved domains
+      for (const item of items) {
+        if (item.companyName && !item.domain) {
+          const domain = resolutions.get(item.companyName.toLowerCase().trim());
+          if (domain) item.domain = domain;
+        }
+      }
+    }
+    // Filter to only items with domain (unresolved ones get dropped)
+    const resolved = items.filter(i => i.domain);
     return this.fetchWithAuth('/api/email/v2/find-bulk', {
       method: 'POST',
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items: resolved }),
     });
   }
 
@@ -598,13 +720,18 @@ function autoDetectColumns(headers: string[], mode: 'find' | 'verify'): Record<s
     const domainCol = detectColumn(headers, [
       'domain', 'company_domain', 'companydomain', 'company domain', 'email_domain', 'emaildomain'
     ]);
+    const companyNameCol = detectColumn(headers, [
+      'company_name', 'companyname', 'company', 'organization', 'org', 'employer', 'company name'
+    ]);
 
-    if (firstNameCol && lastNameCol && domainCol) {
-      return {
+    if (firstNameCol && lastNameCol && (domainCol || companyNameCol)) {
+      const result: Record<string, string> = {
         first_name: firstNameCol,
         last_name: lastNameCol,
-        domain: domainCol,
       };
+      if (domainCol) result.domain = domainCol;
+      if (companyNameCol) result.company_name = companyNameCol;
+      return result;
     }
   } else {
     const emailCol = detectColumn(headers, [
@@ -682,6 +809,7 @@ function ConnectorAgentInner() {
   const [findFirstName, setFindFirstName] = useState('');
   const [findLastName, setFindLastName] = useState('');
   const [findDomain, setFindDomain] = useState('');
+  const [findCompanyName, setFindCompanyName] = useState('');
   const [verifyEmailInput, setVerifyEmailInput] = useState('');
 
   // Batch persistence state
@@ -757,13 +885,13 @@ function ConnectorAgentInner() {
   // Gate rendering AFTER all hooks are called
   if (!user || !api) {
     return (
-      <div className="min-h-screen bg-black noise-bg flex items-center justify-center">
+      <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
         <div className="text-center">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center mx-auto mb-4 border border-white/[0.08]">
-            <Eye className="w-7 h-7 text-white/60" />
+          <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center mx-auto mb-4 border border-white/[0.06]">
+            <Eye className="w-5 h-5 text-white/50" />
           </div>
-          <h1 className="text-[17px] font-semibold text-white/90 mb-2">Connector Agent</h1>
-          <p className="text-[13px] text-white/50">Locate & confirm contacts</p>
+          <h1 className="text-[15px] font-mono font-medium text-white/90 mb-1">Connector Agent</h1>
+          <p className="text-[11px] font-mono text-white/30">Locate & confirm contacts</p>
         </div>
       </div>
     );
@@ -826,19 +954,20 @@ function ConnectorAgentInner() {
 
   const handleFind = async () => {
     if (!api) return;
-    if (!findFirstName || !findLastName || !findDomain) return;
-    if (!findDomain.includes('.')) {
+    if (!findFirstName || !findLastName || (!findDomain && !findCompanyName)) return;
+    if (findDomain && !findDomain.includes('.')) {
       alert('Domain must include TLD (e.g. company.com)');
       return;
     }
     setIsProcessing(true);
     setResult(null);
     try {
-      const res = await api.findEmail(findFirstName, findLastName, findDomain);
+      const res = await api.findEmail(findFirstName, findLastName, findDomain || undefined, findCompanyName || undefined);
       setResult({ type: 'find', ...res });
 
       // Save single lookup to history (treated as batch of 1)
-      const inputString = `${findFirstName} ${findLastName} @ ${findDomain}`;
+      const domainLabel = findDomain || findCompanyName;
+      const inputString = `${findFirstName} ${findLastName} @ ${domainLabel}`;
       const singleBatch: ConnectorAgentBatch = {
         id: generateBatchId(),
         type: 'find',
@@ -850,7 +979,7 @@ function ConnectorAgentInner() {
           input: inputString,
           firstName: findFirstName,
           lastName: findLastName,
-          domain: findDomain,
+          domain: findDomain || res.resolvedDomain || domainLabel,
         }],
         results: [{
           input: inputString,
@@ -1101,7 +1230,7 @@ function ConnectorAgentInner() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
+      <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
@@ -1113,33 +1242,12 @@ function ConnectorAgentInner() {
   }
 
   return (
-    <div className="min-h-screen bg-black noise-bg">
-      {/* Animated gradient orbs */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <motion.div
-          animate={{
-            x: [0, 100, 0],
-            y: [0, -50, 0],
-            scale: [1, 1.2, 1]
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
-          className="absolute -top-1/2 -left-1/4 w-[800px] h-[800px] bg-blue-500/[0.03] rounded-full blur-3xl"
-        />
-        <motion.div
-          animate={{
-            x: [0, -100, 0],
-            y: [0, 50, 0],
-            scale: [1, 1.1, 1]
-          }}
-          transition={{ duration: 25, repeat: Infinity, ease: 'linear' }}
-          className="absolute -bottom-1/2 -right-1/4 w-[800px] h-[800px] bg-violet-500/[0.03] rounded-full blur-3xl"
-        />
-      </div>
+    <div className="min-h-screen bg-[#09090b] text-white" style={{ animation: 'pageIn 0.25s ease-out' }}>
 
       {/* CORS BLOCKED BANNER — Enterprise fail-safe */}
       {corsBlocked && (
         <div className="fixed inset-x-0 top-0 z-50 p-4">
-          <div className="max-w-2xl mx-auto p-4 rounded-xl bg-red-500/10 border border-red-500/30 backdrop-blur-sm">
+          <div className="max-w-2xl mx-auto p-4 rounded bg-red-500/10 border border-red-500/30 backdrop-blur-sm">
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
                 <span className="text-red-400 text-lg font-bold">!</span>
@@ -1181,57 +1289,38 @@ function ConnectorAgentInner() {
         animate="visible"
         className="relative max-w-4xl mx-auto px-6 py-10"
       >
-        {/* Header */}
-        <motion.div variants={itemVariants} className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate('/launcher')}
-              className="w-10 h-10 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-center transition-all"
-            >
-              <ArrowLeft className="w-4 h-4 text-white/50" />
+        {/* Breadcrumb */}
+        <motion.div variants={itemVariants} className="flex items-center justify-between mb-2">
+          <nav className="flex items-center gap-1.5 font-mono text-[10px] text-white/30 mb-4">
+            <button onClick={() => navigate('/launcher')} className="hover:text-white/50 transition-colors">
+              Home
             </button>
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-violet-500/20 to-fuchsia-500/20 flex items-center justify-center border border-white/[0.08]">
-                  <Eye className="w-5 h-5 text-white/80" />
-                </div>
-                <motion.div
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-violet-500 rounded-full border-2 border-black"
-                />
-              </div>
-              <div>
-                <h1 className="text-[15px] font-semibold text-white/90 tracking-tight">Connector Agent</h1>
-                <p className="text-[11px] text-white/40">Locate & confirm contacts</p>
-              </div>
-            </div>
-          </div>
+            <span className="text-white/15">{'>'}</span>
+            <span className="text-white/50">Connector Agent</span>
+          </nav>
+        </motion.div>
 
-          {/* Active indicator */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-violet-500/[0.1] border border-violet-500/[0.2]">
-            <motion.div
-              animate={{ opacity: [0.5, 1, 0.5] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              className="w-1.5 h-1.5 rounded-full bg-violet-500"
-            />
-            <span className="text-[10px] font-medium text-violet-400 uppercase tracking-wider">Active</span>
+        {/* Header */}
+        <motion.div variants={itemVariants} className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="font-mono text-[15px] text-white/90 font-medium">Connector Agent</h1>
+            <p className="font-mono text-[11px] text-white/30 mt-0.5">Locate & confirm contacts</p>
           </div>
         </motion.div>
 
         {/* Quota Card */}
         {quota && (
-          <motion.div variants={itemVariants} className="mb-6 p-5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
-            <div className="flex items-center justify-between mb-4">
+          <motion.div variants={itemVariants} className="mb-6 p-4 rounded border border-white/[0.06] bg-white/[0.02]">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-white/40" />
-                <span className="text-[12px] font-medium text-white/60 uppercase tracking-wider">Token Usage</span>
+                <Activity className="w-3.5 h-3.5 text-white/30" />
+                <span className="text-[9px] font-mono font-medium text-white/25 uppercase tracking-widest">Token Usage</span>
               </div>
-              <div className="text-right">
-                <span className="text-[13px] font-semibold text-white/90">
+              <div className="text-right font-mono">
+                <span className="text-[13px] font-medium text-white/90">
                   <AnimatedCounter value={quota.remaining} />
                 </span>
-                <span className="text-[11px] text-white/40 ml-1">/ {quota.limit.toLocaleString()}</span>
+                <span className="text-[11px] text-white/30 ml-1">/ {quota.limit.toLocaleString()}</span>
               </div>
             </div>
             <AnimatedProgressBar
@@ -1240,24 +1329,32 @@ function ConnectorAgentInner() {
               color={quota.percentage_used > 80 ? 'red' : quota.percentage_used > 50 ? 'amber' : 'blue'}
             />
             <div className="flex justify-between mt-2">
-              <span className="text-[10px] text-white/30">{quota.used.toLocaleString()} used</span>
-              <span className="text-[10px] text-white/30">{100 - quota.percentage_used}% remaining</span>
+              <span className="text-[10px] font-mono text-white/20">{quota.used.toLocaleString()} used</span>
+              <span className="text-[10px] font-mono text-white/20">{100 - quota.percentage_used}% remaining</span>
             </div>
           </motion.div>
         )}
 
         {/* API Key Card */}
-        <motion.div variants={itemVariants} className="mb-6 p-5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
+        <motion.div variants={itemVariants} className="mb-6 p-4 rounded border border-white/[0.06] bg-white/[0.02]">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Key className="w-4 h-4 text-white/40" />
-              <span className="text-[12px] font-medium text-white/60 uppercase tracking-wider">API Key</span>
+              <Key className="w-3.5 h-3.5 text-white/30" />
+              <span className="text-[9px] font-mono font-medium text-white/25 uppercase tracking-widest">API Key</span>
             </div>
             {api.getApiKey() && (
               <button
                 onClick={() => setShowRevokeConfirm(true)}
                 disabled={isProcessing}
-                className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-red-500/[0.08] text-red-400 hover:bg-red-500/[0.15] transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                className="font-mono text-[11px] text-red-400/70 hover:text-red-400 transition-colors disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                style={{
+                  height: '26px',
+                  padding: '0 10px',
+                  background: 'rgba(239,68,68,0.06)',
+                  border: '1px solid rgba(239,68,68,0.12)',
+                  borderRadius: '2px',
+                  outline: 'none',
+                }}
               >
                 <Trash2 className="w-3 h-3" />
                 Revoke
@@ -1274,7 +1371,14 @@ function ConnectorAgentInner() {
                 exit={{ opacity: 0, y: -10 }}
                 onClick={handleGenerateKey}
                 disabled={isProcessing}
-                className="w-full h-[44px] btn-primary text-[13px] flex items-center justify-center gap-2"
+                className="w-full font-mono text-[11px] text-white/70 hover:text-white/90 transition-colors cursor-pointer flex items-center justify-center gap-2"
+                style={{
+                  height: '36px',
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '2px',
+                  outline: 'none',
+                }}
               >
                 {isProcessing ? (
                   <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
@@ -1282,7 +1386,7 @@ function ConnectorAgentInner() {
                   </motion.div>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4" />
+                    <Sparkles className="w-3.5 h-3.5" />
                     Generate API Key
                   </>
                 )}
@@ -1294,22 +1398,17 @@ function ConnectorAgentInner() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
               >
-                <div className="flex items-center justify-between p-4 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-violet-500/[0.15] flex items-center justify-center">
-                      <Key className="w-4 h-4 text-violet-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <code className="text-[11px] text-white/80 font-mono truncate max-w-[280px] block">
-                        {api.getApiKey()}
-                      </code>
-                    </div>
+                <div className="flex items-center justify-between p-3 rounded bg-white/[0.02] border border-white/[0.06]">
+                  <div className="flex-1 min-w-0">
+                    <code className="text-[11px] text-white/70 font-mono truncate max-w-[320px] block">
+                      {api.getApiKey()}
+                    </code>
                   </div>
                   <button
                     onClick={() => handleCopy(api.getApiKey()!, 'apikey')}
-                    className="h-9 w-9 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] flex items-center justify-center transition-colors flex-shrink-0 ml-3"
+                    className="h-7 w-7 rounded bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center transition-colors flex-shrink-0 ml-3"
                   >
-                    {copied === 'apikey' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white/50" />}
+                    {copied === 'apikey' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-white/40" />}
                   </button>
                 </div>
               </motion.div>
@@ -1321,15 +1420,13 @@ function ConnectorAgentInner() {
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="mt-4 p-4 rounded-xl bg-red-500/[0.1] border border-red-500/[0.3]"
+              className="mt-4 p-3 rounded border border-red-400/20 bg-red-400/[0.04]"
             >
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-red-500/[0.2] flex items-center justify-center flex-shrink-0">
-                  <AlertCircle className="w-4 h-4 text-red-400" />
-                </div>
+                <AlertCircle className="w-4 h-4 text-red-400/70 flex-shrink-0 mt-0.5" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-medium text-red-400 mb-1">Failed to generate API key</p>
-                  <p className="text-[12px] text-red-400/70">{keyError}</p>
+                  <p className="text-[11px] font-mono font-medium text-red-400/80 mb-0.5">Failed to generate API key</p>
+                  <p className="text-[11px] font-mono text-red-400/50">{keyError}</p>
                 </div>
                 <button
                   onClick={() => setKeyError(null)}
@@ -1345,7 +1442,7 @@ function ConnectorAgentInner() {
         {/* Tabs & Content */}
         {api.getApiKey() && (
           <>
-            <motion.div variants={itemVariants} className="flex gap-1 mb-5 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06] w-fit">
+            <motion.div variants={itemVariants} className="flex gap-1 mb-5 p-1 rounded bg-white/[0.02] border border-white/[0.06] w-fit">
               {[
                 { id: 'find', label: 'Find', icon: Search },
                 { id: 'verify', label: 'Verify', icon: ShieldCheck },
@@ -1355,24 +1452,17 @@ function ConnectorAgentInner() {
                 <button
                   key={tab.id}
                   onClick={() => { setActiveTab(tab.id as any); setResult(null); }}
-                  className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium transition-all ${
-                    activeTab === tab.id ? 'text-white/90' : 'text-white/40 hover:text-white/60'
+                  className={`relative flex items-center gap-2 px-4 py-2 rounded font-mono text-[11px] font-medium transition-all ${
+                    activeTab === tab.id ? 'text-white/90 bg-white/[0.08]' : 'text-white/40 hover:text-white/60'
                   }`}
                 >
-                  {activeTab === tab.id && (
-                    <motion.div
-                      layoutId="activeTab"
-                      className="absolute inset-0 bg-white/[0.08] rounded-lg"
-                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                    />
-                  )}
-                  <tab.icon className="w-4 h-4 relative z-10" />
-                  <span className="relative z-10">{tab.label}</span>
+                  <tab.icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
                 </button>
               ))}
             </motion.div>
 
-            <motion.div variants={itemVariants} className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
+            <motion.div variants={itemVariants} className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
               <AnimatePresence mode="wait">
                 {activeTab === 'find' && (
                   <motion.div
@@ -1382,12 +1472,11 @@ function ConnectorAgentInner() {
                     exit={{ opacity: 0, x: 20 }}
                     className="space-y-4"
                   >
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 gap-3">
                       {[
                         { label: 'First Name', value: findFirstName, onChange: setFindFirstName, placeholder: 'John' },
                         { label: 'Last Name', value: findLastName, onChange: setFindLastName, placeholder: 'Doe' },
-                        { label: 'Domain', value: findDomain, onChange: setFindDomain, placeholder: 'company.com' },
-                      ].map((field, i) => (
+                      ].map((field) => (
                         <div key={field.label}>
                           <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">{field.label}</label>
                           <input
@@ -1395,15 +1484,44 @@ function ConnectorAgentInner() {
                             value={field.value}
                             onChange={(e) => field.onChange(e.target.value)}
                             placeholder={field.placeholder}
-                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
+                            className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
                           />
                         </div>
                       ))}
                     </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">Domain</label>
+                        <input
+                          type="text"
+                          value={findDomain}
+                          onChange={(e) => setFindDomain(e.target.value)}
+                          placeholder="company.com"
+                          className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-white/40 mb-1.5 uppercase tracking-wider">Company Name</label>
+                        <input
+                          type="text"
+                          value={findCompanyName}
+                          onChange={(e) => setFindCompanyName(e.target.value)}
+                          placeholder="Stripe"
+                          className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
+                        />
+                        <p className="text-[9px] text-white/25 mt-1">Resolves domain if not provided</p>
+                      </div>
+                    </div>
                     <button
                       onClick={handleFind}
-                      disabled={isProcessing || !findFirstName || !findLastName || !findDomain}
-                      className="w-full h-[44px] btn-primary text-[13px] flex items-center justify-center gap-2 disabled:opacity-40"
+                      disabled={isProcessing || !findFirstName || !findLastName || (!findDomain && !findCompanyName)}
+                      className="w-full h-[36px] font-mono text-[11px] text-white/70 hover:text-white/90 transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40"
+                    style={{
+                      background: 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '2px',
+                      outline: 'none',
+                    }}
                     >
                       {isProcessing ? (
                         <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
@@ -1434,13 +1552,19 @@ function ConnectorAgentInner() {
                         value={verifyEmailInput}
                         onChange={(e) => setVerifyEmailInput(e.target.value)}
                         placeholder="john@company.com"
-                        className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
+                        className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
                       />
                     </div>
                     <button
                       onClick={handleVerify}
                       disabled={isProcessing || !verifyEmailInput}
-                      className="w-full h-[44px] btn-primary text-[13px] flex items-center justify-center gap-2 disabled:opacity-40"
+                      className="w-full h-[36px] font-mono text-[11px] text-white/70 hover:text-white/90 transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-40"
+                    style={{
+                      background: 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '2px',
+                      outline: 'none',
+                    }}
                     >
                       {isProcessing ? (
                         <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
@@ -1465,7 +1589,7 @@ function ConnectorAgentInner() {
                     className="space-y-4"
                   >
                     {/* Mode toggle */}
-                    <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                    <div className="flex gap-1 p-1 rounded bg-white/[0.02] border border-white/[0.06]">
                       {[
                         { id: 'find' as const, label: 'Bulk Find' },
                         { id: 'verify' as const, label: 'Bulk Verify' },
@@ -1597,7 +1721,7 @@ function ConnectorAgentInner() {
                               }
                             });
                           }}
-                          className={`relative rounded-xl border-2 border-dashed transition-all duration-200 ${
+                          className={`relative rounded border-2 border-dashed transition-all duration-200 ${
                             isDragging
                               ? 'border-white/40 bg-white/[0.04]'
                               : 'border-transparent'
@@ -1605,7 +1729,7 @@ function ConnectorAgentInner() {
                         >
                           {/* Drag overlay */}
                           {isDragging && (
-                            <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/[0.02] pointer-events-none z-10">
+                            <div className="absolute inset-0 flex items-center justify-center rounded bg-white/[0.02] pointer-events-none z-10">
                               <div className="flex items-center gap-2 text-white/60 text-sm">
                                 <Upload size={16} />
                                 <span>Drop CSV here</span>
@@ -1662,7 +1786,7 @@ function ConnectorAgentInner() {
                               e.target.value = '';
                             }}
                             disabled={isProcessing}
-                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-white/[0.08] file:text-white/70 hover:file:bg-white/[0.12] disabled:opacity-40"
+                            className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-medium file:bg-white/[0.08] file:text-white/70 hover:file:bg-white/[0.12] disabled:opacity-40"
                         />
                         </div>
                       </div>
@@ -1677,7 +1801,7 @@ function ConnectorAgentInner() {
                           animate={{ opacity: 1, y: 0 }}
                           whileHover={{ y: -2, boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
                           transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
-                          className="relative overflow-hidden rounded-xl border border-white/[0.06] bg-gradient-to-br from-white/[0.03] to-transparent cursor-default"
+                          className="relative overflow-hidden rounded border border-white/[0.06] bg-gradient-to-br from-white/[0.03] to-transparent cursor-default"
                         >
                           {/* Animated gradient drift */}
                           <motion.div
@@ -1774,7 +1898,7 @@ function ConnectorAgentInner() {
                             onChange={(e) => setSheetsUrl(e.target.value)}
                             placeholder="https://docs.google.com/spreadsheets/d/..."
                             disabled={sheetsLoading}
-                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] placeholder:text-white/30 disabled:opacity-40"
+                            className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/30 disabled:opacity-40"
                           />
                         </div>
                         <div>
@@ -1787,18 +1911,18 @@ function ConnectorAgentInner() {
                             onChange={(e) => setSheetsTab(e.target.value)}
                             placeholder="Sheet1"
                             disabled={sheetsLoading}
-                            className="w-full h-10 px-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-white/90 text-[13px] placeholder:text-white/30 disabled:opacity-40"
+                            className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/30 disabled:opacity-40"
                           />
                         </div>
                         {sheetsError && (
-                          <div className="p-3 rounded-xl bg-red-500/[0.06] border border-red-500/[0.12] text-[11px] text-red-400">
+                          <div className="p-3 rounded border border-red-400/20 bg-red-400/[0.04] font-mono text-[11px] text-red-400/70">
                             {sheetsError}
                           </div>
                         )}
                         <button
                           onClick={loadGoogleSheet}
                           disabled={sheetsLoading || !sheetsUrl}
-                          className="w-full h-10 rounded-xl bg-white/[0.06] border border-white/[0.08] text-[12px] font-medium text-white/80 hover:bg-white/[0.1] transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+                          className="w-full h-10 rounded bg-white/[0.06] border border-white/[0.08] text-[12px] font-medium text-white/80 hover:bg-white/[0.1] transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
                         >
                           {sheetsLoading ? (
                             <>
@@ -1836,7 +1960,7 @@ function ConnectorAgentInner() {
 
                     {/* Auto-detection Success Card */}
                     {bulkParsedData && !bulkNeedsMapping && Object.keys(bulkColumnMap).length > 0 && (
-                      <div className="p-3 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/[0.12] space-y-2">
+                      <div className="p-3 rounded border border-emerald-500/20 bg-emerald-500/[0.04] space-y-2">
                         <div className="flex items-center gap-2">
                           <div className="w-4 h-4 rounded-full bg-emerald-500/20 flex items-center justify-center">
                             <svg className="w-2.5 h-2.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1861,7 +1985,7 @@ function ConnectorAgentInner() {
 
                     {/* Column Mapper (if needed) */}
                     {bulkParsedData && bulkNeedsMapping && (
-                      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-4">
+                      <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02] space-y-4">
                         <div className="flex items-center gap-2">
                           <div className="w-1.5 h-1.5 rounded-full bg-white/40" />
                           <p className="text-[11px] text-white/60 font-medium tracking-tight">Map columns</p>
@@ -1869,7 +1993,7 @@ function ConnectorAgentInner() {
                         <div className="space-y-2">
                           {bulkMode === 'find' ? (
                             <>
-                              {['first_name', 'last_name', 'domain'].map(field => (
+                              {['first_name', 'last_name', 'domain', 'company_name'].map(field => (
                                 <div key={field} className="flex items-center gap-3">
                                   <span className="text-[10px] text-white/40 w-20 font-mono">{field}</span>
                                   <div className="flex-1 relative group">
@@ -1936,7 +2060,7 @@ function ConnectorAgentInner() {
                       const VERIFY_CHUNK = 5;
                       const map = bulkColumnMap;
                       const isMapped = bulkMode === 'find'
-                        ? map['first_name'] && map['last_name'] && map['domain']
+                        ? map['first_name'] && map['last_name'] && (map['domain'] || map['company_name'])
                         : map['email'];
 
                       if (!isMapped) return null;
@@ -1951,8 +2075,9 @@ function ConnectorAgentInner() {
                           const fn = (row[map['first_name']] || '').trim();
                           const ln = (row[map['last_name']] || '').trim();
                           const d = (row[map['domain']] || '').trim().toLowerCase();
-                          if (!fn || !ln || !d) return;
-                          const key = `${fn.toLowerCase()}|${ln.toLowerCase()}|${d}`;
+                          const cn = (row[map['company_name']] || '').trim();
+                          if (!fn || !ln || (!d && !cn)) return;
+                          const key = `${fn.toLowerCase()}|${ln.toLowerCase()}|${d || cn.toLowerCase()}`;
                           if (seen.has(key)) return;
                           seen.add(key);
                           validCount++;
@@ -1975,7 +2100,7 @@ function ConnectorAgentInner() {
                       const insufficientCredits = estimatedCredits > availableCredits;
 
                       return (
-                        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-3">
+                        <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02] space-y-3">
                           <div className="flex items-center justify-between text-[12px]">
                             <span className="text-white/50">Rows to process</span>
                             <span className="text-white/90 font-medium">{validCount}</span>
@@ -2061,11 +2186,15 @@ function ConnectorAgentInner() {
                                       const firstName = (row[map['first_name']] || '').trim();
                                       const lastName = (row[map['last_name']] || '').trim();
                                       const domain = (row[map['domain']] || '').trim().toLowerCase();
-                                      if (!firstName || !lastName || !domain) return;
-                                      const key = `${firstName.toLowerCase()}|${lastName.toLowerCase()}|${domain}`;
+                                      const companyName = (row[map['company_name']] || '').trim();
+                                      if (!firstName || !lastName || (!domain && !companyName)) return;
+                                      const key = `${firstName.toLowerCase()}|${lastName.toLowerCase()}|${domain || companyName.toLowerCase()}`;
                                       if (seenSet.has(key)) return;
                                       seenSet.add(key);
-                                      items.push({ firstName, lastName, domain, _row: idx });
+                                      const item: any = { firstName, lastName, _row: idx };
+                                      if (domain) item.domain = domain;
+                                      if (companyName && !domain) item.companyName = companyName;
+                                      items.push(item);
                                     });
                                   } else {
                                     bulkParsedData.forEach((row: any, idx: number) => {
@@ -2297,13 +2426,13 @@ function ConnectorAgentInner() {
 
                     {/* Error */}
                     {bulkError && (
-                      <div className="p-3 rounded-xl bg-red-500/[0.08] border border-red-500/[0.15] text-[12px] text-red-400">
+                      <div className="p-3 rounded border border-red-400/20 bg-red-400/[0.04] font-mono text-[11px] text-red-400/70">
                         {bulkError}
                       </div>
                     )}
 
                     {isProcessing && (
-                      <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] overflow-hidden">
+                      <div className="rounded border border-white/[0.06] bg-white/[0.02] overflow-hidden">
                         {/* Progress Header */}
                         <div className="p-4 space-y-3 border-b border-white/[0.04]">
                           <div className="flex items-center justify-between">
@@ -2387,7 +2516,7 @@ function ConnectorAgentInner() {
 
                     {/* Summary */}
                     {bulkSummary && (
-                      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                      <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                         <div className="flex items-center gap-4 text-[12px]">
                           <span className="text-white/50">Total: <span className="text-white/90 font-medium">{bulkSummary.total}</span></span>
                           {bulkMode === 'find' ? (
@@ -2476,7 +2605,7 @@ function ConnectorAgentInner() {
 
                       return (
                         <>
-                          <div className="rounded-xl border border-white/[0.06] overflow-hidden">
+                          <div className="rounded border border-white/[0.06] overflow-hidden">
                             <div className="max-h-[300px] overflow-y-auto">
                               <table className="w-full text-[11px]">
                                 <thead className="bg-white/[0.02] sticky top-0">
@@ -2564,7 +2693,7 @@ function ConnectorAgentInner() {
                               a.click();
                               URL.revokeObjectURL(url);
                             }}
-                            className="w-full h-[40px] rounded-xl bg-white/[0.04] border border-white/[0.08] text-[12px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors flex items-center justify-center gap-2"
+                            className="w-full h-[40px] rounded bg-white/[0.04] border border-white/[0.08] text-[12px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors flex items-center justify-center gap-2"
                           >
                             <Copy className="w-4 h-4" />
                             Download CSV
@@ -2589,7 +2718,7 @@ function ConnectorAgentInner() {
                             {batchHistory.slice(0, 20).map((batch) => (
                               <div
                                 key={batch.id}
-                                className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-white/[0.1] transition-colors"
+                                className="p-3 rounded border border-white/[0.06] bg-white/[0.02] hover:border-white/[0.1] transition-colors"
                               >
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-3">
@@ -2659,10 +2788,10 @@ function ConnectorAgentInner() {
                     className="space-y-5"
                   >
                     {/* Your API Key - Prominent */}
-                    <div className="p-4 rounded-xl bg-gradient-to-br from-violet-500/[0.08] to-fuchsia-500/[0.04] border border-violet-500/[0.15]">
+                    <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                       <div className="flex items-center gap-2 mb-2">
-                        <Key className="w-4 h-4 text-violet-400" />
-                        <span className="text-[11px] font-semibold text-white/80 uppercase tracking-wider">Your API Key</span>
+                        <Key className="w-3.5 h-3.5 text-white/30" />
+                        <span className="text-[9px] font-mono font-medium text-white/25 uppercase tracking-widest">Your API Key</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <code className="flex-1 px-3 py-2 rounded-lg bg-black/40 text-[12px] font-mono text-white/90 truncate">
@@ -2683,7 +2812,7 @@ function ConnectorAgentInner() {
                     </div>
 
                     {/* Endpoint Sub-tabs (Find / Verify) */}
-                    <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06] mb-4">
+                    <div className="flex gap-1 p-1 rounded bg-white/[0.02] border border-white/[0.06] mb-4">
                       {[
                         { id: 'find' as const, label: 'Find Email', icon: Search },
                         { id: 'verify' as const, label: 'Verify Email', icon: ShieldCheck },
@@ -2704,7 +2833,7 @@ function ConnectorAgentInner() {
                     </div>
 
                     {/* Platform Tabs */}
-                    <div className="flex gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                    <div className="flex gap-1 p-1 rounded bg-white/[0.02] border border-white/[0.06]">
                       {[
                         { id: 'make' as const, label: 'Make.com', icon: Globe },
                         { id: 'n8n' as const, label: 'n8n', icon: Zap },
@@ -2734,7 +2863,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 1 */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-blue-500/[0.2] text-blue-400 text-[10px] font-bold flex items-center justify-center">1</span>
                               <span className="text-[12px] font-medium text-white/80">Add HTTP Module</span>
@@ -2743,7 +2872,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 2 */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-blue-500/[0.2] text-blue-400 text-[10px] font-bold flex items-center justify-center">2</span>
                               <span className="text-[12px] font-medium text-white/80">Configure Request</span>
@@ -2766,7 +2895,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 3 - Headers (Content-Type removed - Make adds it automatically) */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-blue-500/[0.2] text-blue-400 text-[10px] font-bold flex items-center justify-center">3</span>
                               <span className="text-[12px] font-medium text-white/80">Set Headers</span>
@@ -2785,7 +2914,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 4 - Body */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="w-5 h-5 rounded-full bg-blue-500/[0.2] text-blue-400 text-[10px] font-bold flex items-center justify-center">4</span>
@@ -2816,7 +2945,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Response */}
-                          <div className="p-4 rounded-xl bg-emerald-500/[0.04] border border-emerald-500/[0.1]">
+                          <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.1]">
                             <div className="flex items-center gap-2 mb-3">
                               <Check className="w-4 h-4 text-emerald-400" />
                               <span className="text-[12px] font-medium text-white/80">Response</span>
@@ -2842,7 +2971,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 1 */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">1</span>
                               <span className="text-[12px] font-medium text-white/80">Add HTTP Request Node</span>
@@ -2851,7 +2980,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 2 */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">2</span>
                               <span className="text-[12px] font-medium text-white/80">Configure</span>
@@ -2891,7 +3020,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 3 - Body */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">3</span>
@@ -2922,7 +3051,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Response */}
-                          <div className="p-4 rounded-xl bg-emerald-500/[0.04] border border-emerald-500/[0.1]">
+                          <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.1]">
                             <div className="flex items-center gap-2 mb-3">
                               <Check className="w-4 h-4 text-emerald-400" />
                               <span className="text-[12px] font-medium text-white/80">Response</span>
@@ -2948,7 +3077,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 1 */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">1</span>
                               <span className="text-[12px] font-medium text-white/80">Add Webhooks Action</span>
@@ -2957,7 +3086,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 2 */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">2</span>
                               <span className="text-[12px] font-medium text-white/80">Configure Request</span>
@@ -2980,7 +3109,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 3 - Headers (Content-Type removed - Zapier adds it automatically) */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center gap-2 mb-3">
                               <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">3</span>
                               <span className="text-[12px] font-medium text-white/80">Headers</span>
@@ -2999,7 +3128,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Step 4 - Data */}
-                          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                          <div className="p-4 rounded border border-white/[0.06] bg-white/[0.02]">
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="w-5 h-5 rounded-full bg-orange-500/[0.2] text-orange-400 text-[10px] font-bold flex items-center justify-center">4</span>
@@ -3030,7 +3159,7 @@ function ConnectorAgentInner() {
                           </div>
 
                           {/* Response */}
-                          <div className="p-4 rounded-xl bg-emerald-500/[0.04] border border-emerald-500/[0.1]">
+                          <div className="p-4 rounded bg-emerald-500/[0.04] border border-emerald-500/[0.1]">
                             <div className="flex items-center gap-2 mb-3">
                               <Check className="w-4 h-4 text-emerald-400" />
                               <span className="text-[12px] font-medium text-white/80">Response</span>
@@ -3061,7 +3190,7 @@ function ConnectorAgentInner() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -20, scale: 0.95 }}
                     transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                    className={`mt-5 p-4 rounded-xl border ${
+                    className={`mt-5 p-4 rounded border ${
                       result.email && result.status !== 'risky' && result.status !== 'invalid'
                         ? 'bg-emerald-500/[0.04] border-emerald-500/[0.1]'
                         : result.status === 'risky'
@@ -3077,7 +3206,7 @@ function ConnectorAgentInner() {
                               initial={{ scale: 0 }}
                               animate={{ scale: 1 }}
                               transition={{ type: 'spring', stiffness: 500, damping: 25, delay: 0.1 }}
-                              className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-500/[0.15]"
+                              className="w-10 h-10 rounded flex items-center justify-center bg-emerald-500/[0.15]"
                             >
                               <Mail className="w-5 h-5 text-emerald-400" />
                             </motion.div>
@@ -3114,12 +3243,15 @@ function ConnectorAgentInner() {
                             ))}
                           </div>
                         )}
+                        {result.resolvedDomain && (
+                          <p className="text-[10px] text-white/25 mt-2">Resolved: {result.resolvedDomain} via {result.domainSource}</p>
+                        )}
                       </div>
                     ) : result.email && result.status === 'risky' ? (
                       <div>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-amber-500/[0.1] flex items-center justify-center">
+                            <div className="w-10 h-10 rounded bg-amber-500/[0.1] flex items-center justify-center">
                               <AlertCircle className="w-5 h-5 text-amber-400" />
                             </div>
                             <div>
@@ -3150,15 +3282,21 @@ function ConnectorAgentInner() {
                             ))}
                           </div>
                         )}
+                        {result.resolvedDomain && (
+                          <p className="text-[10px] text-white/25 mt-2">Resolved: {result.resolvedDomain} via {result.domainSource}</p>
+                        )}
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center">
+                        <div className="w-10 h-10 rounded bg-white/[0.04] flex items-center justify-center">
                           <AlertCircle className="w-5 h-5 text-white/30" />
                         </div>
                         <div>
                           <p className="text-[13px] text-white/70">{result.status === 'invalid' ? 'Invalid email' : 'No email found'}</p>
                           <p className="text-[11px] text-white/40 mt-0.5">{result.status === 'invalid' ? 'This email does not exist or is undeliverable' : 'Could not find a valid email'}</p>
+                          {result.resolvedDomain && (
+                            <p className="text-[10px] text-white/25 mt-1">Resolved: {result.resolvedDomain} via {result.domainSource}</p>
+                          )}
                         </div>
                       </div>
                     )}
@@ -3186,9 +3324,9 @@ function ConnectorAgentInner() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm mx-4 p-6 rounded-2xl bg-[#111] border border-white/[0.08]"
+              className="w-full max-w-sm mx-4 p-6 rounded bg-[#111] border border-white/[0.08]"
             >
-              <div className="w-12 h-12 rounded-xl bg-red-500/[0.1] border border-red-500/[0.15] flex items-center justify-center mx-auto mb-4">
+              <div className="w-12 h-12 rounded bg-red-500/[0.1] border border-red-500/[0.15] flex items-center justify-center mx-auto mb-4">
                 <Trash2 className="w-6 h-6 text-red-400" />
               </div>
               <h3 className="text-[15px] font-semibold text-white/90 text-center mb-2">Revoke API Key?</h3>
@@ -3198,13 +3336,13 @@ function ConnectorAgentInner() {
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowRevokeConfirm(false)}
-                  className="flex-1 h-[42px] rounded-xl bg-white/[0.04] border border-white/[0.08] text-[13px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors"
+                  className="flex-1 h-[42px] rounded bg-white/[0.04] border border-white/[0.08] text-[13px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleRevokeKey}
-                  className="flex-1 h-[42px] rounded-xl bg-red-500/[0.15] border border-red-500/[0.2] text-[13px] font-medium text-red-400 hover:bg-red-500/[0.25] transition-colors"
+                  className="flex-1 h-[42px] rounded bg-red-500/[0.15] border border-red-500/[0.2] text-[13px] font-medium text-red-400 hover:bg-red-500/[0.25] transition-colors"
                 >
                   Revoke Key
                 </button>
@@ -3227,9 +3365,9 @@ function ConnectorAgentInner() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-sm mx-4 p-6 rounded-2xl bg-[#111] border border-white/[0.08]"
+              className="w-full max-w-sm mx-4 p-6 rounded bg-[#111] border border-white/[0.08]"
             >
-              <div className="w-12 h-12 rounded-xl bg-amber-500/[0.1] border border-amber-500/[0.15] flex items-center justify-center mx-auto mb-4">
+              <div className="w-12 h-12 rounded bg-amber-500/[0.1] border border-amber-500/[0.15] flex items-center justify-center mx-auto mb-4">
                 <Activity className="w-6 h-6 text-amber-400" />
               </div>
               <h3 className="text-[15px] font-semibold text-white/90 text-center mb-2">Resume Batch?</h3>
@@ -3248,7 +3386,7 @@ function ConnectorAgentInner() {
                     setShowResumeModal(false);
                     setPendingResumeBatch(null);
                   }}
-                  className="flex-1 h-[42px] rounded-xl bg-white/[0.04] border border-white/[0.08] text-[13px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors"
+                  className="flex-1 h-[42px] rounded bg-white/[0.04] border border-white/[0.08] text-[13px] font-medium text-white/70 hover:bg-white/[0.08] transition-colors"
                 >
                   Discard
                 </button>
@@ -3437,7 +3575,7 @@ function ConnectorAgentInner() {
                       setPendingResumeBatch(null);
                     }
                   }}
-                  className="flex-1 h-[42px] rounded-xl bg-amber-500/[0.15] border border-amber-500/[0.2] text-[13px] font-medium text-amber-400 hover:bg-amber-500/[0.25] transition-colors"
+                  className="flex-1 h-[42px] rounded bg-amber-500/[0.15] border border-amber-500/[0.2] text-[13px] font-medium text-amber-400 hover:bg-amber-500/[0.25] transition-colors"
                 >
                   Resume
                 </button>
@@ -3446,7 +3584,14 @@ function ConnectorAgentInner() {
           </motion.div>
         )}
       </AnimatePresence>
-      <div className="text-[9px] text-white/10 text-center mt-8 select-none">{BUILD_VERSION}</div>
+      <div className="text-[9px] font-mono text-white/10 text-center mt-8 select-none">{BUILD_VERSION}</div>
+
+      <style>{`
+        @keyframes pageIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }

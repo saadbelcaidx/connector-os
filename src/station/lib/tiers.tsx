@@ -5,12 +5,12 @@
 
 export type Tier = 'strong' | 'good' | 'weak' | 'none' | 'conflict';
 
-export function getTier(match: { vetoed: boolean; scores: { combined: number } }): Tier {
+export function getTier(match: { vetoed: boolean; scores: { fit: number; combined: number } }): Tier {
   if (match.vetoed) return 'conflict';
-  const score = match.scores.combined;
-  if (score >= 0.7) return 'strong';
-  if (score >= 0.5) return 'good';
-  if (score >= 0.3) return 'weak';
+  const { fit, combined } = match.scores;
+  if (combined >= 0.65 && fit >= 0.65) return 'strong';
+  if (combined >= 0.5) return 'good';
+  if (combined >= 0.3) return 'weak';
   return 'none';
 }
 
@@ -25,17 +25,17 @@ export const tierConfig: Record<Tier, {
   strong: {
     label: 'Strong fit',
     dot: '\u25CF',
-    textColor: 'text-emerald-400',
-    bgColor: 'bg-emerald-500/10',
-    borderColor: 'border-emerald-500/20',
+    textColor: 'text-blue-400',
+    bgColor: 'bg-blue-500/10',
+    borderColor: 'border-blue-500/20',
     subtitle: 'Ready to act',
   },
   good: {
     label: 'Good fit',
     dot: '\u25CF',
-    textColor: 'text-blue-400',
-    bgColor: 'bg-blue-500/10',
-    borderColor: 'border-blue-500/20',
+    textColor: 'text-emerald-400',
+    bgColor: 'bg-emerald-500/10',
+    borderColor: 'border-emerald-500/20',
     subtitle: 'Worth a look',
   },
   weak: {

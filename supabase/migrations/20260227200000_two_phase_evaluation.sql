@@ -84,7 +84,7 @@ BEGIN
       -- Trigger Phase 2 orchestrator via pg_net
       PERFORM net.http_post(
         url := 'https://dqqchgvwqrqnthnbrfkp.supabase.co/functions/v1/mcp-orchestrate-phase2',
-        headers := '{"Content-Type": "application/json"}'::jsonb,
+        headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxcWNoZ3Z3cXJxbnRobmJyZmtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMjQ1ODgsImV4cCI6MjA4MDcwMDU4OH0.9tv6zJupBQ1wK5RrssE73hLK7pTVYx0aaVtJHce1Fvg"}'::jsonb,
         body := jsonb_build_object('jobId', p_job_id)
       );
 
