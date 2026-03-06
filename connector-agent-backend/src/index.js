@@ -1143,6 +1143,17 @@ db.exec(`
     probes TEXT NOT NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Domain registry: company name → domain resolution cache
+  CREATE TABLE IF NOT EXISTS domain_registry (
+    original_name TEXT PRIMARY KEY,
+    company_key TEXT NOT NULL,
+    domain TEXT NOT NULL,
+    source TEXT NOT NULL,
+    confidence REAL DEFAULT 0.5,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_domain_registry_key ON domain_registry(company_key);
 `);
 
 function updateDomainStats(email, code) {
@@ -1212,7 +1223,7 @@ function cacheConfidence(email, conf) {
 // ============================================================
 // DNS INTELLIGENCE MODULES
 // ============================================================
-const { getMxProvider, getCacheStats: getDnsCacheStats, clearAllCaches: clearDnsCaches } = require('./dnsIntel');
+const { isDomainLive, getMxProvider, getCacheStats: getDnsCacheStats, clearAllCaches: clearDnsCaches } = require('./dnsIntel');
 const { resolveMailboxProvider } = require('./providerIntel');
 const { reorderPermutations } = require('./permutationPriority');
 const { probeCatchAllConfidence } = require('./catchAllConfidence');
@@ -1569,30 +1580,45 @@ app.post('/api/email/v2/find', async (req, res) => {
   const effectiveUserId = apiKey ? apiKey.user_id : userId;
   const effectiveKeyId = apiKey ? apiKey.id : '';
 
-  const { firstName, lastName, domain: rawDomain } = req.body;
+  const { firstName, lastName, domain: rawDomain, companyName, apolloApiKey: clientApolloKey } = req.body;
 
   if (!firstName || !lastName) {
     return res.status(400).json({ success: false, error: 'firstName and lastName required' });
   }
 
-  if (!rawDomain) {
-    return res.status(400).json({ success: false, error: 'domain required' });
+  if (!rawDomain && !companyName) {
+    return res.status(400).json({ success: false, error: 'domain or companyName required' });
   }
 
-  // Clean domain: strip protocol, www, trailing slashes
-  // "https://www.converge-bio.com/" → "converge-bio.com"
-  const domain = rawDomain
-    .replace(/^https?:\/\//, '')  // Remove http:// or https://
-    .replace(/^www\./, '')         // Remove www.
-    .replace(/\/.*$/, '')          // Remove path and trailing slash
-    .toLowerCase()
-    .trim();
+  let domain;
+  let resolvedDomain = null;
+  let domainSource = null;
 
-  if (!domain || !domain.includes('.')) {
-    return res.status(400).json({ success: false, error: 'Invalid domain format' });
+  if (rawDomain) {
+    // Clean domain: strip protocol, www, trailing slashes
+    // "https://www.converge-bio.com/" → "converge-bio.com"
+    domain = rawDomain
+      .replace(/^https?:\/\//, '')  // Remove http:// or https://
+      .replace(/^www\./, '')         // Remove www.
+      .replace(/\/.*$/, '')          // Remove path and trailing slash
+      .toLowerCase()
+      .trim();
+
+    if (!domain || !domain.includes('.')) {
+      return res.status(400).json({ success: false, error: 'Invalid domain format' });
+    }
+    console.log(`[Find] Domain cleaned: "${rawDomain}" → "${domain}"`);
+  } else {
+    // Resolve company name to domain
+    const resolved = await resolveDomain(companyName, clientApolloKey || null);
+    if (!resolved) {
+      return res.status(422).json({ success: false, error: 'Could not resolve domain', companyName });
+    }
+    domain = resolved.domain;
+    resolvedDomain = resolved.domain;
+    domainSource = resolved.source;
+    console.log(`[Find] Resolved "${companyName}" → "${domain}" via ${domainSource}`);
   }
-
-  console.log(`[Find] Domain cleaned: "${rawDomain}" → "${domain}"`);
 
   // Check cache first (with TTL)
   const cached = db.prepare(`
@@ -1608,7 +1634,7 @@ app.post('/api/email/v2/find', async (req, res) => {
       // Get provider info for cached results
       const mx = await getMxProvider(domain);
       const hostedAt = mx.provider || 'Custom';
-      return res.json({ email: cached.email, status: (cached.verdict || 'valid').toLowerCase(), hosted_at: hostedAt });
+      return res.json({ email: cached.email, status: (cached.verdict || 'valid').toLowerCase(), hosted_at: hostedAt, ...(resolvedDomain && { resolvedDomain, domainSource }) });
     }
   }
 
@@ -1616,7 +1642,7 @@ app.post('/api/email/v2/find', async (req, res) => {
   const usage = getOrCreateUsage(effectiveUserId, effectiveKeyId);
   const MONTHLY_LIMIT = getMonthlyLimit(effectiveUserId);
   if (usage.tokens_used >= MONTHLY_LIMIT) {
-    return res.status(429).json({ email: null });
+    return res.status(429).json({ email: null, ...(resolvedDomain && { resolvedDomain, domainSource }) });
   }
 
   // Check degradation mode
@@ -1626,7 +1652,7 @@ app.post('/api/email/v2/find', async (req, res) => {
   if (mode === 'RESTRICTED') {
     const mx = await getMxProvider(domain);
     const hostedAt = mx.provider || 'Custom';
-    return res.json({ email: null, hosted_at: hostedAt });
+    return res.json({ email: null, hosted_at: hostedAt, ...(resolvedDomain && { resolvedDomain, domainSource }) });
   }
 
   // Wrap main logic in try-catch to handle ECONNRESET and network errors
@@ -1666,7 +1692,7 @@ app.post('/api/email/v2/find', async (req, res) => {
     }
 
     console.log(`[Find] ${verdict} via ${source}: ${email}${isCatchAll ? ' (catch-all)' : ''}`);
-    return res.json({ email, status: verdict.toLowerCase(), hosted_at: hostedAt });
+    return res.json({ email, status: verdict.toLowerCase(), hosted_at: hostedAt, ...(resolvedDomain && { resolvedDomain, domainSource }) });
   };
 
   // ============================================================
@@ -1693,7 +1719,7 @@ app.post('/api/email/v2/find', async (req, res) => {
   // DOMAIN LIVENESS: short-circuit dead domains (saves all downstream API calls)
   if (providerInfo.live === false) {
     console.log(`[Find] cid=${cid} domain=${domain} DOMAIN_DEAD — skipping all verification`);
-    return res.json({ email: null, hosted_at: hostedAt });
+    return res.json({ email: null, hosted_at: hostedAt, ...(resolvedDomain && { resolvedDomain, domainSource }) });
   }
 
   console.log(`[Find] cid=${cid} provider=${providerInfo.provider} gateway_mx=${providerInfo.gatewayMx || 'none'} evidence=${JSON.stringify(providerInfo.evidence)}`);
@@ -1831,11 +1857,11 @@ app.post('/api/email/v2/find', async (req, res) => {
   // If all attempts hit service_busy, that's retryable - not a definitive "not found"
   if (allServiceBusy && !hasRealVerdict) {
     console.log(`[Find] SERVICE BUSY: All verification attempts timed out`);
-    return res.status(503).json({ email: null, hosted_at: hostedAt, reason: 'service_busy' });
+    return res.status(503).json({ email: null, hosted_at: hostedAt, reason: 'service_busy', ...(resolvedDomain && { resolvedDomain, domainSource }) });
   }
 
   console.log(`[Find] FAILED: No deliverable email for ${firstName} ${lastName} @ ${domain}`);
-  return res.status(404).json({ email: null, hosted_at: hostedAt, reason: 'not_found' });
+  return res.status(404).json({ email: null, hosted_at: hostedAt, reason: 'not_found', ...(resolvedDomain && { resolvedDomain, domainSource }) });
 
   } catch (err) {
     // Handle ECONNRESET, ETIMEDOUT, and other network errors gracefully
@@ -2045,27 +2071,59 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
   let tokensUsed = 0;
   const t0 = Date.now();
 
+  // Pre-resolve company names (deduped: 200 rows at "Goldman Sachs" = 1 resolution)
+  const companyResolutions = new Map();
+  const uniqueCompanyNames = [...new Set(items.filter(i => i.companyName && !i.domain).map(i => i.companyName.toLowerCase().trim()))];
+  if (uniqueCompanyNames.length > 0) {
+    console.log(`[FindBulk] Pre-resolving ${uniqueCompanyNames.length} company names...`);
+    for (const cn of uniqueCompanyNames) {
+      const resolved = await resolveDomain(cn);
+      if (resolved) companyResolutions.set(cn, resolved);
+    }
+    console.log(`[FindBulk] Resolved ${companyResolutions.size}/${uniqueCompanyNames.length} companies`);
+  }
+
   // Process single find-bulk item (called from pool)
   async function processFindItem(item) {
-    const { firstName, lastName, domain: rawDomain } = item;
+    const { firstName, lastName, domain: rawDomain, companyName } = item;
 
-    if (!firstName || !lastName || !rawDomain) {
+    if (!firstName || !lastName) {
       return { ...item, success: false, error: 'Missing fields', hosted_at: 'Custom' };
     }
 
-    const domain = rawDomain
-      .replace(/^https?:\/\//, '')
-      .replace(/^www\./, '')
-      .replace(/\/.*$/, '')
-      .toLowerCase()
-      .trim();
+    let domain;
+    let resolvedDomain = null;
+    let domainSource = null;
 
-    if (!domain || !domain.includes('.')) {
-      return { ...item, success: false, error: 'Invalid domain format', hosted_at: 'Custom' };
+    if (rawDomain) {
+      domain = rawDomain
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/\/.*$/, '')
+        .toLowerCase()
+        .trim();
+
+      if (!domain || !domain.includes('.')) {
+        return { ...item, success: false, error: 'Invalid domain format', hosted_at: 'Custom' };
+      }
+    } else if (companyName) {
+      const cn = companyName.toLowerCase().trim();
+      const resolved = companyResolutions.get(cn);
+      if (!resolved) {
+        return { ...item, success: false, error: 'unresolved', hosted_at: 'Custom' };
+      }
+      domain = resolved.domain;
+      resolvedDomain = resolved.domain;
+      domainSource = resolved.source;
+    } else {
+      return { ...item, success: false, error: 'Missing domain or companyName', hosted_at: 'Custom' };
     }
 
+    // Helper: enrich result with resolution info
+    const enrich = (obj) => resolvedDomain ? { ...obj, resolvedDomain, domainSource } : obj;
+
     if (mode === 'RESTRICTED') {
-      return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email', hosted_at: 'Custom' };
+      return enrich({ firstName, lastName, domain, success: false, reason: 'no_verifiable_email', hosted_at: 'Custom' });
     }
 
     // Check cache with TTL
@@ -2082,7 +2140,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
         // For cached results, we need to get provider info
         const mx = await getMxProvider(domain);
         const cachedHostedAt = mx.provider || 'Custom';
-        return { firstName, lastName, domain, success: true, email: cachedResult.email, verdict: cachedResult.verdict, hosted_at: cachedHostedAt };
+        return enrich({ firstName, lastName, domain, success: true, email: cachedResult.email, verdict: cachedResult.verdict, hosted_at: cachedHostedAt });
       }
     }
 
@@ -2091,7 +2149,7 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     const bulkProviderInfo = await resolveMailboxProvider(domain, `bulk-${domain.slice(0, 8)}`);
 
     if (bulkProviderInfo.live === false) {
-      return { firstName, lastName, domain, success: false, reason: 'domain_dead', hosted_at: 'Custom' };
+      return enrich({ firstName, lastName, domain, success: false, reason: 'domain_dead', hosted_at: 'Custom' });
     }
 
     const hostedAt = bulkProviderInfo.provider || 'Custom';
@@ -2157,21 +2215,29 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
       `).run(uuidv4(), domain.toLowerCase(), firstName.toLowerCase(), lastName.toLowerCase(), foundEmail, new Date().toISOString());
 
       found++;
-      return { firstName, lastName, domain, success: true, email: foundEmail, verdict: 'VALID', hosted_at: hostedAt };
+      return enrich({ firstName, lastName, domain, success: true, email: foundEmail, verdict: 'VALID', hosted_at: hostedAt });
     }
 
-    return { firstName, lastName, domain, success: false, reason: 'no_verifiable_email', hosted_at: hostedAt };
+    return enrich({ firstName, lastName, domain, success: false, reason: 'no_verifiable_email', hosted_at: hostedAt });
   }
 
   // Use scheduled bulk process with layered concurrency
   const getDomain = (item) => {
-    const rawDomain = item.domain || '';
-    return rawDomain
-      .replace(/^https?:\/\//, '')
-      .replace(/^www\./, '')
-      .replace(/\/.*$/, '')
-      .toLowerCase()
-      .trim();
+    if (item.domain) {
+      return item.domain
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/\/.*$/, '')
+        .toLowerCase()
+        .trim();
+    }
+    // For company-name items, use the pre-resolved domain for scheduling
+    if (item.companyName) {
+      const cn = item.companyName.toLowerCase().trim();
+      const resolved = companyResolutions.get(cn);
+      return resolved?.domain || cn; // fallback to name for grouping
+    }
+    return '';
   };
 
   let results;
@@ -2190,6 +2256,29 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
     summary: { total: items.length, found, not_found: items.length - found },
     tokens_used: tokensUsed,
   });
+});
+
+/**
+ * POST /api/domain/resolve
+ * Resolve a company name to a domain using Clearbit → Apollo → DNS waterfall
+ */
+app.post('/api/domain/resolve', async (req, res) => {
+  const { companyName, apolloApiKey } = req.body;
+
+  if (!companyName) {
+    return res.status(400).json({ error: 'companyName required' });
+  }
+
+  try {
+    const result = await resolveDomain(companyName, apolloApiKey || null);
+    if (result) {
+      return res.json({ domain: result.domain, source: result.source });
+    }
+    return res.json({ domain: null, error: 'not_found' });
+  } catch (err) {
+    console.error(`[DomainResolve] Error:`, err.message);
+    return res.status(500).json({ domain: null, error: 'internal_error' });
+  }
 });
 
 /**
@@ -2789,6 +2878,272 @@ function guessDomain(companyName) {
     .replace(/[^a-z0-9-]/g, '')
     .replace(/^-+|-+$/g, '');
   return domain.length > 1 ? domain + '.com' : null;
+}
+
+// ============================================================
+// DOMAIN RESOLUTION: Company Name → Domain
+// ============================================================
+
+const DOMAIN_STOP_WORDS = new Set(['the', 'a', 'an', 'group', 'inc', 'corp', 'company', 'co', 'ltd', 'llc', 'gmbh', 'ag', 'sa', 'plc', 'pty']);
+
+function getFirstMeaningfulWord(name) {
+  if (!name) return '';
+  // Split on spaces, dots, dashes, and other punctuation to isolate words
+  const words = name.toLowerCase().split(/[\s.\-–—,;:!?/\\()]+/).filter(w => w && /[a-z]/.test(w));
+  for (const w of words) {
+    if (!DOMAIN_STOP_WORDS.has(w)) return w;
+  }
+  return words[0] || '';
+}
+
+/**
+ * Fetch a URL's <title> and score how well it matches the company name.
+ * Returns a score 0-1:
+ *   0   = title present but keyword NOT found (wrong company)
+ *   0.5 = can't verify (no title, error page, network error) — neutral
+ *   0.7 = keyword found in title (basic match)
+ *   1.0 = strong match (company name similarity to title ≥ 0.6)
+ *
+ * Callers that need boolean: score > 0 means "don't reject"
+ */
+async function verifyDomain(companyName, domain) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`https://${domain}`, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ConnectorOS/1.0)' },
+    });
+    clearTimeout(timeoutId);
+
+    // Non-200 responses (403, 503, CloudFront errors) = can't verify
+    if (!res.ok) return 0.5;
+
+    const html = await res.text();
+
+    // Extract <title> and <meta og:site_name>
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const ogMatch = html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i);
+    const pageText = ((titleMatch?.[1] || '') + ' ' + (ogMatch?.[1] || '')).toLowerCase();
+
+    if (!pageText.trim()) return 0; // No title = likely parked/placeholder
+
+    // Skip verification for generic error/redirect pages
+    if (pageText.includes('error') || pageText.includes('not found') || pageText.includes('access denied') || pageText.includes('just a moment')) {
+      return 0.5;
+    }
+
+    const keyword = getFirstMeaningfulWord(companyName);
+    if (!keyword) return 0.5; // Can't extract keyword
+
+    if (!pageText.includes(keyword)) return 0; // Wrong company
+
+    // Keyword found — score by how similar the title is to the company name
+    const titleSim = nameSimilarity(companyName, titleMatch?.[1] || '');
+    return titleSim >= 0.6 ? 1.0 : 0.7;
+  } catch (_) {
+    // Network error, timeout, etc — can't verify
+    return 0.5;
+  }
+}
+
+/**
+ * Simple string similarity: what fraction of the shorter string's characters appear in order in the longer.
+ * Good enough for "Mend.io" vs "Mend" (1.0) and "F11" vs "Facebook" (0.33).
+ */
+function nameSimilarity(a, b) {
+  const al = a.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const bl = b.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!al || !bl) return 0;
+  const shorter = al.length <= bl.length ? al : bl;
+  const longer = al.length <= bl.length ? bl : al;
+  let matches = 0;
+  let j = 0;
+  for (let i = 0; i < shorter.length && j < longer.length; i++) {
+    while (j < longer.length) {
+      if (shorter[i] === longer[j]) { matches++; j++; break; }
+      j++;
+    }
+  }
+  return matches / shorter.length;
+}
+
+/**
+ * Resolve a company name to a domain using a waterfall:
+ * 1. Cache (domain_registry)
+ * 2. Clearbit Autocomplete (free, no auth)
+ * 3. Apollo organizations/search (free, rate-limited)
+ * 4. DNS guess + TLD scan with title verification
+ *
+ * Every verified result is cached in domain_registry.
+ * Higher-confidence sources always overwrite lower-confidence entries.
+ */
+async function resolveDomain(companyName, apolloApiKey) {
+  if (!companyName) return null;
+
+  const originalName = companyName.toLowerCase().trim();
+  const companyKey = (guessDomain(companyName) || '').replace(/\.com$/, '');
+
+  // 1. Check cache
+  try {
+    const cached = db.prepare(`SELECT * FROM domain_registry WHERE original_name = ?`).get(originalName);
+    if (cached) {
+      // DNS entries expire after 7 days
+      if (cached.source === 'dns') {
+        const age = Date.now() - new Date(cached.created_at).getTime();
+        if (age > 7 * 24 * 60 * 60 * 1000) {
+          // Expired, fall through
+          console.log(`[DomainResolve] Cache expired (dns, 7d) for "${companyName}"`);
+        } else {
+          console.log(`[DomainResolve] Cache hit for "${companyName}" → ${cached.domain} (${cached.source})`);
+          return { domain: cached.domain, source: 'cache', originalSource: cached.source };
+        }
+      } else {
+        console.log(`[DomainResolve] Cache hit for "${companyName}" → ${cached.domain} (${cached.source})`);
+        return { domain: cached.domain, source: 'cache', originalSource: cached.source };
+      }
+    }
+  } catch (e) {
+    console.error(`[DomainResolve] Cache lookup error:`, e.message);
+  }
+
+  // Helper to cache a result
+  function cacheResult(domain, source, confidence) {
+    try {
+      // Higher confidence overwrites lower
+      const existing = db.prepare(`SELECT confidence FROM domain_registry WHERE original_name = ?`).get(originalName);
+      if (existing && existing.confidence >= confidence) return;
+
+      db.prepare(`
+        INSERT OR REPLACE INTO domain_registry (original_name, company_key, domain, source, confidence, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(originalName, companyKey, domain, source, confidence, new Date().toISOString());
+      console.log(`[DomainResolve] Cached: "${companyName}" → ${domain} (${source}, conf=${confidence})`);
+    } catch (e) {
+      console.error(`[DomainResolve] Cache write error:`, e.message);
+    }
+  }
+
+  // 2. Clearbit Autocomplete (free, no auth, unlimited)
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const cbRes = await fetch(
+      `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timeoutId);
+
+    if (cbRes.ok) {
+      const results = await cbRes.json();
+      if (results && results.length > 0) {
+        const top = results[0];
+        const sim = nameSimilarity(companyName, top.name);
+        console.log(`[DomainResolve] Clearbit: "${companyName}" → "${top.name}" (${top.domain}), similarity=${sim.toFixed(2)}`);
+
+        if (sim >= 0.6) {
+          const verified = await verifyDomain(companyName, top.domain);
+          if (verified) {
+            cacheResult(top.domain, 'clearbit', 0.9);
+            return { domain: top.domain, source: 'clearbit' };
+          } else {
+            console.log(`[DomainResolve] Clearbit domain ${top.domain} failed title verification`);
+          }
+        } else {
+          console.log(`[DomainResolve] Clearbit similarity too low (${sim.toFixed(2)} < 0.6), skipping`);
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`[DomainResolve] Clearbit error: ${e.message}`);
+  }
+
+  // 3. Apollo organizations/search (free, 600/day/key)
+  if (apolloApiKey) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const apolloRes = await fetch('https://api.apollo.io/api/v1/organizations/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apolloApiKey,
+        },
+        body: JSON.stringify({ q_organization_name: companyName, per_page: 1 }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (apolloRes.ok) {
+        const data = await apolloRes.json();
+        const org = data.organizations?.[0];
+        if (org?.primary_domain) {
+          console.log(`[DomainResolve] Apollo: "${companyName}" → ${org.primary_domain}`);
+          const verified = await verifyDomain(companyName, org.primary_domain);
+          if (verified) {
+            cacheResult(org.primary_domain, 'apollo', 0.95);
+            return { domain: org.primary_domain, source: 'apollo' };
+          } else {
+            console.log(`[DomainResolve] Apollo domain ${org.primary_domain} failed title verification`);
+          }
+        }
+      } else if (apolloRes.status === 429) {
+        console.log(`[DomainResolve] Apollo rate limited (429), falling through to DNS`);
+      }
+    } catch (e) {
+      console.log(`[DomainResolve] Apollo error: ${e.message}`);
+    }
+  }
+
+  // 4. DNS guess + TLD scan with title verification
+  const base = companyName
+    .toLowerCase()
+    .replace(/\b(inc|llc|ltd|co|corp|gmbh|ag|sa|plc|pty)\.?\s*$/gi, '')
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+
+  if (base.length > 1) {
+    const tlds = ['.com', '.io', '.co', '.ai', '.org', '.net'];
+    let bestCandidate = null;
+    let bestConfidence = 0;
+
+    for (const tld of tlds) {
+      const candidate = base + tld;
+      try {
+        const liveness = await isDomainLive(candidate, 'resolve');
+        if (liveness.live !== true) continue;
+
+        const titleScore = await verifyDomain(companyName, candidate);
+        if (titleScore === 0) continue; // Title mismatch — wrong company
+
+        // Combine title score with MX signal for final confidence
+        const mx = await getMxProvider(candidate, 'resolve');
+        const hasMx = mx.provider && mx.provider !== 'unknown' && !mx.error;
+        // Title score (0-1) weighted by MX presence
+        const conf = titleScore * (hasMx ? 0.5 : 0.3);
+
+        console.log(`[DomainResolve] DNS candidate: ${candidate} (title=${titleScore}, mx=${hasMx ? mx.provider : 'none'}, conf=${conf.toFixed(2)})`);
+
+        if (conf > bestConfidence) {
+          bestCandidate = candidate;
+          bestConfidence = conf;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (bestCandidate) {
+      cacheResult(bestCandidate, 'dns', bestConfidence);
+      return { domain: bestCandidate, source: 'dns' };
+    }
+  }
+
+  console.log(`[DomainResolve] All sources failed for "${companyName}"`);
+  return null;
 }
 
 function validateDescription(name, desc) {
