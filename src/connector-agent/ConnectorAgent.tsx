@@ -1509,7 +1509,6 @@ function ConnectorAgentInner() {
                           placeholder="Stripe"
                           className="w-full h-10 px-3 rounded bg-white/[0.04] border border-white/[0.08] text-white/90 text-[11px] font-mono placeholder:text-white/20 focus:outline-none focus:border-white/[0.15] transition-all"
                         />
-                        <p className="text-[9px] text-white/25 mt-1">Resolves domain if not provided</p>
                       </div>
                     </div>
                     <button
@@ -3243,9 +3242,6 @@ function ConnectorAgentInner() {
                             ))}
                           </div>
                         )}
-                        {result.resolvedDomain && (
-                          <p className="text-[10px] text-white/25 mt-2">Resolved: {result.resolvedDomain} via {result.domainSource}</p>
-                        )}
                       </div>
                     ) : result.email && result.status === 'risky' ? (
                       <div>
@@ -3282,9 +3278,6 @@ function ConnectorAgentInner() {
                             ))}
                           </div>
                         )}
-                        {result.resolvedDomain && (
-                          <p className="text-[10px] text-white/25 mt-2">Resolved: {result.resolvedDomain} via {result.domainSource}</p>
-                        )}
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
@@ -3294,9 +3287,6 @@ function ConnectorAgentInner() {
                         <div>
                           <p className="text-[13px] text-white/70">{result.status === 'invalid' ? 'Invalid email' : 'No email found'}</p>
                           <p className="text-[11px] text-white/40 mt-0.5">{result.status === 'invalid' ? 'This email does not exist or is undeliverable' : 'Could not find a valid email'}</p>
-                          {result.resolvedDomain && (
-                            <p className="text-[10px] text-white/25 mt-1">Resolved: {result.resolvedDomain} via {result.domainSource}</p>
-                          )}
                         </div>
                       </div>
                     )}
