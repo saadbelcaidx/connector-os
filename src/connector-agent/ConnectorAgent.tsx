@@ -293,51 +293,9 @@ const API_BASE = import.meta.env.VITE_CONNECTOR_AGENT_API || 'https://api.connec
  * Clearbit covers ~86% of companies. Backend has DNS waterfall for the rest.
  */
 async function resolveDomainClientSide(companyName: string): Promise<{ domain: string; source: string } | null> {
-  // 1. Try Clearbit Autocomplete (free, no auth, CORS-safe)
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(
-      `https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`,
-      { signal: controller.signal }
-    );
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const results = await res.json();
-      if (results && results.length > 0) {
-        const top = results[0];
-        // Similarity check: compare cleaned names
-        const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const a = clean(companyName);
-        const b = clean(top.name);
-
-        if (a && b) {
-          const shorter = a.length <= b.length ? a : b;
-          const longer = a.length <= b.length ? b : a;
-          let matches = 0;
-          let j = 0;
-          for (let i = 0; i < shorter.length && j < longer.length; i++) {
-            while (j < longer.length) {
-              if (shorter[i] === longer[j]) { matches++; j++; break; }
-              j++;
-            }
-          }
-          const similarity = matches / shorter.length;
-
-          if (similarity >= 0.6) {
-            console.log(`[DomainResolve] Clearbit: "${companyName}" → ${top.domain} (${top.name}, sim=${similarity.toFixed(2)})`);
-            return { domain: top.domain, source: 'clearbit' };
-          }
-          console.log(`[DomainResolve] Clearbit rejected: "${companyName}" → "${top.name}" (sim=${similarity.toFixed(2)})`);
-        }
-      }
-    }
-  } catch (e) {
-    console.log(`[DomainResolve] Clearbit error:`, e);
-  }
-
-  // 2. Fallback: backend /api/domain/resolve (has DNS waterfall + Apollo)
+  // Backend has the full waterfall: Clearbit + title verification + Apollo + DNS scoring
+  // Client-side Clearbit lacks title verification (CORS blocks fetching arbitrary domains)
+  // so it accepts false positives like "Leftclick" → "Left Click Lounge"
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
