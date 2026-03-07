@@ -2263,14 +2263,14 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
  * Resolve a company name to a domain using Clearbit → Apollo → DNS waterfall
  */
 app.post('/api/domain/resolve', async (req, res) => {
-  const { companyName, apolloApiKey } = req.body;
+  const { companyName, apolloApiKey, force } = req.body;
 
   if (!companyName) {
     return res.status(400).json({ error: 'companyName required' });
   }
 
   try {
-    const result = await resolveDomain(companyName, apolloApiKey || null);
+    const result = await resolveDomain(companyName, apolloApiKey || null, !!force);
     if (result) {
       return res.json({ domain: result.domain, source: result.source });
     }
@@ -2979,41 +2979,47 @@ function nameSimilarity(a, b) {
  * Every verified result is cached in domain_registry.
  * Higher-confidence sources always overwrite lower-confidence entries.
  */
-async function resolveDomain(companyName, apolloApiKey) {
+async function resolveDomain(companyName, apolloApiKey, force = false) {
   if (!companyName) return null;
 
   const originalName = companyName.toLowerCase().trim();
   const companyKey = (guessDomain(companyName) || '').replace(/\.com$/, '');
 
-  // 1. Check cache
-  try {
-    const cached = db.prepare(`SELECT * FROM domain_registry WHERE original_name = ?`).get(originalName);
-    if (cached) {
-      // DNS entries expire after 7 days
-      if (cached.source === 'dns') {
-        const age = Date.now() - new Date(cached.created_at).getTime();
-        if (age > 7 * 24 * 60 * 60 * 1000) {
-          // Expired, fall through
-          console.log(`[DomainResolve] Cache expired (dns, 7d) for "${companyName}"`);
+  // 1. Check cache (skip when force=true)
+  if (!force) {
+    try {
+      const cached = db.prepare(`SELECT * FROM domain_registry WHERE original_name = ?`).get(originalName);
+      if (cached) {
+        // DNS entries expire after 7 days
+        if (cached.source === 'dns') {
+          const age = Date.now() - new Date(cached.created_at).getTime();
+          if (age > 7 * 24 * 60 * 60 * 1000) {
+            // Expired, fall through
+            console.log(`[DomainResolve] Cache expired (dns, 7d) for "${companyName}"`);
+          } else {
+            console.log(`[DomainResolve] Cache hit for "${companyName}" → ${cached.domain} (${cached.source})`);
+            return { domain: cached.domain, source: 'cache', originalSource: cached.source };
+          }
         } else {
           console.log(`[DomainResolve] Cache hit for "${companyName}" → ${cached.domain} (${cached.source})`);
           return { domain: cached.domain, source: 'cache', originalSource: cached.source };
         }
-      } else {
-        console.log(`[DomainResolve] Cache hit for "${companyName}" → ${cached.domain} (${cached.source})`);
-        return { domain: cached.domain, source: 'cache', originalSource: cached.source };
       }
+    } catch (e) {
+      console.error(`[DomainResolve] Cache lookup error:`, e.message);
     }
-  } catch (e) {
-    console.error(`[DomainResolve] Cache lookup error:`, e.message);
+  } else {
+    console.log(`[DomainResolve] Force re-resolve for "${companyName}" — skipping cache`);
   }
 
   // Helper to cache a result
   function cacheResult(domain, source, confidence) {
     try {
-      // Higher confidence overwrites lower
-      const existing = db.prepare(`SELECT confidence FROM domain_registry WHERE original_name = ?`).get(originalName);
-      if (existing && existing.confidence >= confidence) return;
+      // Higher confidence overwrites lower (force always overwrites)
+      if (!force) {
+        const existing = db.prepare(`SELECT confidence FROM domain_registry WHERE original_name = ?`).get(originalName);
+        if (existing && existing.confidence >= confidence) return;
+      }
 
       db.prepare(`
         INSERT OR REPLACE INTO domain_registry (original_name, company_key, domain, source, confidence, created_at)
