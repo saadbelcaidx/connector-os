@@ -2939,9 +2939,12 @@ async function verifyDomain(companyName, domain) {
 
     if (!pageText.includes(keyword)) return 0; // Wrong company
 
-    // Keyword found — score by how similar the title is to the company name
-    const titleSim = nameSimilarity(companyName, titleMatch?.[1] || '');
-    return titleSim >= 0.6 ? 1.0 : 0.7;
+    // Title starts with the company keyword = brand homepage (score 1.0)
+    // Title contains keyword but doesn't start with it = secondary page (score 0.7)
+    // "LeftClick AI / Nick Saraev" → starts with "leftclick" → 1.0
+    // "Home - Leftclick.io" → starts with "home" → 0.7
+    const cleanTitle = (titleMatch?.[1] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return cleanTitle.startsWith(keyword) ? 1.0 : 0.7;
   } catch (_) {
     // Network error, timeout, etc — can't verify
     return 0.5;
