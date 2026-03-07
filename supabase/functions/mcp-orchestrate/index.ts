@@ -1276,7 +1276,7 @@ interface BatchMessage {
   destination: string;
   queue?: string;
   headers: Record<string, string>;
-  body: string | Record<string, unknown>;
+  body: string;
 }
 
 /** SHA-256 content hash for deterministic dedup IDs — same logical shard = same hash across retries */
@@ -1509,7 +1509,7 @@ async function buildAndPublishShards(
         "Upstash-Retries": "3",
         "Upstash-Deduplication-Id": dedupId,
       },
-      body: { jobId, shardIndex: i, pairs: shard.pairs, aiConfig },
+      body: JSON.stringify({ jobId, shardIndex: i, pairs: shard.pairs, aiConfig }),
     };
     if (useQueue) {
       msg.queue = QUEUE_NAME;

@@ -196,7 +196,7 @@ Deno.serve(async (req: Request) => {
     interface BatchMsg {
       destination: string;
       headers: Record<string, string>;
-      body: string | Record<string, unknown>;
+      body: string;
     }
 
     const batchMessages: BatchMsg[] = [];
@@ -229,13 +229,13 @@ Deno.serve(async (req: Request) => {
           "Upstash-Retries": "3",
           "Upstash-Deduplication-Id": dedupId,
         },
-        body: {
+        body: JSON.stringify({
           jobId,
           shardIndex,
           pairs: chunk,
           aiConfig,
           mode: "reasoning_only",
-        },
+        }),
       });
     }
 
