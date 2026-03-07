@@ -351,25 +351,62 @@ async function precomputeSimilarityMatrix(
 
 async function getTopKPairs(
   embedJobId: string,
-  demandKeys: string[],
+  rawDemandKeys: string[],
   topK: number,
 ): Promise<CandidatePair[]> {
+  // INVARIANT: deduplicate demand keys — duplicates cause pair multiplication
+  const demandKeys = [...new Set(rawDemandKeys)];
+  if (demandKeys.length !== rawDemandKeys.length) {
+    console.warn(`[topK] DEDUPED demand keys: ${rawDemandKeys.length} → ${demandKeys.length}`);
+  }
+
   const keys = demandKeys.map((k) => `sim:${embedJobId}:${k}`);
   const results = await redis.mget<Array<{ supply: string; score: number }>>(...keys);
 
   const pairs: CandidatePair[] = [];
+  let nullCount = 0;
   for (let i = 0; i < demandKeys.length; i++) {
-    const supplies = results[i];
-    if (!supplies || !Array.isArray(supplies)) continue;
+    const raw = results[i];
+    if (!raw) { nullCount++; continue; }
+
+    // Normalize: Redis may return nested arrays, strings, or objects.
+    // Flatten to a single Array<{supply, score}> regardless of shape.
+    let supplies: Array<{ supply: string; score: number }>;
+    if (typeof raw === "string") {
+      try { supplies = JSON.parse(raw); } catch { nullCount++; continue; }
+    } else if (Array.isArray(raw)) {
+      supplies = raw.flat(2) as Array<{ supply: string; score: number }>;
+    } else {
+      nullCount++; continue;
+    }
+
+    if (!Array.isArray(supplies)) { nullCount++; continue; }
+
+    // Log first entry shape for diagnostics
+    if (i === 0) {
+      console.log(`[topK] sample: rawType=${typeof raw}, isArray=${Array.isArray(raw)}, entries=${supplies.length}, first=${JSON.stringify(supplies[0]).slice(0, 150)}`);
+    }
+
+    // HARD CAP: topK per demand key. This is the invariant.
     const limited = supplies.slice(0, topK);
     for (let j = 0; j < limited.length; j++) {
+      if (!limited[j]?.supply) continue; // skip malformed entries
       pairs.push({
         demandKey: demandKeys[i],
         supplyKey: limited[j].supply,
-        similarity: limited[j].score,
+        similarity: limited[j].score ?? 0,
         rank: j + 1,
       });
     }
+  }
+
+  const maxExpected = demandKeys.length * topK;
+  console.log(`[topK] ${demandKeys.length} demand keys, ${nullCount} null, ${pairs.length} pairs (max=${maxExpected}, topK=${topK})`);
+
+  // SAFETY: if somehow we still exceed, hard-truncate and warn
+  if (pairs.length > maxExpected) {
+    console.error(`[topK] INVARIANT VIOLATION: ${pairs.length} > ${maxExpected} — truncating`);
+    return pairs.slice(0, maxExpected);
   }
 
   return pairs;
@@ -1650,13 +1687,18 @@ Deno.serve(async (req: Request) => {
 
     // In fulfillment mode, effective keys already constrain one side to the client.
     // In market routing, discover sides from canonical roles.
-    const demandKeys = isFulfillment
-      ? effectiveDemandKeys
-      : validCanonicals.filter((c) => (c.canonical.role || "demand") === "demand").map((c) => c.record_key);
+    // Always deduplicate — dmcb_canonicals can have duplicate record_keys from re-extraction.
+    const demandKeys = [...new Set(
+      isFulfillment
+        ? effectiveDemandKeys
+        : validCanonicals.filter((c) => (c.canonical.role || "demand") === "demand").map((c) => c.record_key),
+    )];
 
-    const supplyKeys = isFulfillment
-      ? effectiveSupplyKeys
-      : validCanonicals.filter((c) => (c.canonical.role || "demand") === "supply").map((c) => c.record_key);
+    const supplyKeys = [...new Set(
+      isFulfillment
+        ? effectiveSupplyKeys
+        : validCanonicals.filter((c) => (c.canonical.role || "demand") === "supply").map((c) => c.record_key),
+    )];
 
     // MOVE 1: ONE cross-join → Redis cache (keyed by stable embedJobId)
     const tMatrix = Date.now();
