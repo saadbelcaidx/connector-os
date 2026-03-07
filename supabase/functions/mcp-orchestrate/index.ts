@@ -1496,33 +1496,40 @@ async function buildAndPublishShards(
     });
   }
 
-  // Publish shards — per-shard fetch with content-hashed dedup IDs
+  // Publish shards in batches of 10 with 200ms pause to stay under Supabase fetch rate limit
   const publishUrl = useQueue
     ? `${qstashBaseUrl}/v2/enqueue/${QUEUE_NAME}/${workerUrl}`
     : `${qstashBaseUrl}/v2/publish/${workerUrl}`;
+  const PUBLISH_BATCH = 10;
+  const PAUSE_MS = 200;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   let published = 0;
   let failed = 0;
-  for (let i = 0; i < shardPairs.length; i++) {
-    const shard = shardPairs[i];
-    const dedupId = await shardDedupId(jobId, shard.evalIds);
-    const res = await fetch(publishUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${qstashToken}`,
-        "Content-Type": "application/json",
-        "Upstash-Retries": "3",
-        "Upstash-Deduplication-Id": dedupId,
-      },
-      body: JSON.stringify({ jobId, shardIndex: i, pairs: shard.pairs, aiConfig }),
-    });
-    if (res.ok) {
-      published++;
-    } else {
-      failed++;
-      const errText = await res.text();
-      console.error(`[shard] QStash publish failed shard ${i}: ${res.status} ${errText.slice(0, 200)}`);
-    }
+  for (let b = 0; b < shardPairs.length; b += PUBLISH_BATCH) {
+    const batch = shardPairs.slice(b, b + PUBLISH_BATCH);
+    await Promise.all(batch.map(async (shard, i) => {
+      const index = b + i;
+      const dedupId = await shardDedupId(jobId, shard.evalIds);
+      const res = await fetch(publishUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${qstashToken}`,
+          "Content-Type": "application/json",
+          "Upstash-Retries": "3",
+          "Upstash-Deduplication-Id": dedupId,
+        },
+        body: JSON.stringify({ jobId, shardIndex: index, pairs: shard.pairs, aiConfig }),
+      });
+      if (res.ok) {
+        published++;
+      } else {
+        failed++;
+        const errText = await res.text();
+        console.error(`[shard] QStash publish failed shard ${index}: ${res.status} ${errText.slice(0, 200)}`);
+      }
+    }));
+    if (b + PUBLISH_BATCH < shardPairs.length) await sleep(PAUSE_MS);
   }
 
   if (failed > 0 && published === 0) {
@@ -1656,12 +1663,13 @@ Deno.serve(async (req: Request) => {
     await precomputeSimilarityMatrix(supabase, embedJobId, demandKeys, supplyKeys);
     const matrixMs = Date.now() - tMatrix;
     console.log(`[orchestrate] Matrix done — ${matrixMs}ms`);
+    console.log(`[orchestrate] SIDES: ${demandKeys.length} demand, ${supplyKeys.length} supply, topK=${topK}`);
 
     // ONE Redis MGET → all pairs (keyed by stable embedJobId)
     const tTopK = Date.now();
     const pairs = await getTopKPairs(embedJobId, demandKeys, topK);
     const topKMs = Date.now() - tTopK;
-    console.log(`[orchestrate] Top-K: ${pairs.length} pairs from Redis — ${topKMs}ms`);
+    console.log(`[orchestrate] Top-K: ${pairs.length} pairs from Redis (expected max: ${demandKeys.length * topK}) — ${topKMs}ms`);
 
     // Update job with pair count
     await supabase.from("mcp_jobs").update({
