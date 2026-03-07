@@ -1481,7 +1481,6 @@ async function buildAndPublishShards(
   const QUEUE_THRESHOLD = 200;
   const QUEUE_NAME = "mcp-eval";
   const PARALLELISM = 100;
-  const batchUrl = `${qstashBaseUrl}/v2/batch`;
 
   const useQueue = shardPairs.length >= QUEUE_THRESHOLD;
 
@@ -1497,30 +1496,40 @@ async function buildAndPublishShards(
     });
   }
 
-  // Build batch messages with content-hashed dedup IDs
-  const messages: BatchMessage[] = [];
+  // Publish shards — per-shard fetch with content-hashed dedup IDs
+  const publishUrl = useQueue
+    ? `${qstashBaseUrl}/v2/enqueue/${QUEUE_NAME}/${workerUrl}`
+    : `${qstashBaseUrl}/v2/publish/${workerUrl}`;
+
+  let published = 0;
+  let failed = 0;
   for (let i = 0; i < shardPairs.length; i++) {
     const shard = shardPairs[i];
     const dedupId = await shardDedupId(jobId, shard.evalIds);
-    const msg: BatchMessage = {
-      destination: workerUrl,
+    const res = await fetch(publishUrl, {
+      method: "POST",
       headers: {
+        Authorization: `Bearer ${qstashToken}`,
         "Content-Type": "application/json",
         "Upstash-Retries": "3",
         "Upstash-Deduplication-Id": dedupId,
       },
       body: JSON.stringify({ jobId, shardIndex: i, pairs: shard.pairs, aiConfig }),
-    };
-    if (useQueue) {
-      msg.queue = QUEUE_NAME;
+    });
+    if (res.ok) {
+      published++;
+    } else {
+      failed++;
+      const errText = await res.text();
+      console.error(`[shard] QStash publish failed shard ${i}: ${res.status} ${errText.slice(0, 200)}`);
     }
-    messages.push(msg);
   }
 
-  // Dispatch via batch API — chunked by byte size, with partial failure retry
-  const published = await dispatchBatch(batchUrl, qstashToken, messages);
+  if (failed > 0 && published === 0) {
+    throw new Error(`FATAL: All ${failed} shard publishes failed`);
+  }
 
-  console.log(`[shard] ${published} shards dispatched via batch (${useQueue ? "queue" : "direct"})`);
+  console.log(`[shard] ${published} shards dispatched via ${useQueue ? "queue" : "direct"} (${failed} failed)`);
   return { shardCount: shardPairs.length };
 }
 

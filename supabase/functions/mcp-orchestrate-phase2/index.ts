@@ -192,15 +192,6 @@ Deno.serve(async (req: Request) => {
       throw new Error("QSTASH_TOKEN not configured");
     }
 
-    // Build shard rows + batch messages
-    interface BatchMsg {
-      destination: string;
-      headers: Record<string, string>;
-      body: string;
-    }
-
-    const batchMessages: BatchMsg[] = [];
-
     for (let i = 0; i < reasoningPairs.length; i += SHARD_SIZE) {
       const chunk = reasoningPairs.slice(i, i + SHARD_SIZE);
       const shardIndex = 1000 + Math.floor(i / SHARD_SIZE);
@@ -222,9 +213,12 @@ Deno.serve(async (req: Request) => {
         .map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
       const dedupId = `${jobId}-reasoning-${hex}`;
 
-      batchMessages.push({
-        destination: workerUrl,
+      // Dispatch to evaluate-worker with reasoning_only mode
+      const publishUrl = `${qstashBaseUrl}/v2/publish/${workerUrl}`;
+      const res = await fetch(publishUrl, {
+        method: "POST",
         headers: {
+          Authorization: `Bearer ${qstashToken}`,
           "Content-Type": "application/json",
           "Upstash-Retries": "3",
           "Upstash-Deduplication-Id": dedupId,
@@ -237,6 +231,11 @@ Deno.serve(async (req: Request) => {
           mode: "reasoning_only",
         }),
       });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`[phase2] QStash publish failed shard ${shardIndex}: ${res.status} ${errText.slice(0, 200)}`);
+      }
     }
 
     // Insert reasoning shards to mcp_shards
@@ -250,123 +249,13 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Dispatch via QStash batch API — chunked by byte size
-    const MAX_BATCH_BYTES = 512 * 1024;
-    const batchChunks: BatchMsg[][] = [];
-    {
-      let current: BatchMsg[] = [];
-      for (const msg of batchMessages) {
-        const candidate = [...current, msg];
-        const candidateBytes = new TextEncoder().encode(JSON.stringify(candidate)).length;
-        if (current.length > 0 && candidateBytes > MAX_BATCH_BYTES) {
-          batchChunks.push(current);
-          current = [msg];
-        } else {
-          current = candidate;
-        }
-      }
-      if (current.length > 0) batchChunks.push(current);
-    }
-
-    const batchUrl = `${qstashBaseUrl}/v2/batch`;
-    let totalPublished = 0;
-    const allFailed: BatchMsg[] = [];
-
-    for (const chunk of batchChunks) {
-      const res = await fetch(batchUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${qstashToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(chunk),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`[phase2] QStash batch failed: ${res.status} ${errText.slice(0, 300)}`);
-      }
-
-      const results = await res.json();
-      if (Array.isArray(results)) {
-        for (let ri = 0; ri < results.length; ri++) {
-          if (results[ri].error) {
-            allFailed.push(chunk[ri]);
-          } else {
-            totalPublished++;
-          }
-        }
-      } else {
-        totalPublished += chunk.length;
-      }
-    }
-
-    // Retry failed messages once
-    if (allFailed.length > 0) {
-      console.warn(`[phase2] Retrying ${allFailed.length} failed messages`);
-      const stillFailed: BatchMsg[] = [];
-      // Re-chunk failed messages
-      const retryChunks: BatchMsg[][] = [];
-      {
-        let current: BatchMsg[] = [];
-        for (const msg of allFailed) {
-          const candidate = [...current, msg];
-          const candidateBytes = new TextEncoder().encode(JSON.stringify(candidate)).length;
-          if (current.length > 0 && candidateBytes > MAX_BATCH_BYTES) {
-            retryChunks.push(current);
-            current = [msg];
-          } else {
-            current = candidate;
-          }
-        }
-        if (current.length > 0) retryChunks.push(current);
-      }
-
-      for (const retryChunk of retryChunks) {
-        const retryRes = await fetch(batchUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${qstashToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(retryChunk),
-        });
-
-        if (!retryRes.ok) {
-          throw new Error(`[phase2] QStash retry batch failed: ${retryRes.status}`);
-        }
-
-        const retryResults = await retryRes.json();
-        if (Array.isArray(retryResults)) {
-          for (let ri = 0; ri < retryResults.length; ri++) {
-            if (retryResults[ri].error) {
-              stillFailed.push(retryChunk[ri]);
-            } else {
-              totalPublished++;
-            }
-          }
-        } else {
-          totalPublished += retryChunk.length;
-        }
-      }
-
-      if (stillFailed.length > 0) {
-        const failedIds = stillFailed.map((m) =>
-          m.headers["Upstash-Deduplication-Id"] ?? "unknown"
-        );
-        throw new Error(
-          `FATAL: ${stillFailed.length} reasoning shards failed after retry: ${failedIds.join(", ")}`
-        );
-      }
-    }
-
     // Update job status
     await supabase.from("mcp_jobs").update({
       reasoning_status: "reasoning",
     }).eq("job_id", jobId);
 
     console.log(
-      `[phase2] Job ${jobId}: ${totalPublished} reasoning shards dispatched via batch for ${topMatches.length} top matches`,
+      `[phase2] Job ${jobId}: ${shardRows.length} reasoning shards dispatched for ${topMatches.length} top matches`,
     );
 
     return new Response(
