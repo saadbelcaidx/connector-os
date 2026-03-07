@@ -2075,10 +2075,14 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
   const companyResolutions = new Map();
   const uniqueCompanyNames = [...new Set(items.filter(i => i.companyName && !i.domain).map(i => i.companyName.toLowerCase().trim()))];
   if (uniqueCompanyNames.length > 0) {
-    console.log(`[FindBulk] Pre-resolving ${uniqueCompanyNames.length} company names...`);
-    for (const cn of uniqueCompanyNames) {
-      const resolved = await resolveDomain(cn);
-      if (resolved) companyResolutions.set(cn, resolved);
+    console.log(`[FindBulk] Pre-resolving ${uniqueCompanyNames.length} company names (parallel, pool=5)...`);
+    const RESOLVE_POOL = 5;
+    for (let i = 0; i < uniqueCompanyNames.length; i += RESOLVE_POOL) {
+      const batch = uniqueCompanyNames.slice(i, i + RESOLVE_POOL);
+      const results = await Promise.all(batch.map(cn => resolveDomain(cn).catch(() => null)));
+      results.forEach((resolved, idx) => {
+        if (resolved) companyResolutions.set(batch[idx], resolved);
+      });
     }
     console.log(`[FindBulk] Resolved ${companyResolutions.size}/${uniqueCompanyNames.length} companies`);
   }
