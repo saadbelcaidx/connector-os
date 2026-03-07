@@ -1276,7 +1276,7 @@ export default function RunDetailPageV2() {
       if (user?.id) {
         try {
           const { data } = await supabase
-            .from('user_settings')
+            .from('operator_settings')
             .select('enrichment_api_key, anymail_finder_api_key')
             .eq('user_id', user.id)
             .maybeSingle();
