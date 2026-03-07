@@ -2075,8 +2075,8 @@ app.post('/api/email/v2/find-bulk', async (req, res) => {
   const companyResolutions = new Map();
   const uniqueCompanyNames = [...new Set(items.filter(i => i.companyName && !i.domain).map(i => i.companyName.toLowerCase().trim()))];
   if (uniqueCompanyNames.length > 0) {
-    console.log(`[FindBulk] Pre-resolving ${uniqueCompanyNames.length} company names (parallel, pool=5)...`);
-    const RESOLVE_POOL = 5;
+    console.log(`[FindBulk] Pre-resolving ${uniqueCompanyNames.length} company names (parallel, pool=10)...`);
+    const RESOLVE_POOL = 10;
     for (let i = 0; i < uniqueCompanyNames.length; i += RESOLVE_POOL) {
       const batch = uniqueCompanyNames.slice(i, i + RESOLVE_POOL);
       const results = await Promise.all(batch.map(cn => resolveDomain(cn).catch(() => null)));
@@ -3120,32 +3120,35 @@ async function resolveDomain(companyName, apolloApiKey, force = false) {
 
   if (base.length > 1) {
     const tlds = ['.com', '.io', '.co', '.ai', '.org', '.net'];
-    let bestCandidate = null;
-    let bestConfidence = 0;
 
-    for (const tld of tlds) {
+    // Scan all TLDs in parallel — 6 concurrent instead of 18 sequential calls
+    const candidates = await Promise.all(tlds.map(async (tld) => {
       const candidate = base + tld;
       try {
         const liveness = await isDomainLive(candidate, 'resolve');
-        if (liveness.live !== true) continue;
+        if (liveness.live !== true) return null;
 
         const titleScore = await verifyDomain(companyName, candidate);
-        if (titleScore === 0) continue; // Title mismatch — wrong company
+        if (titleScore === 0) return null; // Title mismatch — wrong company
 
-        // Combine title score with MX signal for final confidence
         const mx = await getMxProvider(candidate, 'resolve');
         const hasMx = mx.provider && mx.provider !== 'unknown' && !mx.error;
-        // Title score (0-1) weighted by MX presence
         const conf = titleScore * (hasMx ? 0.5 : 0.3);
 
         console.log(`[DomainResolve] DNS candidate: ${candidate} (title=${titleScore}, mx=${hasMx ? mx.provider : 'none'}, conf=${conf.toFixed(2)})`);
-
-        if (conf > bestConfidence) {
-          bestCandidate = candidate;
-          bestConfidence = conf;
-        }
+        return { candidate, conf };
       } catch (_) {
-        continue;
+        return null;
+      }
+    }));
+
+    // Pick highest confidence candidate
+    let bestCandidate = null;
+    let bestConfidence = 0;
+    for (const c of candidates) {
+      if (c && c.conf > bestConfidence) {
+        bestCandidate = c.candidate;
+        bestConfidence = c.conf;
       }
     }
 
