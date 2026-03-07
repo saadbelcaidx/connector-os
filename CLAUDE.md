@@ -186,6 +186,32 @@ Browser subscribes to Realtime on mcp_evaluations (INSERT) + mcp_jobs (UPDATE)
 - Curation returning 0 picks → don't redesign the scoring pass. Trace curation specifically.
 - Don't widen the blast radius of a fix beyond the failure boundary.
 
+## System Invariant Debugging (NON-NEGOTIABLE — READ EVERY SESSION)
+
+### The first question is ALWAYS: "What invariant must be broken for this output to even exist?"
+- Do NOT start with print logs, inspect values, or check arrays.
+- If the output is impossible under correct invariants, the invariant is broken — find WHICH ONE.
+- Example: topK=10 but 666 matches per demand → impossible. Don't debug slice(). The state is contaminated upstream.
+
+### Two debugging modes — use Mode 2 FIRST.
+- **Mode 1 — Code debugging (Claude's default, WRONG for system bugs):** print logs → inspect values → check arrays. Useful only for small, local bugs.
+- **Mode 2 — System debugging (CORRECT for distributed/pipeline bugs):** this output is impossible → which invariant is broken → state contamination or cache collision. This is how senior engineers debug distributed systems.
+
+### Cache systems fail in exactly three ways.
+1. **Cache key too weak:** key doesn't encode all identity dimensions (e.g., missing datasetId, marketId, demandKeys, supplyKeys).
+2. **Cache key reused across runs:** same key, different dataset → stale results from previous run.
+3. **Cache never invalidated:** data changes, cache persists → wrong results forever.
+
+### Cache key identity rule.
+- Every cache key MUST encode the full dataset identity, not just embedding config.
+- Redis sim cache key must include: sorted demandKeys, sorted supplyKeys, embedding model, topK.
+- If the cache key doesn't distinguish between two different runs, those runs WILL collide eventually.
+
+### Pattern recognition > line-by-line debugging.
+- After seeing this class of bug once, immediately suspect: cache key wrong, state contamination, identity collision.
+- Don't spend an hour tracing code when the primitive violation is visible in 1 second from the output shape.
+- The question "how could this output exist at all?" eliminates 90% of hypotheses instantly.
+
 ## Connector Business Model (NON-NEGOTIABLE)
 
 ### What You Sell

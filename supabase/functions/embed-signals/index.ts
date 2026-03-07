@@ -3,7 +3,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 /**
  * EMBED-SIGNALS — Platform Embedding Infrastructure
  *
- * Embeds canonical signal intent text using text-embedding-3-small.
+ * Embeds canonical signal intent text using text-embedding-3-small via OpenRouter.
  * This is PLATFORM infrastructure — uses OUR API key, not the user's BYOK key.
  *
  * Rules:
@@ -12,7 +12,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
  *   - NEVER embed context fields
  *   - NEVER use user's BYOK key for embeddings
  *
- * Cost: ~$0.001 per 600 records. Under $0.10/month at scale.
+ * Cost: ~$0.02 per 1M tokens via OpenRouter. Under $0.01 per run.
  */
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -58,10 +58,9 @@ async function hashText(text: string): Promise<string> {
 
 // =============================================================================
 // AZURE OPENAI EMBEDDINGS API (platform key)
-// Uses text-embedding-3-small-2 deployment on Azure
 // =============================================================================
 
-async function callAzureEmbeddings(
+async function callEmbeddings(
   endpoint: string,
   apiKey: string,
   deployment: string,
@@ -75,9 +74,7 @@ async function callAzureEmbeddings(
       "api-key": apiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      input: texts,
-    }),
+    body: JSON.stringify({ input: texts }),
   });
 
   if (!response.ok) {
@@ -88,7 +85,6 @@ async function callAzureEmbeddings(
   }
 
   const data = await response.json();
-  // Response: { data: [{ embedding: number[], index: number }, ...] }
   const sorted = data.data.sort(
     (a: { index: number }, b: { index: number }) => a.index - b.index,
   );
@@ -140,16 +136,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Get platform Azure config from Supabase secrets
+    // Get Azure config from Supabase secrets
     const azureEndpoint = Deno.env.get("PLATFORM_AZURE_ENDPOINT");
     const azureApiKey = Deno.env.get("PLATFORM_AZURE_API_KEY");
-    const azureDeployment = Deno.env.get("PLATFORM_AZURE_EMBED_DEPLOYMENT") || "text-embedding-3-small-2";
+    const azureDeployment = Deno.env.get("PLATFORM_AZURE_EMBED_DEPLOYMENT") || "text-embedding-3-small";
 
     if (!azureEndpoint || !azureApiKey) {
       return new Response(
-        JSON.stringify({
-          error: "PLATFORM_AZURE_ENDPOINT or PLATFORM_AZURE_API_KEY not configured",
-        }),
+        JSON.stringify({ error: "PLATFORM_AZURE_ENDPOINT or PLATFORM_AZURE_API_KEY not configured" }),
         {
           status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -162,7 +156,7 @@ Deno.serve(async (req: Request) => {
 
     // =========================================================================
     // REDIS EMBEDDING CACHE — 30-day TTL
-    // Hash each text → check Redis → only call Azure for misses
+    // Hash each text → check Redis → only call OpenRouter for misses
     // =========================================================================
 
     const CACHE_TTL = 2592000; // 30 days in seconds
@@ -193,7 +187,7 @@ Deno.serve(async (req: Request) => {
       `[embed-signals] Cache: ${cacheHits} hits, ${uncachedIndices.length} misses (of ${texts.length} total)`,
     );
 
-    // Call Azure only for cache misses, in batches of 100
+    // Call OpenRouter only for cache misses, in batches of 100
     if (uncachedIndices.length > 0) {
       const EMBED_BATCH = 100;
       const uncachedTexts = uncachedIndices.map((i) => texts[i]);
@@ -201,7 +195,7 @@ Deno.serve(async (req: Request) => {
       const freshEmbeddings: number[][] = [];
       for (let i = 0; i < uncachedTexts.length; i += EMBED_BATCH) {
         const chunk = uncachedTexts.slice(i, i + EMBED_BATCH);
-        const embeddings = await callAzureEmbeddings(azureEndpoint, azureApiKey, azureDeployment, chunk);
+        const embeddings = await callEmbeddings(azureEndpoint, azureApiKey, azureDeployment, chunk);
         freshEmbeddings.push(...embeddings);
       }
 
@@ -230,7 +224,12 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const rows = results.map((r) => ({
+    // Dedup by (record_key, job_id) — Postgres rejects duplicate keys in a single upsert batch
+    const dedupMap = new Map<string, typeof results[0]>();
+    for (const r of results) dedupMap.set(r.record_key, r);
+    const dedupedResults = [...dedupMap.values()];
+
+    const rows = dedupedResults.map((r) => ({
       record_key: r.record_key,
       job_id: body.jobId,
       side: body.side,

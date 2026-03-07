@@ -82,7 +82,7 @@ function createProcessBatch(aiConfig: DMCBAIConfig, jobId: string) {
             canonical: r.canonical,
             extracted_at: new Date().toISOString(),
           },
-          { onConflict: 'record_key,job_id' }
+          { onConflict: 'record_key' }
         );
 
         return r.canonical!;

@@ -78,12 +78,16 @@ function loadSenderConfig(jobCampaignPair?: JobCampaignPair | null): LoadedSende
     const gs = localStorage.getItem('guest_settings');
     const settings = gs ? JSON.parse(gs)?.settings : null;
 
+    // Instantly API key: outreach_api_key is the canonical source (DB syncs here on load).
+    // guest_settings may be stale — always prefer outreach_api_key for Instantly.
+    const instantlyKey = localStorage.getItem('outreach_api_key') || settings?.instantlyApiKey || '';
+
     // Priority 1: Job-stamped campaign pair (immutable snapshot from run time)
     if (jobCampaignPair?.demandCampaignId && jobCampaignPair?.supplyCampaignId) {
       const provider = jobCampaignPair.provider as SenderId;
       const apiKey = provider === 'plusvibe'
         ? settings?.plusvibeApiKey
-        : settings?.instantlyApiKey;
+        : instantlyKey;
       if (!apiKey) return null;
       return {
         senderId: provider,
@@ -94,10 +98,9 @@ function loadSenderConfig(jobCampaignPair?: JobCampaignPair | null): LoadedSende
       };
     }
 
-    // Priority 2: Global settings (existing behavior)
+    // Priority 2: Global settings
     if (!gs) {
-      const apiKey = localStorage.getItem('outreach_api_key');
-      return apiKey ? { senderId: 'instantly', apiKey, supplyCampaignId: '', demandCampaignId: '' } : null;
+      return instantlyKey ? { senderId: 'instantly', apiKey: instantlyKey, supplyCampaignId: '', demandCampaignId: '' } : null;
     }
 
     const provider: SenderId = settings?.sendingProvider === 'plusvibe' ? 'plusvibe' : 'instantly';
@@ -112,17 +115,16 @@ function loadSenderConfig(jobCampaignPair?: JobCampaignPair | null): LoadedSende
       };
     }
 
-    if (settings?.instantlyApiKey) {
+    if (instantlyKey) {
       return {
         senderId: 'instantly',
-        apiKey: settings.instantlyApiKey,
-        supplyCampaignId: settings.instantlyCampaignSupply || '',
-        demandCampaignId: settings.instantlyCampaignDemand || '',
+        apiKey: instantlyKey,
+        supplyCampaignId: settings?.instantlyCampaignSupply || '',
+        demandCampaignId: settings?.instantlyCampaignDemand || '',
       };
     }
 
-    const apiKey = localStorage.getItem('outreach_api_key');
-    return apiKey ? { senderId: 'instantly', apiKey, supplyCampaignId: '', demandCampaignId: '' } : null;
+    return null;
   } catch {
     return null;
   }

@@ -603,6 +603,7 @@ export default function Settings() {
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       console.error('[Settings] Save error:', e);
+      alert('Settings failed to save. Check console for details.');
     }
     setSaving(false);
   };
