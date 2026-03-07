@@ -1268,10 +1268,136 @@ async function evaluateDirect(
 // SHARD MODE — QStash dispatch for large datasets (>5000 pairs)
 // =============================================================================
 
-interface ShardData {
-  pairs: unknown[];
-  pairCount: number;
+// =============================================================================
+// BATCH DISPATCH HELPERS
+// =============================================================================
+
+interface BatchMessage {
+  destination: string;
+  queue?: string;
+  headers: Record<string, string>;
+  body: string;
 }
+
+/** SHA-256 content hash for deterministic dedup IDs — same logical shard = same hash across retries */
+async function shardDedupId(jobId: string, evalIds: string[]): Promise<string> {
+  const sorted = [...evalIds].sort();
+  const data = new TextEncoder().encode(sorted.join("|"));
+  const hashBuf = await crypto.subtle.digest("SHA-256", data);
+  const hex = Array.from(new Uint8Array(hashBuf))
+    .map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  return `${jobId}-shard-${hex}`;
+}
+
+/** Chunk messages by exact serialized size — measures full JSON including all overhead */
+function chunkBySize(messages: BatchMessage[]): BatchMessage[][] {
+  const MAX_BATCH_BYTES = 512 * 1024; // 512KB safe margin under 1MB QStash limit
+  const chunks: BatchMessage[][] = [];
+  let current: BatchMessage[] = [];
+
+  for (const msg of messages) {
+    const candidate = [...current, msg];
+    const candidateBytes = new TextEncoder().encode(JSON.stringify(candidate)).length;
+    if (current.length > 0 && candidateBytes > MAX_BATCH_BYTES) {
+      chunks.push(current);
+      current = [msg];
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+/** Send chunked batch to QStash, retry failed messages once, fatal on unrecoverable */
+async function dispatchBatch(
+  batchUrl: string,
+  qstashToken: string,
+  messages: BatchMessage[],
+): Promise<number> {
+  const chunks = chunkBySize(messages);
+  let totalPublished = 0;
+  const allFailed: BatchMessage[] = [];
+
+  for (const chunk of chunks) {
+    const res = await fetch(batchUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${qstashToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(chunk),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`QStash batch failed: ${res.status} ${errText.slice(0, 300)}`);
+    }
+
+    const results = await res.json();
+    if (Array.isArray(results)) {
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].error) {
+          allFailed.push(chunk[i]);
+        } else {
+          totalPublished++;
+        }
+      }
+    } else {
+      totalPublished += chunk.length;
+    }
+  }
+
+  // Retry failed messages once — chunked, same as first pass
+  if (allFailed.length > 0) {
+    console.warn(`[shard] Retrying ${allFailed.length} failed messages`);
+    const retryChunks = chunkBySize(allFailed);
+    const stillFailed: BatchMessage[] = [];
+
+    for (const retryChunk of retryChunks) {
+      const retryRes = await fetch(batchUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${qstashToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(retryChunk),
+      });
+
+      if (!retryRes.ok) {
+        throw new Error(`QStash retry batch failed: ${retryRes.status}`);
+      }
+
+      const retryResults = await retryRes.json();
+      if (Array.isArray(retryResults)) {
+        for (let i = 0; i < retryResults.length; i++) {
+          if (retryResults[i].error) {
+            stillFailed.push(retryChunk[i]);
+          } else {
+            totalPublished++;
+          }
+        }
+      } else {
+        totalPublished += retryChunk.length;
+      }
+    }
+
+    if (stillFailed.length > 0) {
+      const failedIds = stillFailed.map((m) =>
+        m.headers["Upstash-Deduplication-Id"] ?? "unknown"
+      );
+      throw new Error(
+        `FATAL: ${stillFailed.length} shards failed after retry: ${failedIds.join(", ")}`
+      );
+    }
+  }
+
+  return totalPublished;
+}
+
+// =============================================================================
+// SHARD MODE — QStash batch dispatch for large datasets (>5000 pairs)
+// =============================================================================
 
 async function buildAndPublishShards(
   supabase: ReturnType<typeof createClient>,
@@ -1320,12 +1446,16 @@ async function buildAndPublishShards(
     };
   });
 
-  const shards: ShardData[] = [];
+  // Build shards + DB rows
   const shardRows = [];
+  const shardPairs: { pairs: unknown[]; evalIds: string[] }[] = [];
   for (let i = 0; i < evalInputs.length; i += SHARD_SIZE) {
     const shard = evalInputs.slice(i, i + SHARD_SIZE);
     const index = Math.floor(i / SHARD_SIZE);
-    shards.push({ pairs: shard, pairCount: shard.length });
+    shardPairs.push({
+      pairs: shard,
+      evalIds: shard.map((p) => p.evalId),
+    });
     shardRows.push({
       job_id: jobId,
       shard_index: index,
@@ -1336,7 +1466,7 @@ async function buildAndPublishShards(
     });
   }
 
-  console.log(`[shard] Writing ${shards.length} shards`);
+  console.log(`[shard] Writing ${shardPairs.length} shards`);
   const { error: shardError } = await supabase
     .from("mcp_shards")
     .insert(shardRows);
@@ -1351,9 +1481,11 @@ async function buildAndPublishShards(
   const QUEUE_THRESHOLD = 200;
   const QUEUE_NAME = "mcp-eval";
   const PARALLELISM = 100;
+  const batchUrl = `${qstashBaseUrl}/v2/batch`;
 
-  const useQueue = shards.length >= QUEUE_THRESHOLD;
+  const useQueue = shardPairs.length >= QUEUE_THRESHOLD;
 
+  // If using queue mode, ensure queue exists first (single fetch)
   if (useQueue) {
     await fetch(`${qstashBaseUrl}/v2/queues`, {
       method: "POST",
@@ -1363,46 +1495,33 @@ async function buildAndPublishShards(
       },
       body: JSON.stringify({ queueName: QUEUE_NAME, parallelism: PARALLELISM }),
     });
-
-    const enqueueUrl = `${qstashBaseUrl}/v2/enqueue/${QUEUE_NAME}/${workerUrl}`;
-    for (const [index, shard] of shards.entries()) {
-      const res = await fetch(enqueueUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${qstashToken}`,
-          "Content-Type": "application/json",
-          "Upstash-Retries": "3",
-          "Upstash-Deduplication-Id": `${jobId}-shard-${index}`,
-        },
-        body: JSON.stringify({ jobId, shardIndex: index, pairs: shard.pairs, aiConfig }),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error(`[shard] QStash enqueue failed ${index}: ${res.status} ${errText.slice(0, 200)}`);
-      }
-    }
-  } else {
-    const publishUrl = `${qstashBaseUrl}/v2/publish/${workerUrl}`;
-    for (const [index, shard] of shards.entries()) {
-      const res = await fetch(publishUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${qstashToken}`,
-          "Content-Type": "application/json",
-          "Upstash-Retries": "3",
-          "Upstash-Deduplication-Id": `${jobId}-shard-${index}`,
-        },
-        body: JSON.stringify({ jobId, shardIndex: index, pairs: shard.pairs, aiConfig }),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error(`[shard] QStash publish failed ${index}: ${res.status} ${errText.slice(0, 200)}`);
-      }
-    }
   }
 
-  console.log(`[shard] ${shards.length} shards dispatched via ${useQueue ? "queue" : "direct publish"}`);
-  return { shardCount: shards.length };
+  // Build batch messages with content-hashed dedup IDs
+  const messages: BatchMessage[] = [];
+  for (let i = 0; i < shardPairs.length; i++) {
+    const shard = shardPairs[i];
+    const dedupId = await shardDedupId(jobId, shard.evalIds);
+    const msg: BatchMessage = {
+      destination: workerUrl,
+      headers: {
+        "Content-Type": "application/json",
+        "Upstash-Retries": "3",
+        "Upstash-Deduplication-Id": dedupId,
+      },
+      body: JSON.stringify({ jobId, shardIndex: i, pairs: shard.pairs, aiConfig }),
+    };
+    if (useQueue) {
+      msg.queue = QUEUE_NAME;
+    }
+    messages.push(msg);
+  }
+
+  // Dispatch via batch API — chunked by byte size, with partial failure retry
+  const published = await dispatchBatch(batchUrl, qstashToken, messages);
+
+  console.log(`[shard] ${published} shards dispatched via batch (${useQueue ? "queue" : "direct"})`);
+  return { shardCount: shardPairs.length };
 }
 
 // =============================================================================
@@ -1621,7 +1740,7 @@ Deno.serve(async (req: Request) => {
         status: "failed",
         error: (error as Error).message?.slice(0, 500),
         completed_at: new Date().toISOString(),
-      }).eq("job_id", jobId).catch(() => {});
+      }).eq("job_id", jobId).then(({ error: e }) => { if (e) console.error("[orchestrate] Failed to mark job failed:", e.message); });
     }
 
     return new Response(

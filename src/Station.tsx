@@ -643,34 +643,42 @@ export default function Station() {
   // Delete confirmation in filters modal
   const [confirmDeleteClient, setConfirmDeleteClient] = useState(false);
 
-  // Source tab — 'market' (Prebuilt Markets, SSM gated) vs 'yourdata' (Apify, open)
-  const [sourceTab, setSourceTab] = useState<'market' | 'yourdata'>('yourdata');
-
   // SSM gate for prebuilt markets
   const [ssmApproved, setSsmApproved] = useState(false);
   const [showSsmModal, setShowSsmModal] = useState(false);
 
-  useEffect(() => {
-    // Dev bypass — match SSMGate behavior on localhost
-    if (window.location.hostname === 'localhost') {
-      setSsmApproved(true);
-      setSourceTab('market');
-      return;
-    }
-    if (!user?.email) return;
-    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ssm-access/check?email=${encodeURIComponent(user.email.toLowerCase().trim())}`;
-    fetch(url).then(r => r.json()).then(d => {
-      if (d.status === 'approved') { setSsmApproved(true); setSourceTab('market'); }
-    }).catch(() => {});
-  }, [user?.email]);
+  // Source tab — 'market' (Prebuilt Markets, SSM gated) vs 'yourdata' (Apify, open)
+  // Default to last used tab (persisted) to prevent flash on re-mount
+  const [sourceTab, setSourceTab] = useState<'market' | 'yourdata'>(() => {
+    try {
+      const saved = localStorage.getItem('station_source_tab');
+      if (saved === 'market' || saved === 'yourdata') return saved;
+    } catch {}
+    return 'market';
+  });
 
-  const handleSourceTabChange = (mode: 'market' | 'yourdata') => {
+  // Persist tab choice + SSM gate
+  const handleSourceTabChange = useCallback((mode: 'market' | 'yourdata') => {
     if (mode === 'market' && !ssmApproved) {
       setShowSsmModal(true);
       return;
     }
     setSourceTab(mode);
-  };
+    try { localStorage.setItem('station_source_tab', mode); } catch {}
+  }, [ssmApproved]);
+
+  useEffect(() => {
+    // Dev bypass — match SSMGate behavior on localhost
+    if (window.location.hostname === 'localhost') {
+      setSsmApproved(true);
+      return;
+    }
+    if (!user?.email) return;
+    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ssm-access/check?email=${encodeURIComponent(user.email.toLowerCase().trim())}`;
+    fetch(url).then(r => r.json()).then(d => {
+      if (d.status === 'approved') { setSsmApproved(true); }
+    }).catch(() => {});
+  }, [user?.email]);
 
   // Your Data tab state
   const [yourDemandInput, setYourDemandInput] = useState('');
@@ -689,6 +697,7 @@ export default function Station() {
   const [analyzeModalOpen, setAnalyzeModalOpen] = useState(false);
   const [analyzeDiagnostics, setAnalyzeDiagnostics] = useState<AnalyzeDiagnostics | null>(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [runLaunching, setRunLaunching] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<{ done: number; total: number } | null>(null);
   const analyzeCacheRef = useRef<{ canonicalMap: Map<string, DMCBCanonical>; rawRecords: RawRecord[]; timestamp: number; marketName?: string; marketId?: string } | null>(null);
@@ -1530,6 +1539,7 @@ export default function Station() {
   // ==========================================================================
 
   async function handleAnalyzeRun() {
+    if (runLaunching) return; // debounce — already launching
     const cache = analyzeCacheRef.current;
     if (!cache) return;
     if (!dmcbAiConfig) {
@@ -1612,6 +1622,7 @@ export default function Station() {
       }
     }
 
+    setRunLaunching(true);
     try {
       // Signal classification for Apify data — text classifier (no pack context)
       const eventMetaMap = new Map<string, SignalClassification>();
@@ -1689,8 +1700,10 @@ export default function Station() {
       }).catch((err) => console.error('[station] orchestrate POST failed:', err));
 
       setAnalyzeModalOpen(false);
+      setRunLaunching(false);
       navigate('/station/runs');
     } catch (err) {
+      setRunLaunching(false);
       setAnalyzeError((err as Error).message || 'Failed to launch evaluation');
     }
   }
@@ -2210,11 +2223,26 @@ export default function Station() {
         {/* Content */}
         <div className="px-24 pb-10 w-full max-w-[1200px] xl:max-w-[1400px] mx-auto" style={{ marginTop: '64px' }}>
 
-          {/* LOADING STATE — warm confident terminal */}
+          {/* LOADING STATE — alive, always moving */}
           {loading && loadingPhase ? (
             <div className="flex flex-col items-center" style={{ minHeight: '320px', justifyContent: 'center' }}>
-              <style>{`@keyframes barFill { from { width: 0% } to { width: 100% } }
-                @keyframes subtitleFade { from { opacity: 0 } to { opacity: 1 } }`}</style>
+              <style>{`
+                @keyframes barFill { from { width: 0% } to { width: 92% } }
+                @keyframes subtitleFade { from { opacity: 0 } to { opacity: 1 } }
+                @keyframes shimmer {
+                  0% { background-position: -200% 0 }
+                  100% { background-position: 200% 0 }
+                }
+                @keyframes pulse-dot {
+                  0%, 100% { opacity: 0.4 }
+                  50% { opacity: 1 }
+                }
+                @keyframes checkPop {
+                  0% { transform: scale(0); opacity: 0 }
+                  60% { transform: scale(1.3) }
+                  100% { transform: scale(1); opacity: 1 }
+                }
+              `}</style>
               <p className="font-mono text-white/40 mb-2" style={{ fontSize: '12px', letterSpacing: '0.02em' }}>
                 Reading the market
               </p>
@@ -2231,26 +2259,44 @@ export default function Station() {
                   const isDone = phaseIndex > idx;
                   const isActive = phaseIndex === idx;
                   return (
-                    <div key={label} className="flex items-center gap-3">
+                    <div key={label} className="flex items-center gap-3" style={{ transition: 'opacity 400ms ease', opacity: isDone || isActive ? 1 : 0.4 }}>
+                      {/* Status indicator */}
+                      <span style={{ width: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {isDone ? (
+                          <span style={{ fontSize: '11px', color: 'rgba(52,211,153,0.7)', animation: 'checkPop 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both' }}>✓</span>
+                        ) : isActive ? (
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'rgba(255,255,255,0.6)', animation: 'pulse-dot 1.2s ease-in-out infinite', display: 'block' }} />
+                        ) : (
+                          <span style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'rgba(255,255,255,0.12)', display: 'block' }} />
+                        )}
+                      </span>
+                      {/* Label */}
                       <span
                         className="font-mono flex-shrink-0 transition-colors duration-500"
                         style={{
                           fontSize: '10px',
-                          width: '140px',
-                          color: isDone ? 'rgba(255,255,255,0.50)' : isActive ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.15)',
+                          width: '130px',
+                          color: isDone ? 'rgba(52,211,153,0.6)' : isActive ? 'rgba(255,255,255,0.70)' : 'rgba(255,255,255,0.15)',
                         }}
                       >
-                        {isDone ? '✓ ' : '  '}{label}
+                        {label}
                       </span>
+                      {/* Progress bar */}
                       <div className="flex-1 rounded-full overflow-hidden" style={{ height: '2px', background: 'rgba(255,255,255,0.06)' }}>
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            background: isDone ? 'rgba(255,255,255,0.40)' : 'rgba(255,255,255,0.25)',
-                            width: isDone ? '100%' : '0%',
-                            animation: isActive ? 'barFill 4s ease-out forwards' : undefined,
-                          }}
-                        />
+                        {isDone ? (
+                          <div className="h-full rounded-full" style={{ width: '100%', background: 'rgba(52,211,153,0.4)', transition: 'width 400ms ease' }} />
+                        ) : isActive ? (
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              animation: 'barFill 8s cubic-bezier(0.4, 0, 0.2, 1) forwards',
+                              background: 'linear-gradient(90deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.15) 100%)',
+                              backgroundSize: '200% 100%',
+                            }}
+                          />
+                        ) : (
+                          <div className="h-full rounded-full" style={{ width: '0%' }} />
+                        )}
                       </div>
                     </div>
                   );
@@ -2969,6 +3015,7 @@ export default function Station() {
                   onRun={handleAnalyzeRun}
                   onClose={() => setAnalyzeModalOpen(false)}
                   onExport={handleAnalyzeExport}
+                  launching={runLaunching}
                 />
               )}
               </StationSourcePanel>

@@ -32,6 +32,7 @@ interface AnalyzeModalProps {
   onRun: () => void;
   onClose: () => void;
   onExport?: () => void;
+  launching?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ function SideColumn({ label, diag }: { label: string; diag: SideDiagnostic }) {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function AnalyzeModal({ diagnostics, onRun, onClose, onExport }: AnalyzeModalProps) {
+export default function AnalyzeModal({ diagnostics, onRun, onClose, onExport, launching }: AnalyzeModalProps) {
   const { demand, supply, canRun } = diagnostics;
 
   // Guidance — always exactly one section. Factual, calm, non-defensive.
@@ -214,22 +215,27 @@ export default function AnalyzeModal({ diagnostics, onRun, onClose, onExport }: 
               </button>
             )}
             <button
-              disabled={!canRun}
+              disabled={!canRun || launching}
               onClick={onRun}
               style={{
                 height: '36px',
                 padding: '0 32px',
                 fontSize: '11px',
                 border: '1px solid rgba(255,255,255,0.15)',
-                background: 'rgba(255,255,255,0.12)',
+                background: launching ? 'rgba(52,211,153,0.15)' : 'rgba(255,255,255,0.12)',
                 outline: 'none',
-                boxShadow: canRun ? '0 0 20px rgba(255,255,255,0.06)' : 'none',
+                boxShadow: canRun && !launching ? '0 0 20px rgba(255,255,255,0.06)' : 'none',
                 opacity: canRun ? 1 : 0.25,
-                cursor: canRun ? 'pointer' : 'not-allowed',
+                cursor: canRun && !launching ? 'pointer' : 'not-allowed',
               }}
               className="font-mono rounded text-white hover:bg-white/[0.18] transition-colors"
             >
-              Run
+              {launching ? (
+                <span className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 border border-white/60 border-t-transparent rounded-full animate-spin" />
+                  Launching…
+                </span>
+              ) : 'Run'}
             </button>
           </div>
         </div>
