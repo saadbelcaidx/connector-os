@@ -2061,8 +2061,8 @@ export default function Station() {
             campaign_id: value,
             provider,
             campaign_name: `${side} Campaign (${marketId})`,
-          }, { onConflict: 'campaign_id' }).catch(err => {
-            console.warn('[Station] campaign registration failed (non-blocking):', err);
+          }, { onConflict: 'campaign_id' }).then(({ error: regErr }) => {
+            if (regErr) console.warn('[Station] campaign registration failed (non-blocking):', regErr);
           });
         }
       } else {
