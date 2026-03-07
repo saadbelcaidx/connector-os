@@ -575,6 +575,10 @@ export default function Station() {
   // — Enrichment progress (transient) —
   const [enrichProgress, setEnrichProgress] = useState({ demand: 0, demandTotal: 0, supply: 0, supplyTotal: 0 });
 
+  // — Active run + recent runs (DB state, loaded on mount) —
+  const [activeRun, setActiveRun] = useState<{ job_id: string; market_name: string; status: string } | null>(null);
+  const [recentRuns, setRecentRuns] = useState<Array<{ job_id: string; market_name: string; status: string; completed_pairs: number; started_at: string }>>([]);
+
   // — RunId ref for enrichment cancellation —
   const currentRunIdRef = useRef<string | null>(null);
 
@@ -818,6 +822,31 @@ export default function Station() {
     } catch (e) {
       console.error('[Station] Overlay load error:', e);
     }
+  }, []);
+
+  // Load active run + recent runs from DB on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: active } = await supabase
+          .from('mcp_jobs')
+          .select('job_id, market_name, status')
+          .not('status', 'in', '("complete","failed","aborted")')
+          .order('started_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (active) setActiveRun(active);
+
+        const { data: recent } = await supabase
+          .from('mcp_jobs')
+          .select('job_id, market_name, status, completed_pairs, started_at')
+          .order('started_at', { ascending: false })
+          .limit(3);
+        if (recent) setRecentRuns(recent);
+      } catch (e) {
+        console.warn('[Station] Failed to load runs:', e);
+      }
+    })();
   }, []);
 
   const persistClients = useCallback((clients: FulfillmentClient[]) => {
@@ -2891,16 +2920,75 @@ export default function Station() {
               )}
               </StationSourcePanel>
 
-              {/* Past Runs link */}
-              <div className="flex justify-end mt-2">
+              {/* Active run banner */}
+              {activeRun && (
                 <button
-                  onClick={() => navigate('/station/runs')}
-                  className="font-mono text-[10px] text-white/25 hover:text-white/50 transition-colors cursor-pointer"
-                  style={{ background: 'none', border: 'none', outline: 'none', padding: 0 }}
+                  onClick={() => navigate(`/station/run/${activeRun.job_id}`)}
+                  className="w-full mt-3 flex items-center gap-3 px-4 py-2.5 font-mono text-left transition-colors hover:bg-white/[0.04]"
+                  style={{
+                    background: 'rgba(52,211,153,0.04)',
+                    border: '1px solid rgba(52,211,153,0.12)',
+                    borderRadius: '2px',
+                    cursor: 'pointer',
+                    outline: 'none',
+                  }}
                 >
-                  Past Runs →
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-50" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400/70" />
+                  </span>
+                  <span className="text-[10px] text-emerald-400/70 truncate">
+                    Run in progress: {(activeRun.market_name || 'Unnamed').replace(/\b\w/g, c => c.toUpperCase())} — {activeRun.status.charAt(0).toUpperCase() + activeRun.status.slice(1)}
+                  </span>
+                  <span className="text-[10px] text-white/20 ml-auto shrink-0">→</span>
                 </button>
-              </div>
+              )}
+
+              {/* Recent runs */}
+              {recentRuns.length > 0 && (
+                <div className="mt-3 space-y-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-mono text-[9px] text-white/20 uppercase tracking-widest">Recent Runs</span>
+                    <button
+                      onClick={() => navigate('/station/runs')}
+                      className="font-mono text-[10px] text-white/25 hover:text-white/50 transition-colors cursor-pointer"
+                      style={{ background: 'none', border: 'none', outline: 'none', padding: 0 }}
+                    >
+                      All →
+                    </button>
+                  </div>
+                  {recentRuns.map(r => {
+                    // Capitalize market name: "biotech" → "Biotech", "fulfillment: twinfocus" → "Fulfillment: TwinFocus"
+                    const displayName = (r.market_name || 'Unnamed').replace(/\b\w/g, c => c.toUpperCase());
+                    const statusLabel = r.status === 'complete' ? 'Complete'
+                      : r.status === 'failed' ? 'Failed'
+                      : r.status === 'aborted' ? 'Aborted'
+                      : 'Running';
+                    return (
+                      <button
+                        key={r.job_id}
+                        onClick={() => navigate(`/station/run/${r.job_id}`)}
+                        className="w-full flex items-center gap-3 px-3 py-1.5 font-mono text-left transition-colors hover:bg-white/[0.03]"
+                        style={{ background: 'none', border: 'none', borderRadius: '2px', cursor: 'pointer', outline: 'none' }}
+                      >
+                        <span
+                          className="w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{
+                            background: r.status === 'complete' ? 'rgba(52,211,153,0.5)'
+                              : r.status === 'failed' ? 'rgba(239,68,68,0.5)'
+                              : 'rgba(250,204,21,0.5)',
+                          }}
+                        />
+                        <span className="text-[10px] text-white/40 truncate flex-1">{displayName}</span>
+                        <span className="text-[10px] text-white/20 shrink-0">{statusLabel}</span>
+                        <span className="text-[10px] text-white/15 shrink-0">
+                          {r.started_at ? new Date(r.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Error */}
               {error && (

@@ -22,6 +22,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../AuthContext';
 import ExecutionBadge from '../components/ExecutionBadge';
 import { applyOverlayV2 } from '../lib/applyOverlayV2';
+import { EnrichmentGate } from '../components/EnrichmentGate';
 import type { FulfillmentClient, ClientOverlay, ClientProfile } from '../../types/station';
 
 // =============================================================================
@@ -1582,12 +1583,20 @@ export default function RunDetailPageV2() {
     return counts;
   }, [isFulfillment, effectiveMatches, job.canonicals, enrichResults, tiers]);
 
+  // Enrichment gate — check if keys are configured before allowing send
+  const [showEnrichGate, setShowEnrichGate] = useState(false);
+  const hasEnrichKeys = !!(enrichKeys?.apollo || enrichKeys?.anymail);
+
   // Navigate to compose with enrichResults
   const handleNavigateCompose = useCallback(() => {
+    if (!hasEnrichKeys) {
+      setShowEnrichGate(true);
+      return;
+    }
     const enrichObj: Record<string, unknown> = {};
     enrichResults.forEach((val, key) => { enrichObj[key] = val; });
     navigate(`/station/run/${jobId}/send`, { state: { enrichResults: enrichObj } });
-  }, [enrichResults, navigate, jobId]);
+  }, [enrichResults, navigate, jobId, hasEnrichKeys]);
 
   return (
     <div className="flex flex-col h-screen bg-[#09090b]" style={{ animation: 'pageIn 0.25s ease-out' }}>
@@ -1709,6 +1718,18 @@ export default function RunDetailPageV2() {
           </button>
         </div>
       </div>
+
+      {/* ── ENRICHMENT GATE ── */}
+      {showEnrichGate && (
+        <div className="px-5 py-3 border-b border-white/[0.06]">
+          <EnrichmentGate
+            apolloConnected={!!enrichKeys?.apollo}
+            emailFinderConnected={!!enrichKeys?.anymail}
+            onOpenSettings={() => navigate('/settings')}
+            onDismiss={() => setShowEnrichGate(false)}
+          />
+        </div>
+      )}
 
       {/* ── EXECUTION TIER ── */}
       <div className="flex items-center justify-end px-5 py-1 border-b border-white/[0.04] bg-white/[0.01]">

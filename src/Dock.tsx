@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Mail, TrendingUp, BookOpen, Home, Settings, User, LogOut, Key, Eye, EyeOff, ArrowRight, Loader2, Radio } from 'lucide-react';
+import { Mail, TrendingUp, BookOpen, Home, Settings, User, LogOut, Key, Eye, EyeOff, ArrowRight, Loader2, Radio, List } from 'lucide-react';
 import { useAuth } from './AuthContext';
 
 interface DockApp {
@@ -22,6 +22,12 @@ const dockApps: DockApp[] = [
     name: 'Station',
     icon: Radio,
     route: '/station',
+  },
+  {
+    id: 'runs',
+    name: 'Runs',
+    icon: List,
+    route: '/station/runs',
   },
   {
     id: 'msg-sim',
@@ -317,8 +323,11 @@ function Dock({ disabled = false }: DockProps) {
       >
         {dockApps.map((app) => {
           const Icon = app.icon;
-          const isActive = location.pathname === app.route ||
-            (app.route === '/station' && location.pathname.startsWith('/station'));
+          const isActive = app.route === '/station'
+            ? location.pathname === '/station'
+            : app.route === '/station/runs'
+              ? location.pathname.startsWith('/station/run')
+              : location.pathname === app.route;
 
           return (
             <button
