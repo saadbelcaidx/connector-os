@@ -971,8 +971,7 @@ async function curationPass(
   const { data: canonRows } = await supabase
     .from("dmcb_canonicals")
     .select("record_key, canonical")
-    .in("record_key", allKeys)
-    .eq("job_id", jobId);
+    .in("record_key", allKeys);
 
   const canonMap = new Map((canonRows || []).map((r: CanonicalRow) => [r.record_key, r.canonical]));
 
@@ -1477,8 +1476,7 @@ Deno.serve(async (req: Request) => {
     const { data: canonicals, error: loadError } = await supabase
       .from("dmcb_canonicals")
       .select("record_key, canonical")
-      .in("record_key", allKeys)
-      .eq("job_id", jobId);
+      .in("record_key", allKeys);
 
     if (loadError || !canonicals) {
       throw new Error(`Failed to load canonicals: ${loadError?.message}`);

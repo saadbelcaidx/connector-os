@@ -680,6 +680,11 @@ export default function Station() {
   const [yourDataLoading, setYourDataLoading] = useState(false);
   const [yourDataError, setYourDataError] = useState<string | null>(null);
 
+  // Progressive disclosure toggles
+  const [showContext, setShowContext] = useState(false);
+  const [showCampaigns, setShowCampaigns] = useState(false);
+  const [showPrebuiltCampaigns, setShowPrebuiltCampaigns] = useState(false);
+
   // Analyze flow state
   const [analyzeModalOpen, setAnalyzeModalOpen] = useState(false);
   const [analyzeDiagnostics, setAnalyzeDiagnostics] = useState<AnalyzeDiagnostics | null>(null);
@@ -2399,34 +2404,48 @@ export default function Station() {
                     </p>
                   )}
 
-                  {/* Campaign config — shown when both packs are from the same market */}
+                  {/* Outreach — smooth accordion, shown when both packs are from the same market */}
                   {resolvedMarketId && (
-                    <div style={{ marginTop: '20px', animation: 'stSlideIn 200ms ease both' }}>
-                      <p className="font-mono text-white/30 mb-2 tracking-widest uppercase text-center" style={{ fontSize: '10px' }}>
-                        Campaigns
-                      </p>
-                      <div className="space-y-1.5">
-                        <div>
-                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Demand Campaign</p>
-                          <input
-                            type="text"
-                            value={marketCampaigns[resolvedMarketId]?.demandCampaignId || ''}
-                            onChange={e => updateMarketCampaign(resolvedMarketId, 'demandCampaignId', e.target.value)}
-                            placeholder="Paste campaign ID"
-                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
-                            style={{ height: '28px' }}
-                          />
-                        </div>
-                        <div>
-                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Supply Campaign</p>
-                          <input
-                            type="text"
-                            value={marketCampaigns[resolvedMarketId]?.supplyCampaignId || ''}
-                            onChange={e => updateMarketCampaign(resolvedMarketId, 'supplyCampaignId', e.target.value)}
-                            placeholder="Paste campaign ID"
-                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
-                            style={{ height: '28px' }}
-                          />
+                    <div style={{ marginTop: '16px' }}>
+                      <button
+                        onClick={() => setShowPrebuiltCampaigns(!showPrebuiltCampaigns)}
+                        className="flex items-center gap-2 font-mono text-white/25 hover:text-white/45 transition-colors mx-auto"
+                        style={{ fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', outline: 'none' }}
+                      >
+                        <span style={{ fontSize: '7px', transform: showPrebuiltCampaigns ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)', display: 'inline-block' }}>▶</span>
+                        Outreach
+                      </button>
+                      <div
+                        style={{
+                          maxHeight: showPrebuiltCampaigns ? '140px' : '0px',
+                          opacity: showPrebuiltCampaigns ? 1 : 0,
+                          overflow: 'hidden',
+                          transition: 'max-height 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 250ms ease',
+                        }}
+                      >
+                        <div className="space-y-1.5 pt-1 pb-2">
+                          <div>
+                            <p className="font-mono text-white/20 mb-1 tracking-widest uppercase" style={{ fontSize: '9px' }}>Demand Campaign</p>
+                            <input
+                              type="text"
+                              value={marketCampaigns[resolvedMarketId]?.demandCampaignId || ''}
+                              onChange={e => updateMarketCampaign(resolvedMarketId, 'demandCampaignId', e.target.value)}
+                              placeholder="Paste campaign ID"
+                              className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                              style={{ height: '28px' }}
+                            />
+                          </div>
+                          <div>
+                            <p className="font-mono text-white/20 mb-1 tracking-widest uppercase" style={{ fontSize: '9px' }}>Supply Campaign</p>
+                            <input
+                              type="text"
+                              value={marketCampaigns[resolvedMarketId]?.supplyCampaignId || ''}
+                              onChange={e => updateMarketCampaign(resolvedMarketId, 'supplyCampaignId', e.target.value)}
+                              placeholder="Paste campaign ID"
+                              className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                              style={{ height: '28px' }}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2771,14 +2790,6 @@ export default function Station() {
                         className="w-full font-mono text-[11px] text-white/70 placeholder:text-white/20 bg-white/[0.03] border border-white/[0.06] rounded px-3 outline-none focus:border-white/20 transition-colors"
                         style={{ height: '28px' }}
                       />
-                      <textarea
-                        placeholder="e.g., Series A–C SaaS that just raised and need SOC 2 within 6 months"
-                        value={yourDemandDesc}
-                        onChange={(e) => setYourDemandDesc(e.target.value)}
-                        className="w-full font-mono text-[11px] text-white/40 placeholder:text-white/15 bg-transparent border border-white/[0.04] rounded px-3 py-2 outline-none focus:border-white/10 transition-colors resize-none"
-                        rows={2}
-                        style={{ marginTop: '6px' }}
-                      />
                     </div>
 
                     {/* Supply Dataset */}
@@ -2792,43 +2803,85 @@ export default function Station() {
                         className="w-full font-mono text-[11px] text-white/70 placeholder:text-white/20 bg-white/[0.03] border border-white/[0.06] rounded px-3 outline-none focus:border-white/20 transition-colors"
                         style={{ height: '28px' }}
                       />
-                      <textarea
-                        placeholder="e.g., Boutique cybersecurity firms specializing in SOC 2 and ISO compliance"
-                        value={yourSupplyDesc}
-                        onChange={(e) => setYourSupplyDesc(e.target.value)}
-                        className="w-full font-mono text-[11px] text-white/40 placeholder:text-white/15 bg-transparent border border-white/[0.04] rounded px-3 py-2 outline-none focus:border-white/10 transition-colors resize-none"
-                        rows={2}
-                        style={{ marginTop: '6px' }}
-                      />
                     </div>
 
-                    {/* Campaign config — for custom/Apify datasets */}
-                    <div style={{ marginTop: '20px', animation: 'stSlideIn 200ms ease both' }}>
-                      <p className="font-mono text-white/30 mb-2 tracking-widest uppercase text-center" style={{ fontSize: '10px' }}>
-                        Campaigns
-                      </p>
-                      <div className="space-y-1.5">
-                        <div>
-                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Demand Campaign</p>
-                          <input
-                            type="text"
-                            value={marketCampaigns['custom']?.demandCampaignId || ''}
-                            onChange={e => updateMarketCampaign('custom', 'demandCampaignId', e.target.value)}
-                            placeholder="Paste campaign ID"
-                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
-                            style={{ height: '28px' }}
+                    {/* Optional config — single wrapper so parent space-y-5 only gaps once */}
+                    <div className="space-y-1">
+                      {/* Add context toggle + accordion */}
+                      <button
+                        onClick={() => setShowContext(!showContext)}
+                        className="flex items-center gap-2 font-mono text-white/25 hover:text-white/45 transition-colors"
+                        style={{ fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', outline: 'none' }}
+                      >
+                        <span style={{ fontSize: '7px', transform: showContext ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)', display: 'inline-block' }}>▶</span>
+                        Add context
+                      </button>
+                      <div
+                        style={{
+                          maxHeight: showContext ? '160px' : '0px',
+                          opacity: showContext ? 1 : 0,
+                          overflow: 'hidden',
+                          transition: 'max-height 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 250ms ease',
+                        }}
+                      >
+                        <div className="space-y-3 pb-2">
+                          <textarea
+                            placeholder="e.g., Series A–C SaaS that just raised and need SOC 2 within 6 months"
+                            value={yourDemandDesc}
+                            onChange={(e) => setYourDemandDesc(e.target.value)}
+                            className="w-full font-mono text-[11px] text-white/40 placeholder:text-white/15 bg-transparent border border-white/[0.04] rounded px-3 py-2 outline-none focus:border-white/10 transition-colors resize-none"
+                            rows={2}
+                          />
+                          <textarea
+                            placeholder="e.g., Boutique cybersecurity firms specializing in SOC 2 and ISO compliance"
+                            value={yourSupplyDesc}
+                            onChange={(e) => setYourSupplyDesc(e.target.value)}
+                            className="w-full font-mono text-[11px] text-white/40 placeholder:text-white/15 bg-transparent border border-white/[0.04] rounded px-3 py-2 outline-none focus:border-white/10 transition-colors resize-none"
+                            rows={2}
                           />
                         </div>
-                        <div>
-                          <p className="font-mono text-white/40 mb-1 tracking-widest uppercase" style={{ fontSize: '10px' }}>Supply Campaign</p>
-                          <input
-                            type="text"
-                            value={marketCampaigns['custom']?.supplyCampaignId || ''}
-                            onChange={e => updateMarketCampaign('custom', 'supplyCampaignId', e.target.value)}
-                            placeholder="Paste campaign ID"
-                            className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
-                            style={{ height: '28px' }}
-                          />
+                      </div>
+
+                      {/* Outreach toggle + accordion */}
+                      <button
+                        onClick={() => setShowCampaigns(!showCampaigns)}
+                        className="flex items-center gap-2 font-mono text-white/25 hover:text-white/45 transition-colors"
+                        style={{ fontSize: '10px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', outline: 'none' }}
+                      >
+                        <span style={{ fontSize: '7px', transform: showCampaigns ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 250ms cubic-bezier(0.4, 0, 0.2, 1)', display: 'inline-block' }}>▶</span>
+                        Outreach
+                      </button>
+                      <div
+                        style={{
+                          maxHeight: showCampaigns ? '140px' : '0px',
+                          opacity: showCampaigns ? 1 : 0,
+                          overflow: 'hidden',
+                          transition: 'max-height 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 250ms ease',
+                        }}
+                      >
+                        <div className="space-y-1.5 pb-2">
+                          <div>
+                            <p className="font-mono text-white/20 mb-1 tracking-widest uppercase" style={{ fontSize: '9px' }}>Demand Campaign</p>
+                            <input
+                              type="text"
+                              value={marketCampaigns['custom']?.demandCampaignId || ''}
+                              onChange={e => updateMarketCampaign('custom', 'demandCampaignId', e.target.value)}
+                              placeholder="Paste campaign ID"
+                              className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                              style={{ height: '28px' }}
+                            />
+                          </div>
+                          <div>
+                            <p className="font-mono text-white/20 mb-1 tracking-widest uppercase" style={{ fontSize: '9px' }}>Supply Campaign</p>
+                            <input
+                              type="text"
+                              value={marketCampaigns['custom']?.supplyCampaignId || ''}
+                              onChange={e => updateMarketCampaign('custom', 'supplyCampaignId', e.target.value)}
+                              placeholder="Paste campaign ID"
+                              className="w-full font-mono text-[11px] text-white/60 bg-white/[0.03] border border-white/[0.06] rounded px-2.5 placeholder:text-white/15 focus:outline-none focus:border-white/[0.12]"
+                              style={{ height: '28px' }}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2946,9 +2999,9 @@ export default function Station() {
 
               {/* Recent runs */}
               {recentRuns.length > 0 && (
-                <div className="mt-3 space-y-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-mono text-[9px] text-white/20 uppercase tracking-widest">Recent Runs</span>
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-[10px] text-white/20 uppercase tracking-widest">Recent</span>
                     <button
                       onClick={() => navigate('/station/runs')}
                       className="font-mono text-[10px] text-white/25 hover:text-white/50 transition-colors cursor-pointer"
@@ -2957,18 +3010,14 @@ export default function Station() {
                       All →
                     </button>
                   </div>
-                  {recentRuns.map(r => {
-                    // Capitalize market name: "biotech" → "Biotech", "fulfillment: twinfocus" → "Fulfillment: TwinFocus"
+                  <div className="space-y-1">
+                  {recentRuns.slice(0, 3).map(r => {
                     const displayName = (r.market_name || 'Unnamed').replace(/\b\w/g, c => c.toUpperCase());
-                    const statusLabel = r.status === 'complete' ? 'Complete'
-                      : r.status === 'failed' ? 'Failed'
-                      : r.status === 'aborted' ? 'Aborted'
-                      : 'Running';
                     return (
                       <button
                         key={r.job_id}
                         onClick={() => navigate(`/station/run/${r.job_id}`)}
-                        className="w-full flex items-center gap-3 px-3 py-1.5 font-mono text-left transition-colors hover:bg-white/[0.03]"
+                        className="w-full flex items-center gap-2.5 px-2 py-1.5 font-mono text-left transition-colors hover:bg-white/[0.03]"
                         style={{ background: 'none', border: 'none', borderRadius: '2px', cursor: 'pointer', outline: 'none' }}
                       >
                         <span
@@ -2979,14 +3028,14 @@ export default function Station() {
                               : 'rgba(250,204,21,0.5)',
                           }}
                         />
-                        <span className="text-[10px] text-white/40 truncate flex-1">{displayName}</span>
-                        <span className="text-[10px] text-white/20 shrink-0">{statusLabel}</span>
-                        <span className="text-[10px] text-white/15 shrink-0">
+                        <span className="text-[10px] text-white/40 truncate">{displayName}</span>
+                        <span className="text-[10px] text-white/20 ml-auto shrink-0">
                           {r.started_at ? new Date(r.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}
                         </span>
                       </button>
                     );
                   })}
+                  </div>
                 </div>
               )}
 
